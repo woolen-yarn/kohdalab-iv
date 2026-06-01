@@ -1,0 +1,105 @@
+{
+  "profile": {
+    "name": "default",
+    "description": "Default KohdaLab DC VI setup: GS210 current source and 34401A voltage measurement."
+  },
+  "instruments": {
+    "source": {
+      "gs210": {
+        "model": "YOKOGAWA_GS210",
+        "transport": "visa",
+        "resource": "GPIB0::2::INSTR",
+        "timeout_ms": 5000
+      }
+    },
+    "meter": {
+      "dmm_34401a": {
+        "model": "AGILENT_34401A",
+        "transport": "visa",
+        "resource": "GPIB0::26::INSTR",
+        "timeout_ms": 10000,
+        "auto_range": true
+      },
+      "dmm_34411a": {
+        "model": "AGILENT_34411A",
+        "transport": "visa",
+        "resource": "USB0::0x0000::0x0000::INSTR",
+        "timeout_ms": 10000,
+        "auto_range": true
+      }
+    }
+  },
+  "roles": {
+    "iv": {
+      "source": "source.gs210",
+      "measure": "meter.dmm_34401a"
+    },
+    "vi": {
+      "source": "source.gs210",
+      "measure": "meter.dmm_34401a"
+    }
+  },
+  "measurements": {
+    "iv": {
+      "mode": "dc_iv",
+      "signal": {
+        "kind": "dc",
+        "ac_enabled": false
+      },
+      "scan": {
+        "pattern": "zero_centered",
+        "start": {
+          "value": -1.0,
+          "unit": "mV"
+        },
+        "stop": {
+          "value": 1.0,
+          "unit": "mV"
+        },
+        "step": {
+          "value": 0.1,
+          "unit": "mV"
+        },
+        "repeat": 1,
+        "custom_points": []
+      },
+      "timing": {
+        "pre_delay_s": 0.1,
+        "settle_s": 0.2,
+        "post_zero_delay_s": 0.1,
+        "ramp_step_wait_s": 0.02,
+        "nplc": 1.0,
+        "average_count": 1,
+        "measure_timeout_s": 10.0,
+        "timing_mode": "software"
+      },
+      "measure": {
+        "auto_range": true
+      },
+      "safety": {
+        "max_abs_source": {
+          "value": 1.0,
+          "unit": "mV"
+        },
+        "compliance": {
+          "value": 10.0,
+          "unit": "uA"
+        },
+        "stop_on_compliance": true,
+        "ramp_step": {
+          "value": 0.1,
+          "unit": "mV"
+        },
+        "on_finish": "ramp_to_zero_then_off",
+        "on_stop": "ramp_to_zero_then_off",
+        "on_error": "output_off",
+        "output_off_on_finish": true
+      },
+      "output": {
+        "dir": "results",
+        "filename": "iv_run",
+        "auto_timestamp_suffix": true
+      }
+    }
+  }
+}

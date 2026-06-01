@@ -1,0 +1,17 @@
+[AGILENT_34401A]
+display_name = "Agilent 34401A"
+roles = ["meter"]
+measure_modes = ["dc_voltage", "dc_current"]
+max_input_V = 1000.0
+max_input_A = 3.0
+auto_range_required = true
+nplc_values = [0.02, 0.2, 1, 10, 100]
+
+[AGILENT_34411A]
+display_name = "Agilent 34411A"
+roles = ["meter"]
+measure_modes = ["dc_voltage", "dc_current"]
+max_input_V = 1000.0
+max_input_A = 3.0
+auto_range_required = true
+nplc_values = [0.001, 0.002, 0.006, 0.02, 0.06, 0.2, 1, 2, 10, 100]

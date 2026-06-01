@@ -1,0 +1,70 @@
+[YOKOGAWA_GS210]
+display_name = "Yokogawa GS210"
+roles = ["source"]
+source_modes = ["voltage", "current"]
+max_abs_V = 32.0
+max_abs_A = 0.2
+supports_output = true
+supports_software_ramp = true
+supports_voltage_limit = true
+supports_current_limit = true
+current_limit_min_A = 0.001
+current_limit_max_A = 0.2
+current_limit_resolution_A = 0.001
+voltage_limit_min_V = 1.0
+voltage_limit_max_V = 30.0
+voltage_limit_resolution_V = 1.0
+
+[[YOKOGAWA_GS210.voltage_ranges]]
+name = "10mV"
+command_value = 0.01
+max_abs_V = 0.012
+resolution_V = 100e-9
+
+[[YOKOGAWA_GS210.voltage_ranges]]
+name = "100mV"
+command_value = 0.1
+max_abs_V = 0.12
+resolution_V = 1e-6
+
+[[YOKOGAWA_GS210.voltage_ranges]]
+name = "1V"
+command_value = 1.0
+max_abs_V = 1.2
+resolution_V = 10e-6
+
+[[YOKOGAWA_GS210.voltage_ranges]]
+name = "10V"
+command_value = 10.0
+max_abs_V = 12.0
+resolution_V = 100e-6
+
+[[YOKOGAWA_GS210.voltage_ranges]]
+name = "30V"
+command_value = 30.0
+max_abs_V = 32.0
+resolution_V = 1e-3
+
+[[YOKOGAWA_GS210.current_ranges]]
+name = "1mA"
+command_value = 0.001
+max_abs_A = 1.2e-3
+resolution_A = 10e-9
+
+[[YOKOGAWA_GS210.current_ranges]]
+name = "10mA"
+command_value = 0.01
+max_abs_A = 12e-3
+resolution_A = 100e-9
+
+[[YOKOGAWA_GS210.current_ranges]]
+name = "100mA"
+command_value = 0.1
+max_abs_A = 120e-3
+resolution_A = 1e-6
+
+[[YOKOGAWA_GS210.current_ranges]]
+name = "200mA"
+command_value = 0.2
+max_abs_A = 200e-3
+resolution_A = 1e-6
