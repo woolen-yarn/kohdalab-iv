@@ -169,17 +169,22 @@ def test_34411a_local_uses_gpib_gtl_with_ren_release():
 
 def test_adcmt_7461a_configures_dc_voltage_and_reads_with_scpi_read():
     handle = FakeVisaHandle()
-    handle.query_responses = ["+1.234500E+00"]
+    handle.query_responses = ["0,No error"] * 5 + ["+1.234500E+00"]
     device = ADCMT7461A("GPIB0::27::INSTR", handle=handle)
 
     device.configure_measurement(measure_function="dc_voltage", nplc=1.234, auto_range=True)
     value = device.read_once()
 
     assert handle.commands == [
+        ":SYSTem:ERRor?",
         "*RST",
+        ":SYSTem:ERRor?",
         ":SENSE:FUNCTION 'VOLTAGE:DC'",
+        ":SYSTem:ERRor?",
         ":SENSE:VOLTAGE:DC:RANGE:AUTO ON",
-        ":SENSE:VOLTAGE:DC:NPLCYCLES 1.234",
+        ":SYSTem:ERRor?",
+        ":SENSE:VOLTAGE:DC:SRATE SSLOW",
+        ":SYSTem:ERRor?",
         ":READ?",
     ]
     assert value == 1.2345
@@ -192,9 +197,13 @@ def test_adcmt_7461a_configures_dc_current_without_auto_range_with_scpi():
     device.configure_measurement(measure_function="dc_current", nplc=1.0, auto_range=False)
 
     assert handle.commands == [
+        ":SYSTem:ERRor?",
         "*RST",
+        ":SYSTem:ERRor?",
         ":SENSE:FUNCTION 'CURRENT:DC'",
-        ":SENSE:CURRENT:DC:NPLCYCLES 1",
+        ":SYSTem:ERRor?",
+        ":SENSE:CURRENT:DC:SRATE SLOW",
+        ":SYSTem:ERRor?",
     ]
 
 
@@ -255,6 +264,17 @@ def test_adcmt_7461a_connect_status_uses_scpi_error_query_by_default():
     assert handle.commands == ["*CLS", ":SYSTem:ERRor?"]
 
 
+def test_adcmt_7461a_connect_status_drains_stale_undefined_header():
+    handle = FakeVisaHandle()
+    handle.query_responses = ["-113,Undefined header", "0,No error"]
+    device = ADCMT7461A("USB0::1::INSTR", handle=handle)
+
+    status = device.connect_status()
+
+    assert status == "0,No error"
+    assert handle.commands == ["*CLS", ":SYSTem:ERRor?", ":SYSTem:ERRor?"]
+
+
 def test_adcmt_7461a_connect_status_uses_adc_error_query_when_configured():
     handle = FakeVisaHandle()
     device = ADCMT7461A("USB0::1::INSTR", handle=handle, command_language="adc")
@@ -266,6 +286,26 @@ def test_adcmt_7461a_connect_status_uses_adc_error_query_when_configured():
     assert handle.commands == ["*CLS", "ERR?"]
 
 
+def test_adcmt_7461a_scpi_syncs_after_setting_commands():
+    handle = FakeVisaHandle()
+    handle.query_responses = ["0,No error"] * 5
+    device = ADCMT7461A("GPIB0::27::INSTR", handle=handle)
+
+    device.configure_measurement(measure_function="dc_voltage", nplc=0.2, auto_range=True)
+
+    assert handle.commands == [
+        ":SYSTem:ERRor?",
+        "*RST",
+        ":SYSTem:ERRor?",
+        ":SENSE:FUNCTION 'VOLTAGE:DC'",
+        ":SYSTem:ERRor?",
+        ":SENSE:VOLTAGE:DC:RANGE:AUTO ON",
+        ":SYSTem:ERRor?",
+        ":SENSE:VOLTAGE:DC:SRATE MED",
+        ":SYSTem:ERRor?",
+    ]
+
+
 def test_adcmt_7461a_local_aborts_pending_scpi_measurement_before_gtl():
     handle = FakeVisaHandle()
     device = ADCMT7461A("GPIB0::27::INSTR", handle=handle)
@@ -273,7 +313,7 @@ def test_adcmt_7461a_local_aborts_pending_scpi_measurement_before_gtl():
     device.local()
 
     assert handle.clear_count == 1
-    assert handle.commands[:2] == [":ABORt", "*CLS"]
+    assert handle.commands[:4] == [":ABORt", ":SYSTem:ERRor?", "*CLS", ":SYSTem:ERRor?"]
     assert handle._resource_manager.opened_resources == ["GPIB0::INTFC"]
     assert handle.ren_modes[-1] == constants.VI_GPIB_REN_DEASSERT
 

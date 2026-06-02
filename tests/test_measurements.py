@@ -240,6 +240,25 @@ def test_device_session_releases_gpib_board_after_single_disconnect(monkeypatch)
     assert released == ["GPIB0"]
 
 
+def test_device_session_disconnects_all_devices_on_same_gpib_board(monkeypatch):
+    released = []
+    session = DeviceSession(copy.deepcopy(DEFAULT_CONFIG), auto_connect=False)
+    source = FakeDeviceForSession()
+    meter = FakeDeviceForSession()
+    source.resource = "GPIB0::2::INSTR"
+    meter.resource = "GPIB0::27::INSTR"
+    session.sources["gs210"] = source
+    session.meters["dmm_7461a"] = meter
+    monkeypatch.setattr(session_module, "release_gpib_remote", released.append)
+
+    affected = session.disconnect_device("meter.dmm_7461a")
+
+    assert affected == ["meter.dmm_7461a", "source.gs210"]
+    assert meter.closed is True
+    assert source.closed is True
+    assert released == ["GPIB0"]
+
+
 def test_device_session_releases_gpib_boards_after_disconnect_all(monkeypatch):
     released = []
     session = DeviceSession(copy.deepcopy(DEFAULT_CONFIG), auto_connect=False)

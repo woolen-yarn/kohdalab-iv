@@ -36,8 +36,8 @@ class Experiment:
     def disconnect_all(self) -> None:
         self.session.disconnect_all()
 
-    def disconnect_device(self, ref: str) -> None:
-        self.session.disconnect_device(ref)
+    def disconnect_device(self, ref: str) -> list[str]:
+        return self.session.disconnect_device(ref)
 
     def connected_devices(self) -> dict[str, bool]:
         return self.session.connected_devices()

@@ -18,6 +18,12 @@ class ADCMT7461A(VisaDevice):
         "dc_voltage": "VOLTAGE:DC",
         "dc_current": "CURRENT:DC",
     }
+    SRATE_BY_MAX_NPLC = (
+        (0.02, "FAST"),
+        (0.2, "MED"),
+        (1.0, "SLOW"),
+        (float("inf"), "SSLOW"),
+    )
     USB_QUERY_DELAY_S = 0.02
     READ_DELAY_S = 0.02
     DISCARD_READINGS_AFTER_SETTLE = 1
@@ -43,10 +49,10 @@ class ADCMT7461A(VisaDevice):
     def prepare_for_disconnect(self) -> None:
         self.clear()
         if self._uses_scpi:
-            self._try_write(":ABORt")
+            self._try_scpi_setting(":ABORt")
         else:
             self._try_write("H0")
-        self._try_write("*CLS")
+        self._try_scpi_setting("*CLS") if self._uses_scpi else self._try_write("*CLS")
 
     def configure_measurement(self, *, measure_function: str, nplc: float, auto_range: bool = True) -> None:
         if self._uses_scpi:
@@ -59,11 +65,12 @@ class ADCMT7461A(VisaDevice):
         if function is None:
             raise ValueError(f"Unsupported DMM measure function: {measure_function}")
 
-        self.write("*RST")
-        self.write(f":SENSE:FUNCTION '{function}'")
+        self._drain_scpi_errors()
+        self._write_scpi_setting("*RST")
+        self._write_scpi_setting(f":SENSE:FUNCTION '{function}'")
         if auto_range:
-            self._try_write(f":SENSE:{function}:RANGE:AUTO ON")
-        self.write(f":SENSE:{function}:NPLCYCLES {float(nplc):.12g}")
+            self._try_scpi_setting(f":SENSE:{function}:RANGE:AUTO ON")
+        self._try_scpi_setting(f":SENSE:{function}:SRATE {self._sampling_rate(nplc)}")
 
     def _configure_measurement_adc(self, *, measure_function: str, nplc: float, auto_range: bool) -> None:
         function = self.ADC_FUNCTION_COMMANDS.get(measure_function)
@@ -108,6 +115,8 @@ class ADCMT7461A(VisaDevice):
 
     def connect_status(self) -> str:
         self.clear_status()
+        if self._uses_scpi:
+            return self._drain_scpi_errors()
         return self.error_status()
 
     @property
@@ -119,3 +128,40 @@ class ADCMT7461A(VisaDevice):
             self.write(command)
         except Exception:
             pass
+
+    def _write_scpi_setting(self, command: str) -> str | None:
+        self.write(command)
+        return self._drain_scpi_errors()
+
+    def _try_scpi_setting(self, command: str) -> str | None:
+        try:
+            return self._write_scpi_setting(command)
+        except Exception:
+            return None
+
+    def _drain_scpi_errors(self, *, max_reads: int = 20) -> str:
+        first_problem = None
+        last_status = "0,No error"
+        for _ in range(max(1, int(max_reads))):
+            status = self.error_status()
+            last_status = status
+            if self._is_no_error(status):
+                return first_problem or status
+            if first_problem is None and not self._is_undefined_header(status):
+                first_problem = status
+        return first_problem or last_status
+
+    def _is_no_error(self, status: str) -> bool:
+        normalized = str(status).strip().lower()
+        return normalized.startswith("0") or "no error" in normalized
+
+    def _is_undefined_header(self, status: str) -> bool:
+        normalized = str(status).strip().lower()
+        return "undefined header" in normalized or "err-113" in normalized or "-113" in normalized
+
+    def _sampling_rate(self, nplc: float) -> str:
+        value = float(nplc)
+        for limit, rate in self.SRATE_BY_MAX_NPLC:
+            if value <= limit:
+                return rate
+        return "SSLOW"

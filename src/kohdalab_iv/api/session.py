@@ -66,9 +66,22 @@ class DeviceSession:
             for key in self._configured_keys(kind):
                 self.connect_device(f"{kind}.{key}")
 
-    def disconnect_device(self, ref: str) -> None:
+    def disconnect_device(self, ref: str) -> list[str]:
         kind, key = self._split_ref(ref)
-        self._disconnect_device(kind, key, release_board=True)
+        device = self._get_device(kind, key)
+        if device is None:
+            return []
+
+        board = gpib_board_from_resource(getattr(device, "resource", ""))
+        if board is None:
+            self._disconnect_device(kind, key, release_board=False)
+            return [ref]
+
+        targets = self._connected_refs_on_gpib_board(board, first=(kind, key))
+        for target_kind, target_key in targets:
+            self._disconnect_device(target_kind, target_key, release_board=False)
+        release_gpib_remote(board)
+        return [f"{target_kind}.{target_key}" for target_kind, target_key in targets]
 
     def _disconnect_device(self, kind: str, key: str, *, release_board: bool) -> None:
         device = self._pop_device(kind, key)
@@ -137,6 +150,7 @@ class DeviceSession:
         return False
 
     def _return_and_close_device(self, device) -> None:
+        self._safe_output_off(device)
         self._call_if_present(device, "local")
         self._call_if_present(device, "close")
         self._call_if_present(device, "local_after_close")
@@ -165,6 +179,19 @@ class DeviceSession:
         except Exception:
             pass
 
+    def _safe_output_off(self, device) -> None:
+        output_off = getattr(device, "output_off", None)
+        set_level = getattr(device, "set_level", None)
+        if output_off is None and set_level is None:
+            return
+        self._call_if_present(device, "output_off")
+        if set_level is not None:
+            try:
+                set_level(0.0)
+            except Exception:
+                pass
+        self._call_if_present(device, "output_off")
+
     def _configured_keys(self, kind: str) -> list[str]:
         devices = self.config.get("instruments", {}).get(kind, {})
         return list(devices) if isinstance(devices, dict) else []
@@ -176,6 +203,19 @@ class DeviceSession:
     def _devices_snapshot(self, kind: str) -> list[Any]:
         with self._lock:
             return list(self._map(kind).values())
+
+    def _items_snapshot(self, kind: str) -> list[tuple[str, Any]]:
+        with self._lock:
+            return list(self._map(kind).items())
+
+    def _connected_refs_on_gpib_board(self, board: str, *, first: tuple[str, str]) -> list[tuple[str, str]]:
+        targets = [
+            (kind, key)
+            for kind in ("source", "meter")
+            for key, device in self._items_snapshot(kind)
+            if gpib_board_from_resource(getattr(device, "resource", "")) == board
+        ]
+        return sorted(targets, key=lambda item: 0 if item == first else 1)
 
     def _get_device(self, kind: str, key: str):
         with self._lock:
