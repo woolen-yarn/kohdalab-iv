@@ -159,22 +159,27 @@ def test_34411a_local_uses_gpib_gtl_with_ren_release():
     ]
 
 
-def test_adcmt_7461a_configures_dc_voltage_and_reads_with_measure_query():
+def test_adcmt_7461a_configures_dc_voltage_and_reads_with_adc_trigger():
     handle = FakeVisaHandle()
-    handle.read_responses = ["1.2345"]
+    handle.read_responses = ["+1.234500E+00"]
     device = ADCMT7461A("GPIB0::27::INSTR", handle=handle)
+    device.TRIGGER_DELAY_S = 0
 
     device.configure_measurement(measure_function="dc_voltage", nplc=1.234, auto_range=True)
     value = device.read_once()
 
     assert handle.commands == [
-        ":SENSE:FUNCTION 'VOLTAGE:DC'",
-        ":SYSTem:ERRor?",
-        ":SENSE:VOLTAGE:DC:RANGE:AUTO ON",
-        ":SYSTem:ERRor?",
-        ":SENSE:VOLTAGE:DC:SRATE SSLOW",
-        ":SYSTem:ERRor?",
-        ":READ?",
+        "H0",
+        "F1",
+        "R0",
+        "ITP1.234",
+        "SPN1",
+        "TRN1",
+        "TRS3",
+        "INIC0",
+        "ABO",
+        "INI",
+        "*TRG",
     ]
     assert value == 1.2345
 
@@ -186,31 +191,31 @@ def test_adcmt_7461a_configures_dc_current_without_auto_range():
     device.configure_measurement(measure_function="dc_current", nplc=10, auto_range=False)
 
     assert handle.commands == [
-        ":SENSE:FUNCTION 'CURRENT:DC'",
-        ":SYSTem:ERRor?",
-        ":SENSE:CURRENT:DC:SRATE SSLOW",
-        ":SYSTem:ERRor?",
+        "H0",
+        "F5",
+        "ITP10",
+        "SPN1",
+        "TRN1",
+        "TRS3",
+        "INIC0",
     ]
 
 
-def test_adcmt_7461a_raises_command_error_with_context():
-    class ErrorHandle(FakeVisaHandle):
-        def query(self, command):
-            self.commands.append(command)
-            return "-113,Undefined header"
-
-    handle = ErrorHandle()
+def test_adcmt_7461a_rejects_unexpected_measurement_response():
+    handle = FakeVisaHandle()
+    handle.read_responses = ["ERR"]
     device = ADCMT7461A("GPIB0::27::INSTR", handle=handle)
+    device.TRIGGER_DELAY_S = 0
 
     try:
-        device.configure_measurement(measure_function="dc_voltage", nplc=1, auto_range=True)
+        device.read_once()
     except RuntimeError as e:
         message = str(e)
     else:
-        raise AssertionError("Expected ADCMT command error")
+        raise AssertionError("Expected ADCMT response error")
 
-    assert ":SENSE:FUNCTION 'VOLTAGE:DC'" in message
-    assert "-113" in message
+    assert "Unexpected ADCMT 7461A measurement response" in message
+    assert "ERR" in message
 
 
 def test_visa_device_is_connected_detects_closed_handle():

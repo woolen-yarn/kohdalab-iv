@@ -242,7 +242,7 @@ GUI close、Source Disconnect、All Disconnect:
 
 Agilent/Keysight 34411A と Keysight 34465A は同じ 34411A 系の local sequence を使います。ADCMT 7461A も同じ local release 経路を使います。USB 接続では USBTMC/USB488 の local/REN release、GPIB 接続では GTL/REN release を試します。
 
-ADCMT 7461A は取扱説明書の SCPI sample に近い形で、`:SENSE:FUNCTION '<Function>'`、`:SENSE:<Function>:SRATE`、`:READ?` を使います。`NPLC` の GUI 値は 7461A の sampling rate に丸めて反映します。
+ADCMT 7461A は USB/GPIB の両方で使える ADCMT command language を使います。DCV/DCI は `F1`/`F5`、auto range は `R0`、積分時間は `ITP<nplc>`、1 点読み取りは bus trigger の `ABO` + `INI` + `*TRG` で行います。SCPI command language は 7461A の仕様上 GPIB only のため、USB 接続では使いません。
 
 ### CSV output
 
@@ -630,9 +630,11 @@ The Agilent/Keysight 34411A and Keysight 34465A use the same 34411A-family local
 sequence. The ADCMT 7461A uses the same local-release path. USB connections use
 USBTMC/USB488 local/REN release; GPIB connections use GTL/REN release.
 
-The ADCMT 7461A follows the operation-manual SCPI sample style and uses
-`:SENSE:FUNCTION '<Function>'`, `:SENSE:<Function>:SRATE`, and `:READ?`.
-The GUI `NPLC` value is rounded into a 7461A sampling-rate setting.
+The ADCMT 7461A uses the ADCMT command language because it works over both USB
+and GPIB. DCV/DCI use `F1`/`F5`, auto range uses `R0`, integration time uses
+`ITP<nplc>`, and each point is read with a bus-triggered `ABO` + `INI` + `*TRG`.
+The 7461A SCPI command language is GPIB-only, so it is not used for USB
+connections.
 
 ### CSV Output
 
