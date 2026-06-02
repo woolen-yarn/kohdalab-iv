@@ -17,6 +17,11 @@ def gpib_board_from_resource(resource: str) -> str | None:
 
 
 def release_gpib_remote(board: str) -> None:
+    _release_gpib_remote_pyvisa(board)
+    _ni4882_set_ren(board, False)
+
+
+def _release_gpib_remote_pyvisa(board: str) -> None:
     try:
         import pyvisa
         from pyvisa import constants
@@ -45,6 +50,53 @@ def release_gpib_remote(board: str) -> None:
             resource_manager.close()
         except Exception:
             pass
+
+
+def _ni4882_set_ren(board: str, asserted: bool, *, loader: Any | None = None) -> bool:
+    try:
+        import ctypes
+
+        win_dll = loader or getattr(ctypes, "WinDLL", None)
+        if win_dll is None:
+            return False
+    except Exception:
+        return False
+
+    library = None
+    for library_name in ("ni4882.dll", "gpib-32.dll"):
+        try:
+            library = win_dll(library_name)
+            break
+        except Exception:
+            continue
+    if library is None:
+        return False
+
+    ud = -1
+    try:
+        ibfind = getattr(library, "ibfindA", None) or getattr(library, "ibfind")
+        ibfind.argtypes = [ctypes.c_char_p]
+        ibfind.restype = ctypes.c_int
+        ud = int(ibfind(board.lower().encode("ascii")))
+        if ud < 0:
+            return False
+
+        ibsre = library.ibsre
+        ibsre.argtypes = [ctypes.c_int, ctypes.c_int]
+        ibsre.restype = ctypes.c_int
+        ibsre(ud, 1 if asserted else 0)
+        return True
+    except Exception:
+        return False
+    finally:
+        if ud >= 0:
+            try:
+                ibonl = library.ibonl
+                ibonl.argtypes = [ctypes.c_int, ctypes.c_int]
+                ibonl.restype = ctypes.c_int
+                ibonl(ud, 0)
+            except Exception:
+                pass
 
 
 class VisaDevice:
