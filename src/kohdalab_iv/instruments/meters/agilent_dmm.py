@@ -1,69 +1,14 @@
-from __future__ import annotations
+from kohdalab_iv.instruments.meters.agilent_34401a import Agilent34401A
+from kohdalab_iv.instruments.meters.agilent_34411a import Agilent34411A
+from kohdalab_iv.instruments.meters.keysight_34411a import Keysight34411A
+from kohdalab_iv.instruments.meters.keysight_34465a import Keysight34465A
+from kohdalab_iv.instruments.meters.scpi_dmm import AgilentDMM, ScpiDMM
 
-from statistics import fmean
-
-from kohdalab_iv.instruments.visa_base import VisaDevice
-
-
-class AgilentDMM(VisaDevice):
-    def local(self) -> None:
-        self.gpib_go_to_local()
-
-    def configure_measurement(self, *, measure_function: str, nplc: float, auto_range: bool = True) -> None:
-        if measure_function == "dc_voltage":
-            self.write("CONF:VOLT:DC")
-            if auto_range:
-                self.write("SENS:VOLT:DC:RANG:AUTO ON")
-            self.write(f"SENS:VOLT:DC:NPLC {float(nplc):.12g}")
-        elif measure_function == "dc_current":
-            self.write("CONF:CURR:DC")
-            if auto_range:
-                self.write("SENS:CURR:DC:RANG:AUTO ON")
-            self.write(f"SENS:CURR:DC:NPLC {float(nplc):.12g}")
-        else:
-            raise ValueError(f"Unsupported DMM measure function: {measure_function}")
-
-    def _try_write(self, command: str) -> None:
-        try:
-            self.write(command)
-        except Exception:
-            pass
-
-    def read_once(self) -> float:
-        return self.query_float("READ?")
-
-    def read_average(self, count: int) -> float:
-        values = [self.read_once() for _ in range(max(1, int(count)))]
-        return float(fmean(values))
-
-
-class Agilent34401A(AgilentDMM):
-    pass
-
-
-class Keysight34411A(AgilentDMM):
-    def local(self) -> None:
-        self.release_remote_control()
-
-    def local_after_close(self) -> None:
-        self.gpib_interface_go_to_local(release_ren=True)
-
-    def configure_measurement(self, *, measure_function: str, nplc: float, auto_range: bool = True) -> None:
-        super().configure_measurement(
-            measure_function=measure_function,
-            nplc=nplc,
-            auto_range=auto_range,
-        )
-        if measure_function == "dc_voltage":
-            self._try_write("SENS:VOLT:DC:ZERO:AUTO ON")
-        elif measure_function == "dc_current":
-            self._try_write("SENS:CURR:DC:ZERO:AUTO ON")
-        self._try_write("TRIG:SOUR IMM")
-
-
-class Agilent34411A(Keysight34411A):
-    pass
-
-
-class Keysight34465A(Keysight34411A):
-    pass
+__all__ = [
+    "Agilent34401A",
+    "Agilent34411A",
+    "AgilentDMM",
+    "Keysight34411A",
+    "Keysight34465A",
+    "ScpiDMM",
+]

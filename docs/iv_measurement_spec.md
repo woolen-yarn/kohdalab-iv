@@ -242,7 +242,7 @@ GUI close、Source Disconnect、All Disconnect:
 
 Agilent/Keysight 34411A と Keysight 34465A は同じ 34411A 系の local sequence を使います。ADCMT 7461A も同じ local release 経路を使います。USB 接続では USBTMC/USB488 の local/REN release、GPIB 接続では GTL/REN release を試します。
 
-ADCMT 7461A は USB/GPIB の両方で使える ADCMT command language を使います。DCV/DCI は `F1`/`F5`、auto range は `R0`、積分時間は `ITP<nplc>`、1 点読み取りは bus trigger の `ABO` + `INI` + `*TRG` で行います。SCPI command language は 7461A の仕様上 GPIB only のため、USB 接続では使いません。
+ADCMT 7461A は USB/GPIB の両方で使える ADCMT command language を使います。測定開始時は `*RST` で HOLD などの前回状態を戻してから、DCV/DCI を `F1`/`F5`、auto range を `R0`、積分時間を `ITP<nplc>` で設定し、測定値は 7461A の output data を read して取得します。connect 時の status check には ADC command の `ERR?` を使い、SCPI の `SYST:ERR?` は送りません。
 
 ### CSV output
 
@@ -631,10 +631,11 @@ sequence. The ADCMT 7461A uses the same local-release path. USB connections use
 USBTMC/USB488 local/REN release; GPIB connections use GTL/REN release.
 
 The ADCMT 7461A uses the ADCMT command language because it works over both USB
-and GPIB. DCV/DCI use `F1`/`F5`, auto range uses `R0`, integration time uses
-`ITP<nplc>`, and each point is read with a bus-triggered `ABO` + `INI` + `*TRG`.
-The 7461A SCPI command language is GPIB-only, so it is not used for USB
-connections.
+and GPIB. Measurement setup starts with `*RST` to clear stale HOLD/trigger
+state. DCV/DCI use `F1`/`F5`, auto range uses `R0`, integration time uses
+`ITP<nplc>`, and each point is read from the 7461A output data stream. Connect
+status checks use ADC command `ERR?`; the GUI does not send SCPI `SYST:ERR?` to
+this model.
 
 ### CSV Output
 

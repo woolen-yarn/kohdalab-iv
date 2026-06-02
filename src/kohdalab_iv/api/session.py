@@ -4,8 +4,11 @@ from threading import RLock
 from typing import Any
 
 from kohdalab_iv.api.config import instrument_config
-from kohdalab_iv.instruments.meters.adcmt_dmm import ADCMT7461A
-from kohdalab_iv.instruments.meters.agilent_dmm import Agilent34401A, Agilent34411A, Keysight34411A, Keysight34465A
+from kohdalab_iv.instruments.meters.adcmt_7461a import ADCMT7461A
+from kohdalab_iv.instruments.meters.agilent_34401a import Agilent34401A
+from kohdalab_iv.instruments.meters.agilent_34411a import Agilent34411A
+from kohdalab_iv.instruments.meters.keysight_34411a import Keysight34411A
+from kohdalab_iv.instruments.meters.keysight_34465a import Keysight34465A
 from kohdalab_iv.instruments.sources.gs210 import YokogawaGS210
 from kohdalab_iv.instruments.visa_base import gpib_board_from_resource, release_gpib_remote
 

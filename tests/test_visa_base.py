@@ -1,7 +1,8 @@
 from pyvisa import constants
 
-from kohdalab_iv.instruments.meters.adcmt_dmm import ADCMT7461A
-from kohdalab_iv.instruments.meters.agilent_dmm import Agilent34401A, Keysight34411A
+from kohdalab_iv.instruments.meters.adcmt_7461a import ADCMT7461A
+from kohdalab_iv.instruments.meters.agilent_34401a import Agilent34401A
+from kohdalab_iv.instruments.meters.keysight_34411a import Keysight34411A
 from kohdalab_iv.instruments.visa_base import VisaDevice, _ni4882_set_ren
 
 
@@ -163,23 +164,17 @@ def test_adcmt_7461a_configures_dc_voltage_and_reads_with_adc_trigger():
     handle = FakeVisaHandle()
     handle.read_responses = ["+1.234500E+00"]
     device = ADCMT7461A("GPIB0::27::INSTR", handle=handle)
-    device.TRIGGER_DELAY_S = 0
+    device.READ_DELAY_S = 0
 
     device.configure_measurement(measure_function="dc_voltage", nplc=1.234, auto_range=True)
     value = device.read_once()
 
     assert handle.commands == [
+        "*RST",
         "H0",
         "F1",
         "R0",
         "ITP1.234",
-        "SPN1",
-        "TRN1",
-        "TRS3",
-        "INIC0",
-        "ABO",
-        "INI",
-        "*TRG",
     ]
     assert value == 1.2345
 
@@ -191,13 +186,10 @@ def test_adcmt_7461a_configures_dc_current_without_auto_range():
     device.configure_measurement(measure_function="dc_current", nplc=10, auto_range=False)
 
     assert handle.commands == [
+        "*RST",
         "H0",
         "F5",
         "ITP10",
-        "SPN1",
-        "TRN1",
-        "TRS3",
-        "INIC0",
     ]
 
 
@@ -205,7 +197,7 @@ def test_adcmt_7461a_rejects_unexpected_measurement_response():
     handle = FakeVisaHandle()
     handle.read_responses = ["ERR"]
     device = ADCMT7461A("GPIB0::27::INSTR", handle=handle)
-    device.TRIGGER_DELAY_S = 0
+    device.READ_DELAY_S = 0
 
     try:
         device.read_once()
@@ -216,6 +208,17 @@ def test_adcmt_7461a_rejects_unexpected_measurement_response():
 
     assert "Unexpected ADCMT 7461A measurement response" in message
     assert "ERR" in message
+
+
+def test_adcmt_7461a_connect_status_uses_adc_error_query():
+    handle = FakeVisaHandle()
+    device = ADCMT7461A("USB0::1::INSTR", handle=handle)
+    device.USB_QUERY_DELAY_S = 0
+
+    status = device.connect_status()
+
+    assert status == "0,No error"
+    assert handle.commands == ["*CLS", "ERR?"]
 
 
 def test_visa_device_is_connected_detects_closed_handle():

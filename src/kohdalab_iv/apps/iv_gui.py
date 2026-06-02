@@ -770,13 +770,22 @@ def main() -> None:
                 _, meter_ref = self._active_refs(self.config)
                 meter = self.experiment.connect_device(meter_ref)
                 idn = meter.identify()
-                meter.write("*CLS")
-                error = meter.query("SYST:ERR?")
-                self.meter_status.setText(f"{idn}\n{error}")
+                status = self._connect_status(meter)
+                self.meter_status.setText(f"{idn}\n{status}")
                 self.append_log(f"Connected {meter_ref}: {idn}")
             except Exception as e:
                 QtWidgets.QMessageBox.critical(self, "Connect Error", str(e))
                 self.append_log(f"Meter connect error: {e}")
+
+        def _connect_status(self, device) -> str:
+            method = getattr(device, "connect_status", None)
+            if method is not None:
+                return str(method())
+            try:
+                device.write("*CLS")
+                return str(device.query("SYST:ERR?"))
+            except Exception as e:
+                return f"status unavailable: {e}"
 
         def disconnect_meter(self) -> None:
             _, meter_ref = self._active_refs(self.config)
