@@ -81,10 +81,16 @@ def _ni4882_set_ren(board: str, asserted: bool, *, loader: Any | None = None) ->
         if ud < 0:
             return False
 
-        ibsre = library.ibsre
-        ibsre.argtypes = [ctypes.c_int, ctypes.c_int]
-        ibsre.restype = ctypes.c_int
-        ibsre(ud, 1 if asserted else 0)
+        ibsre = getattr(library, "ibsre", None)
+        if ibsre is not None:
+            ibsre.argtypes = [ctypes.c_int, ctypes.c_int]
+            ibsre.restype = ctypes.c_int
+            ibsre(ud, 1 if asserted else 0)
+        else:
+            ibconfig = library.ibconfig
+            ibconfig.argtypes = [ctypes.c_int, ctypes.c_int, ctypes.c_int]
+            ibconfig.restype = ctypes.c_int
+            ibconfig(ud, 0x000B, 1 if asserted else 0)
         return True
     except Exception:
         return False

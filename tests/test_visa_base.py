@@ -18,15 +18,15 @@ class FakeNi4882Library:
     def __init__(self):
         self.calls = []
         self.ibfindA = FakeFunction(self._ibfind_a)
-        self.ibsre = FakeFunction(self._ibsre)
+        self.ibconfig = FakeFunction(self._ibconfig)
         self.ibonl = FakeFunction(self._ibonl)
 
     def _ibfind_a(self, name):
         self.calls.append(("ibfindA", name))
         return 7
 
-    def _ibsre(self, ud, value):
-        self.calls.append(("ibsre", ud, value))
+    def _ibconfig(self, ud, option, value):
+        self.calls.append(("ibconfig", ud, option, value))
         return 0
 
     def _ibonl(self, ud, value):
@@ -155,6 +155,6 @@ def test_ni4882_set_ren_deasserts_ren_and_closes_board_handle():
     assert result is True
     assert library.calls == [
         ("ibfindA", b"gpib0"),
-        ("ibsre", 7, 0),
+        ("ibconfig", 7, 0x000B, 0),
         ("ibonl", 7, 0),
     ]
