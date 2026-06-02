@@ -135,6 +135,9 @@ Launch the GUI from the desktop VBS launcher:
 Desktop\KohdaLab_IV_GUI.vbs
 ```
 
+Keep the VBS file in the repository and place a shortcut to it on the Windows
+desktop. The launcher resolves the project root from its repository location.
+
 Or launch it from the project directory:
 
 ```powershell

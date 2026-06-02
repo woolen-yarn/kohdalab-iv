@@ -1,15 +1,11 @@
 Option Explicit
 
-Dim shell
-Dim fso
-Dim projectRoot
-Dim pythonwPath
-Dim uvPath
-Dim command
+Dim shell, fso, projectRoot, pythonwPath, uvPath, command
 
 Set shell = CreateObject("WScript.Shell")
 Set fso = CreateObject("Scripting.FileSystemObject")
-projectRoot = "C:\Users\kohdalab\pythonKernel\kohdalab-iv"
+
+projectRoot = fso.GetParentFolderName(fso.GetParentFolderName(WScript.ScriptFullName))
 pythonwPath = projectRoot & "\.venv\Scripts\pythonw.exe"
 uvPath = shell.ExpandEnvironmentStrings("%USERPROFILE%") & "\.local\bin\uv.exe"
 

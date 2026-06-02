@@ -1,6 +1,6 @@
 from pyvisa import constants
 
-from kohdalab_iv.instruments.meters.agilent_dmm import Agilent34401A
+from kohdalab_iv.instruments.meters.agilent_dmm import Agilent34401A, Agilent34411A
 from kohdalab_iv.instruments.visa_base import VisaDevice
 
 
@@ -37,3 +37,13 @@ def test_34401a_local_uses_gpib_gtl_without_scpi_system_local():
 
     assert handle.commands == []
     assert handle.ren_modes == [constants.VI_GPIB_REN_ADDRESS_GTL]
+
+
+def test_34411a_local_uses_gpib_gtl_with_ren_release():
+    handle = FakeVisaHandle()
+    device = Agilent34411A("GPIB0::26::INSTR", handle=handle)
+
+    device.local()
+
+    assert handle.commands == []
+    assert handle.ren_modes == [constants.VI_GPIB_REN_DEASSERT_GTL]

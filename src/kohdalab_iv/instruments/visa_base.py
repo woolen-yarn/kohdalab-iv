@@ -48,11 +48,12 @@ class VisaDevice:
             pass
         self.gpib_go_to_local()
 
-    def gpib_go_to_local(self) -> None:
+    def gpib_go_to_local(self, *, release_ren: bool = False) -> None:
         try:
             from pyvisa import constants
 
-            self.inst.control_ren(constants.VI_GPIB_REN_ADDRESS_GTL)
+            mode = constants.VI_GPIB_REN_DEASSERT_GTL if release_ren else constants.VI_GPIB_REN_ADDRESS_GTL
+            self.inst.control_ren(mode)
         except Exception:
             pass
 
