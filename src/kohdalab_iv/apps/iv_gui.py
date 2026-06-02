@@ -275,13 +275,18 @@ def main() -> None:
             self.snapshot_table.setEditTriggers(QtWidgets.QAbstractItemView.NoEditTriggers)
             self.snapshot_table.setSelectionMode(QtWidgets.QAbstractItemView.NoSelection)
 
-            self.right_panel_toggle = QtWidgets.QToolButton()
-            self.right_panel_toggle.setText(">")
-            self.right_panel_toggle.setCheckable(True)
-            self.right_panel_toggle.setToolButtonStyle(QtCore.Qt.ToolButtonTextOnly)
-            self.right_panel_toggle.setFixedWidth(24)
-            self.right_panel_toggle.setSizePolicy(QtWidgets.QSizePolicy.Fixed, QtWidgets.QSizePolicy.Expanding)
-            self.right_panel_toggle.clicked.connect(self._toggle_right_panel)
+            self.left_panel_toggle = self._side_panel_toggle("<", self._toggle_left_panel)
+            self.right_panel_toggle = self._side_panel_toggle(">", self._toggle_right_panel)
+
+        def _side_panel_toggle(self, text: str, slot) -> QtWidgets.QToolButton:
+            button = QtWidgets.QToolButton()
+            button.setText(text)
+            button.setCheckable(True)
+            button.setToolButtonStyle(QtCore.Qt.ToolButtonTextOnly)
+            button.setFixedWidth(24)
+            button.setSizePolicy(QtWidgets.QSizePolicy.Fixed, QtWidgets.QSizePolicy.Expanding)
+            button.clicked.connect(slot)
+            return button
 
         def _apply_dark_theme(self) -> None:
             self.setStyleSheet(
@@ -350,12 +355,19 @@ def main() -> None:
             left.addWidget(self._source_group())
             left.addWidget(self._meter_group())
             left.addStretch(1)
-            left_scroll = QtWidgets.QScrollArea()
-            left_scroll.setWidgetResizable(True)
-            left_scroll.setHorizontalScrollBarPolicy(QtCore.Qt.ScrollBarAlwaysOff)
-            left_scroll.setWidget(left_widget)
-            left_scroll.setMinimumWidth(260)
-            left_scroll.setMaximumWidth(290)
+            self.left_content = QtWidgets.QScrollArea()
+            self.left_content.setWidgetResizable(True)
+            self.left_content.setHorizontalScrollBarPolicy(QtCore.Qt.ScrollBarAlwaysOff)
+            self.left_content.setWidget(left_widget)
+            self.left_content.setMinimumWidth(260)
+            self.left_content.setMaximumWidth(290)
+
+            self.left_panel = QtWidgets.QWidget()
+            left_shell = QtWidgets.QHBoxLayout(self.left_panel)
+            left_shell.setContentsMargins(0, 0, 0, 0)
+            left_shell.setSpacing(4)
+            left_shell.addWidget(self.left_content, 1)
+            left_shell.addWidget(self.left_panel_toggle)
 
             center_widget = QtWidgets.QWidget()
             center = QtWidgets.QVBoxLayout(center_widget)
@@ -377,7 +389,7 @@ def main() -> None:
             right.addWidget(self.snapshot_table, 1)
             right_shell.addWidget(self.right_content, 1)
 
-            root.addWidget(left_scroll, 0)
+            root.addWidget(self.left_panel, 0)
             root.addWidget(center_widget, 1)
             root.addWidget(self.right_panel, 0)
             self.resize(1240, 760)
@@ -959,6 +971,11 @@ def main() -> None:
         def _toggle_snapshot(self) -> None:
             visible = self.snapshot_toggle.isChecked()
             self.snapshot_table.setVisible(visible)
+
+        def _toggle_left_panel(self) -> None:
+            visible = not self.left_panel_toggle.isChecked()
+            self.left_content.setVisible(visible)
+            self.left_panel_toggle.setText("<" if visible else ">")
 
         def _toggle_right_panel(self) -> None:
             visible = not self.right_panel_toggle.isChecked()
