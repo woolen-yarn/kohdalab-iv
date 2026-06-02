@@ -183,7 +183,7 @@ def test_adcmt_7461a_configures_dc_voltage_and_reads_with_gpib_scpi_read():
         ":SYSTem:ERRor?",
         ":SENSE:VOLTAGE:DC:SRATE SSLOW",
         ":SYSTem:ERRor?",
-        ":READ?",
+        "READ?",
     ]
     assert value == 1.2345
 
@@ -200,7 +200,7 @@ def test_adcmt_7461a_configures_dc_voltage_and_reads_with_usb_scpi_read():
         "*RST",
         ":SENSE:FUNCTION 'VOLTAGE:DC'",
         ":SENSE:VOLTAGE:DC:SRATE SSLOW",
-        ":READ?",
+        "READ?",
     ]
     assert value == 1.2345
 
@@ -266,7 +266,7 @@ def test_adcmt_7461a_discards_first_reading_after_settle():
     value = device.read_once()
 
     assert value == 1.2345
-    assert handle.commands == [":READ?", ":READ?"]
+    assert handle.commands == ["READ?", "READ?"]
 
 
 def test_adcmt_7461a_usb_connect_status_clears_without_scpi_error_query():

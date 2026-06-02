@@ -48,7 +48,7 @@ GUI は 3 パネル構成です。
 `Config` は `config/default.json` を読み書きします。最後に開いた config も記憶しますが、このプロジェクトの標準 config は `default.json` です。
 
 `Source` は GS210 を対象にします。`Meter` では 34401A、34411A、34465A、7461A を選択でき、DMM の積分条件として `NPLC` を設定します。
-ADCMT 7461A は `command_language` で SCPI/ADC を切り替えられます。標準 config は `scpi` で、測定値の取得は `:READ?` を使います。USB では Error 113 を避けるため、connect 時も sweep 設定時も `:SYSTem:ERRor?` を読みません。
+ADCMT 7461A は `command_language` で SCPI/ADC を切り替えられます。標準 config は `scpi` で、測定値の取得は `READ?` を使います。USB では Error 113 を避けるため、connect 時も sweep 設定時も `:SYSTem:ERRor?` を読みません。
 
 `Measurement` では sweep 形状と各点の測定条件を設定します。
 
@@ -163,7 +163,7 @@ opened config, but this project keeps one standard config: `default.json`.
 
 `Source` targets the GS210. `Meter` selects 34401A, 34411A, 34465A, or 7461A and exposes
 the DMM integration setting, `NPLC`.
-The ADCMT 7461A command set is selected with `command_language`. The standard config uses `scpi` and `:READ?` for readings. Over USB, the driver avoids `:SYSTem:ERRor?` during connect and sweep setup to avoid Error 113.
+The ADCMT 7461A command set is selected with `command_language`. The standard config uses `scpi` and `READ?` for readings. Over USB, the driver avoids `:SYSTem:ERRor?` during connect and sweep setup to avoid Error 113.
 
 `Measurement` owns the sweep shape and point timing.
 

@@ -244,7 +244,7 @@ GUI close、Source Disconnect、All Disconnect:
 
 Agilent/Keysight 34411A と Keysight 34465A は同じ 34411A 系の local sequence を使います。ADCMT 7461A は timeout などで未完了の測定が残った状態でも復帰しやすいように、local release の前に VISA clear、`:ABORt`、`*CLS` を試します。ADCMT 7461A の個別 disconnect では、GPIB 接続は addressed GTL だけを試し、GPIB board の REN deassert は行いません。USB 接続では USBTMC/USB488 の local/REN release を試します。
 
-ADCMT 7461A は `command_language` で SCPI/ADC を切り替えます。標準 config は `scpi` です。SCPI では測定開始時に `*RST`、`:SENSE:FUNCTION 'VOLTAGE:DC'` または `:SENSE:FUNCTION 'CURRENT:DC'`、`:SENSE:<function>:SRATE <rate>` を送り、測定値は `:READ?` で取得します。GPIB では SCPI setting command ごとに `:SYSTem:ERRor?` を読み、setting command の連続送信を避けます。USB では Error 113 を避けるため、connect 時も sweep 設定時も `:SYSTem:ERRor?` を読みません。ADC mode を明示した場合だけ、従来通り `F1`/`F5`、`R0`、`ITP<nplc>`、`ERR?` を使います。
+ADCMT 7461A は `command_language` で SCPI/ADC を切り替えます。標準 config は `scpi` です。SCPI では測定開始時に `*RST`、`:SENSE:FUNCTION 'VOLTAGE:DC'` または `:SENSE:FUNCTION 'CURRENT:DC'`、`:SENSE:<function>:SRATE <rate>` を送り、測定値は `READ?` で取得します。GPIB では SCPI setting command ごとに `:SYSTem:ERRor?` を読み、setting command の連続送信を避けます。USB では Error 113 を避けるため、connect 時も sweep 設定時も `:SYSTem:ERRor?` を読みません。ADC mode を明示した場合だけ、従来通り `F1`/`F5`、`R0`、`ITP<nplc>`、`ERR?` を使います。
 
 ### CSV output
 
@@ -646,7 +646,7 @@ do not deassert board REN. USB connections use USBTMC/USB488 local/REN release.
 The ADCMT 7461A command set is selected with `command_language`. The standard
 config uses `scpi`. SCPI setup sends `*RST`, `:SENSE:FUNCTION 'VOLTAGE:DC'` or
 `:SENSE:FUNCTION 'CURRENT:DC'`, and `:SENSE:<function>:SRATE <rate>`. Each point
-is read with `:READ?`. On GPIB, each SCPI setting command is followed by
+is read with `READ?`. On GPIB, each SCPI setting command is followed by
 `:SYSTem:ERRor?` to avoid consecutive setting-command errors. Over USB, the
 driver avoids `:SYSTem:ERRor?` during connect and sweep setup to avoid Error
 113. Only explicit ADC mode uses the legacy `F1`/`F5`, `R0`, `ITP<nplc>`, and
