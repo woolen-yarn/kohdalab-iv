@@ -104,6 +104,17 @@ class FakeConnectDevice(FakeDeviceForSession):
         self.__class__.instances.append(self)
 
 
+class FakeADCMTConnectDevice(FakeDeviceForSession):
+    instances = []
+
+    def __init__(self, resource, *, timeout_ms=5000, command_language="scpi"):
+        super().__init__()
+        self.resource = resource
+        self.timeout_ms = timeout_ms
+        self.command_language = command_language
+        self.__class__.instances.append(self)
+
+
 def _small_config():
     config = copy.deepcopy(DEFAULT_CONFIG)
     settings = config["measurements"]["iv"]
@@ -308,3 +319,18 @@ def test_device_session_supports_agilent_34411a():
 
 def test_device_session_supports_adcmt_7461a():
     assert session_module.METER_CONTROLLERS["ADCMT_7461A"] is ADCMT7461A
+
+
+def test_device_session_passes_adcmt_command_language(monkeypatch):
+    FakeADCMTConnectDevice.instances = []
+    monkeypatch.setitem(session_module.METER_CONTROLLERS, "ADCMT_7461A", FakeADCMTConnectDevice)
+    config = copy.deepcopy(DEFAULT_CONFIG)
+    config["roles"]["iv"]["measure"] = "meter.dmm_7461a"
+    config["roles"]["vi"]["measure"] = "meter.dmm_7461a"
+    config["instruments"]["meter"]["dmm_7461a"]["command_language"] = "adc"
+    session = DeviceSession(config, auto_connect=False)
+
+    device = session.connect_device("meter.dmm_7461a")
+
+    assert device.command_language == "adc"
+    assert FakeADCMTConnectDevice.instances == [device]

@@ -145,6 +145,7 @@ DEFAULT_CONFIG: dict[str, Any] = {
                 "resource": "GPIB0::27::INSTR",
                 "timeout_ms": 10000,
                 "auto_range": True,
+                "command_language": "scpi",
             }
         },
     },

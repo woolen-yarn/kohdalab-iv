@@ -46,7 +46,8 @@
         "transport": "visa",
         "resource": "GPIB0::27::INSTR",
         "timeout_ms": 10000,
-        "auto_range": true
+        "auto_range": true,
+        "command_language": "scpi"
       }
     }
   },

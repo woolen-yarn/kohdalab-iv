@@ -612,6 +612,8 @@ def main() -> None:
             config["instruments"]["source"][source_key]["resource"] = self.source_resource_combo.currentText().strip()
             config["instruments"]["meter"][meter_key]["model"] = meter_model
             config["instruments"]["meter"][meter_key]["resource"] = self.meter_resource_combo.currentText().strip()
+            if meter_model == "ADCMT_7461A":
+                config["instruments"]["meter"][meter_key].setdefault("command_language", "scpi")
             for role_key in ("iv", "vi"):
                 config["roles"].setdefault(role_key, {})
                 config["roles"][role_key]["source"] = f"source.{source_key}"

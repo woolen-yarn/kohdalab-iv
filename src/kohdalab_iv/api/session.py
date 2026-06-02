@@ -51,9 +51,15 @@ class DeviceSession:
                 return existing
             self.disconnect_device(ref)
 
-        device = cls(resource, timeout_ms=int(cfg.get("timeout_ms", 5000)))
+        device = cls(resource, **self._controller_kwargs(model, cfg))
         self._set_device(kind, key, device)
         return device
+
+    def _controller_kwargs(self, model: str, cfg: dict[str, Any]) -> dict[str, Any]:
+        kwargs: dict[str, Any] = {"timeout_ms": int(cfg.get("timeout_ms", 5000))}
+        if model == "ADCMT_7461A":
+            kwargs["command_language"] = str(cfg.get("command_language", "scpi"))
+        return kwargs
 
     def connect_all(self) -> None:
         for kind in ("source", "meter"):

@@ -75,6 +75,7 @@ class FakeVisaHandle:
         self.commands = []
         self.ren_modes = []
         self.usb_control_outs = []
+        self.query_responses = []
         self.read_responses = ["0"]
         self.session = object()
         self.invalid_session = False
@@ -86,6 +87,8 @@ class FakeVisaHandle:
 
     def query(self, command):
         self.commands.append(command)
+        if self.query_responses:
+            return self.query_responses.pop(0)
         return "0,No error"
 
     def control_ren(self, mode):
@@ -160,10 +163,41 @@ def test_34411a_local_uses_gpib_gtl_with_ren_release():
     ]
 
 
-def test_adcmt_7461a_configures_dc_voltage_and_reads_with_adc_trigger():
+def test_adcmt_7461a_configures_dc_voltage_and_reads_with_scpi_fetch():
+    handle = FakeVisaHandle()
+    handle.query_responses = ["+1.234500E+00"]
+    device = ADCMT7461A("GPIB0::27::INSTR", handle=handle)
+
+    device.configure_measurement(measure_function="dc_voltage", nplc=1.234, auto_range=True)
+    value = device.read_once()
+
+    assert handle.commands == [
+        "*RST",
+        ":SENSE:FUNCTION 'VOLTAGE:DC'",
+        ":SENSE:VOLTAGE:DC:RANGE:AUTO ON",
+        ":SENSE:VOLTAGE:DC:NPLCYCLES 1.234",
+        ":FETCH?",
+    ]
+    assert value == 1.2345
+
+
+def test_adcmt_7461a_configures_dc_current_without_auto_range_with_scpi():
+    handle = FakeVisaHandle()
+    device = ADCMT7461A("GPIB0::27::INSTR", handle=handle)
+
+    device.configure_measurement(measure_function="dc_current", nplc=1.0, auto_range=False)
+
+    assert handle.commands == [
+        "*RST",
+        ":SENSE:FUNCTION 'CURRENT:DC'",
+        ":SENSE:CURRENT:DC:NPLCYCLES 1",
+    ]
+
+
+def test_adcmt_7461a_can_use_adc_command_language_when_configured():
     handle = FakeVisaHandle()
     handle.read_responses = ["+1.234500E+00"]
-    device = ADCMT7461A("GPIB0::27::INSTR", handle=handle)
+    device = ADCMT7461A("GPIB0::27::INSTR", handle=handle, command_language="adc")
     device.READ_DELAY_S = 0
 
     device.configure_measurement(measure_function="dc_voltage", nplc=1.234, auto_range=True)
@@ -179,25 +213,10 @@ def test_adcmt_7461a_configures_dc_voltage_and_reads_with_adc_trigger():
     assert value == 1.2345
 
 
-def test_adcmt_7461a_configures_dc_current_without_auto_range():
-    handle = FakeVisaHandle()
-    device = ADCMT7461A("GPIB0::27::INSTR", handle=handle)
-
-    device.configure_measurement(measure_function="dc_current", nplc=10, auto_range=False)
-
-    assert handle.commands == [
-        "*RST",
-        "H0",
-        "F5",
-        "ITP10",
-    ]
-
-
 def test_adcmt_7461a_rejects_unexpected_measurement_response():
     handle = FakeVisaHandle()
-    handle.read_responses = ["ERR"]
+    handle.query_responses = ["ERR"]
     device = ADCMT7461A("GPIB0::27::INSTR", handle=handle)
-    device.READ_DELAY_S = 0
 
     try:
         device.read_once()
@@ -206,25 +225,35 @@ def test_adcmt_7461a_rejects_unexpected_measurement_response():
     else:
         raise AssertionError("Expected ADCMT response error")
 
-    assert "Unexpected ADCMT 7461A measurement response" in message
+    assert "Unexpected numeric response" in message
     assert "ERR" in message
 
 
 def test_adcmt_7461a_discards_first_reading_after_settle():
     handle = FakeVisaHandle()
-    handle.read_responses = ["0.0", "1.2345"]
+    handle.query_responses = ["0.0", "1.2345"]
     device = ADCMT7461A("GPIB0::27::INSTR", handle=handle)
-    device.READ_DELAY_S = 0
 
     device.prepare_for_reading()
     value = device.read_once()
 
     assert value == 1.2345
+    assert handle.commands == [":FETCH?", ":FETCH?"]
 
 
-def test_adcmt_7461a_connect_status_uses_adc_error_query():
+def test_adcmt_7461a_connect_status_uses_scpi_error_query_by_default():
     handle = FakeVisaHandle()
     device = ADCMT7461A("USB0::1::INSTR", handle=handle)
+
+    status = device.connect_status()
+
+    assert status == "0,No error"
+    assert handle.commands == ["*CLS", ":SYSTem:ERRor?"]
+
+
+def test_adcmt_7461a_connect_status_uses_adc_error_query_when_configured():
+    handle = FakeVisaHandle()
+    device = ADCMT7461A("USB0::1::INSTR", handle=handle, command_language="adc")
     device.USB_QUERY_DELAY_S = 0
 
     status = device.connect_status()
