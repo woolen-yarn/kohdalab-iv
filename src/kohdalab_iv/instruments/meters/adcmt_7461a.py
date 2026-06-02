@@ -120,6 +120,8 @@ class ADCMT7461A(VisaDevice):
 
     def connect_status(self) -> str:
         self.clear_status()
+        if self._uses_scpi and self._uses_usb:
+            return "status cleared"
         if self._uses_scpi:
             return self._drain_scpi_errors()
         return self.error_status()

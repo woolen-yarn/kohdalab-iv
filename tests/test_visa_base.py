@@ -254,9 +254,19 @@ def test_adcmt_7461a_discards_first_reading_after_settle():
     assert handle.commands == [":READ?", ":READ?"]
 
 
-def test_adcmt_7461a_connect_status_uses_scpi_error_query_by_default():
+def test_adcmt_7461a_usb_connect_status_clears_without_scpi_error_query():
     handle = FakeVisaHandle()
     device = ADCMT7461A("USB0::1::INSTR", handle=handle)
+
+    status = device.connect_status()
+
+    assert status == "status cleared"
+    assert handle.commands == ["*CLS"]
+
+
+def test_adcmt_7461a_gpib_connect_status_uses_scpi_error_query():
+    handle = FakeVisaHandle()
+    device = ADCMT7461A("GPIB0::27::INSTR", handle=handle)
 
     status = device.connect_status()
 
@@ -267,7 +277,7 @@ def test_adcmt_7461a_connect_status_uses_scpi_error_query_by_default():
 def test_adcmt_7461a_connect_status_drains_stale_undefined_header():
     handle = FakeVisaHandle()
     handle.query_responses = ["-113,Undefined header", "0,No error"]
-    device = ADCMT7461A("USB0::1::INSTR", handle=handle)
+    device = ADCMT7461A("GPIB0::27::INSTR", handle=handle)
 
     status = device.connect_status()
 
