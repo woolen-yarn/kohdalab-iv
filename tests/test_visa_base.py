@@ -83,6 +83,10 @@ class FakeVisaHandle:
     def write(self, command):
         self.commands.append(command)
 
+    def query(self, command):
+        self.commands.append(command)
+        return "0,No error"
+
     def control_ren(self, mode):
         self.ren_modes.append(mode)
 
@@ -164,10 +168,13 @@ def test_adcmt_7461a_configures_dc_voltage_and_reads_with_measure_query():
     value = device.read_once()
 
     assert handle.commands == [
-        "CONFigure:VOLTage:DC",
-        "SENSe:VOLTage:DC:RANGe:AUTO ON",
-        "SENSe:VOLTage:DC:NPLCycles 1.234",
-        "MEASure?",
+        ":SENSE:FUNCTION 'VOLTAGE:DC'",
+        ":SYSTem:ERRor?",
+        ":SENSE:VOLTAGE:DC:RANGE:AUTO ON",
+        ":SYSTem:ERRor?",
+        ":SENSE:VOLTAGE:DC:SRATE SSLOW",
+        ":SYSTem:ERRor?",
+        ":READ?",
     ]
     assert value == 1.2345
 
@@ -179,9 +186,31 @@ def test_adcmt_7461a_configures_dc_current_without_auto_range():
     device.configure_measurement(measure_function="dc_current", nplc=10, auto_range=False)
 
     assert handle.commands == [
-        "CONFigure:CURRent:DC",
-        "SENSe:CURRent:DC:NPLCycles 10",
+        ":SENSE:FUNCTION 'CURRENT:DC'",
+        ":SYSTem:ERRor?",
+        ":SENSE:CURRENT:DC:SRATE SSLOW",
+        ":SYSTem:ERRor?",
     ]
+
+
+def test_adcmt_7461a_raises_command_error_with_context():
+    class ErrorHandle(FakeVisaHandle):
+        def query(self, command):
+            self.commands.append(command)
+            return "-113,Undefined header"
+
+    handle = ErrorHandle()
+    device = ADCMT7461A("GPIB0::27::INSTR", handle=handle)
+
+    try:
+        device.configure_measurement(measure_function="dc_voltage", nplc=1, auto_range=True)
+    except RuntimeError as e:
+        message = str(e)
+    else:
+        raise AssertionError("Expected ADCMT command error")
+
+    assert ":SENSE:FUNCTION 'VOLTAGE:DC'" in message
+    assert "-113" in message
 
 
 def test_visa_device_is_connected_detects_closed_handle():
