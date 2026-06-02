@@ -43,7 +43,9 @@ class Agilent34401A(AgilentDMM):
 
 class Agilent34411A(AgilentDMM):
     def local(self) -> None:
+        self.gpib_go_to_local()
         self.gpib_go_to_local(release_ren=True)
+        self.gpib_deassert_ren()
 
     def configure_measurement(self, *, measure_function: str, nplc: float, auto_range: bool = True) -> None:
         super().configure_measurement(

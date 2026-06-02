@@ -46,4 +46,8 @@ def test_34411a_local_uses_gpib_gtl_with_ren_release():
     device.local()
 
     assert handle.commands == []
-    assert handle.ren_modes == [constants.VI_GPIB_REN_DEASSERT_GTL]
+    assert handle.ren_modes == [
+        constants.VI_GPIB_REN_ADDRESS_GTL,
+        constants.VI_GPIB_REN_DEASSERT_GTL,
+        constants.VI_GPIB_REN_DEASSERT,
+    ]

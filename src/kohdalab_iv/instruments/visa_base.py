@@ -57,6 +57,14 @@ class VisaDevice:
         except Exception:
             pass
 
+    def gpib_deassert_ren(self) -> None:
+        try:
+            from pyvisa import constants
+
+            self.inst.control_ren(constants.VI_GPIB_REN_DEASSERT)
+        except Exception:
+            pass
+
     def close(self) -> None:
         self.inst.close()
 
