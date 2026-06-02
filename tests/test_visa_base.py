@@ -306,7 +306,7 @@ def test_adcmt_7461a_scpi_syncs_after_setting_commands():
     ]
 
 
-def test_adcmt_7461a_local_aborts_pending_scpi_measurement_before_gtl():
+def test_adcmt_7461a_local_aborts_pending_scpi_measurement_before_addressed_gtl():
     handle = FakeVisaHandle()
     device = ADCMT7461A("GPIB0::27::INSTR", handle=handle)
 
@@ -314,8 +314,11 @@ def test_adcmt_7461a_local_aborts_pending_scpi_measurement_before_gtl():
 
     assert handle.clear_count == 1
     assert handle.commands[:4] == [":ABORt", ":SYSTem:ERRor?", "*CLS", ":SYSTem:ERRor?"]
-    assert handle._resource_manager.opened_resources == ["GPIB0::INTFC"]
-    assert handle.ren_modes[-1] == constants.VI_GPIB_REN_DEASSERT
+    assert handle._resource_manager.opened_resources == []
+    assert handle.visalib.gpib_commands == [
+        (handle.session, bytes([0x3F, 0x20 + 26, 0x01, 0x3F])),
+    ]
+    assert handle.ren_modes == [constants.VI_GPIB_REN_ADDRESS_GTL]
 
 
 def test_visa_device_is_connected_detects_closed_handle():

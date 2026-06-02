@@ -228,19 +228,20 @@ def test_device_session_returns_device_to_local_on_disconnect():
     assert fake.resource_manager_closed is False
 
 
-def test_device_session_releases_gpib_board_after_single_disconnect(monkeypatch):
+def test_device_session_keeps_gpib_board_asserted_after_single_disconnect(monkeypatch):
     released = []
     session = DeviceSession(copy.deepcopy(DEFAULT_CONFIG), auto_connect=False)
     session.sources["gs210"] = FakeDeviceForSession()
     session.sources["gs210"].resource = "GPIB0::2::INSTR"
     monkeypatch.setattr(session_module, "release_gpib_remote", released.append)
 
-    session.disconnect_device("source.gs210")
+    affected = session.disconnect_device("source.gs210")
 
-    assert released == ["GPIB0"]
+    assert affected == ["source.gs210"]
+    assert released == []
 
 
-def test_device_session_disconnects_all_devices_on_same_gpib_board(monkeypatch):
+def test_device_session_single_disconnect_leaves_other_gpib_devices_connected(monkeypatch):
     released = []
     session = DeviceSession(copy.deepcopy(DEFAULT_CONFIG), auto_connect=False)
     source = FakeDeviceForSession()
@@ -253,10 +254,10 @@ def test_device_session_disconnects_all_devices_on_same_gpib_board(monkeypatch):
 
     affected = session.disconnect_device("meter.dmm_7461a")
 
-    assert affected == ["meter.dmm_7461a", "source.gs210"]
+    assert affected == ["meter.dmm_7461a"]
     assert meter.closed is True
-    assert source.closed is True
-    assert released == ["GPIB0"]
+    assert source.closed is False
+    assert released == []
 
 
 def test_device_session_releases_gpib_boards_after_disconnect_all(monkeypatch):

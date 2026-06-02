@@ -5,19 +5,11 @@ import sys
 from pathlib import Path
 from typing import Any
 
-from kohdalab_iv.api.config import (
-    instrument_config,
-    load_config,
-    output_path,
-    resolve_config_path,
-    save_config,
-    write_last_config_path,
-)
+from kohdalab_iv.api.config import load_config, output_path, resolve_config_path, save_config, write_last_config_path
 from kohdalab_iv.api.experiment import Experiment
 from kohdalab_iv.api.formatting import format_conductance, format_resistance
 from kohdalab_iv.api.scan_plan import iv_plan_from_config
 from kohdalab_iv.interfaces.common import list_visa_resources
-from kohdalab_iv.instruments.visa_base import gpib_board_from_resource
 
 
 SOURCE_MODELS = ["YOKOGAWA_GS210"]
@@ -798,9 +790,7 @@ def main() -> None:
                 return f"status unavailable: {e}"
 
         def disconnect_meter(self) -> None:
-            source_ref, meter_ref = self._active_refs(self.config)
-            if self._same_gpib_board(source_ref, meter_ref):
-                self._safe_zero_output_off(raise_errors=False)
+            _, meter_ref = self._active_refs(self.config)
             affected = self.experiment.disconnect_device(meter_ref)
             self._mark_disconnected(affected or [meter_ref])
             self.append_log(f"Disconnected {', '.join(affected or [meter_ref])}.")
@@ -810,14 +800,6 @@ def main() -> None:
                 self.source_status.setText("local")
             if any(ref.startswith("meter.") for ref in refs):
                 self.meter_status.setText("local")
-
-        def _same_gpib_board(self, left_ref: str, right_ref: str) -> bool:
-            try:
-                left = gpib_board_from_resource(str(instrument_config(self.config, left_ref).get("resource", "")))
-                right = gpib_board_from_resource(str(instrument_config(self.config, right_ref).get("resource", "")))
-            except Exception:
-                return False
-            return left is not None and left == right
 
         def check_plan(self) -> None:
             try:

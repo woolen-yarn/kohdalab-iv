@@ -41,10 +41,15 @@ class ADCMT7461A(VisaDevice):
 
     def local(self) -> None:
         self.prepare_for_disconnect()
-        self.release_remote_control()
+        if self._uses_gpib:
+            self.gpib_send_go_to_local()
+            self.gpib_go_to_local()
+        elif self._uses_usb:
+            self.usb_go_to_local()
+            self.usb_deassert_ren()
 
     def local_after_close(self) -> None:
-        self.gpib_interface_go_to_local(release_ren=True)
+        pass
 
     def prepare_for_disconnect(self) -> None:
         self.clear()
@@ -122,6 +127,14 @@ class ADCMT7461A(VisaDevice):
     @property
     def _uses_scpi(self) -> bool:
         return self.command_language == "scpi"
+
+    @property
+    def _uses_gpib(self) -> bool:
+        return self.resource.strip().upper().startswith("GPIB")
+
+    @property
+    def _uses_usb(self) -> bool:
+        return self.resource.strip().upper().startswith("USB")
 
     def _try_write(self, command: str) -> None:
         try:
