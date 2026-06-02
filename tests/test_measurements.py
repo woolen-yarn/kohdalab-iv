@@ -41,11 +41,17 @@ class FakeMeter:
     def __init__(self, values):
         self.values = list(values)
         self.configured = False
+        self.commands = []
 
     def configure_measurement(self, **kwargs):
         self.configured = True
+        self.commands.append(("configure", kwargs))
+
+    def prepare_for_reading(self):
+        self.commands.append(("prepare", None))
 
     def read_average(self, count):
+        self.commands.append(("read", count))
         return self.values.pop(0)
 
 
@@ -132,6 +138,25 @@ def test_run_iv_writes_rows_and_turns_output_off(tmp_path):
     assert (tmp_path / "run.csv").read_text(encoding="utf-8").startswith(
         "timestamp,elapsed_s,point_index,direction,target_value,target_unit,voltage_V,current_A,resistance_Ohm,conductance_S"
     )
+
+
+def test_run_iv_prepares_meter_after_source_settle_before_read(tmp_path):
+    config = _small_config()
+    plan = iv_plan_from_config(config)
+    source = FakeSource()
+    meter = FakeMeter([0.0, 1e-6, 2e-6])
+    session = FakeSession(source, meter)
+
+    run_iv(config, plan=plan, output=tmp_path / "run.csv", session=session)
+
+    assert meter.commands[1:] == [
+        ("prepare", None),
+        ("read", 1),
+        ("prepare", None),
+        ("read", 1),
+        ("prepare", None),
+        ("read", 1),
+    ]
 
 
 def test_run_iv_stops_after_compliance(tmp_path):

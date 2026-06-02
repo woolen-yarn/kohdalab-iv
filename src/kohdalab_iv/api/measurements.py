@@ -103,6 +103,12 @@ def _configure_devices(plan: IvPlan, source, meter) -> None:
     )
 
 
+def _prepare_meter_for_reading(meter) -> None:
+    prepare = getattr(meter, "prepare_for_reading", None)
+    if prepare is not None:
+        prepare()
+
+
 def run_iv(
     config: dict[str, Any],
     *,
@@ -164,6 +170,7 @@ def run_iv(
                     cleanup_action = plan.on_stop
                     break
                 _emit(on_status, STATUS_READING)
+                _prepare_meter_for_reading(meter)
                 meter_value = meter.read_average(plan.average_count)
                 source_readback = source.read_level()
                 provisional = iv_row(

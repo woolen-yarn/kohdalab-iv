@@ -16,6 +16,7 @@ class ADCMT7461A(VisaDevice):
     }
     USB_QUERY_DELAY_S = 0.02
     READ_DELAY_S = 0.02
+    DISCARD_READINGS_AFTER_SETTLE = 1
 
     def local(self) -> None:
         self.release_remote_control()
@@ -42,6 +43,13 @@ class ADCMT7461A(VisaDevice):
         if not match:
             raise RuntimeError(f"Unexpected ADCMT 7461A measurement response: {response!r}")
         return float(match.group(0))
+
+    def prepare_for_reading(self) -> None:
+        for _ in range(max(0, int(self.DISCARD_READINGS_AFTER_SETTLE))):
+            try:
+                self.read_once()
+            except Exception:
+                break
 
     def read_average(self, count: int) -> float:
         values = [self.read_once() for _ in range(max(1, int(count)))]

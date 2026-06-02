@@ -210,6 +210,18 @@ def test_adcmt_7461a_rejects_unexpected_measurement_response():
     assert "ERR" in message
 
 
+def test_adcmt_7461a_discards_first_reading_after_settle():
+    handle = FakeVisaHandle()
+    handle.read_responses = ["0.0", "1.2345"]
+    device = ADCMT7461A("GPIB0::27::INSTR", handle=handle)
+    device.READ_DELAY_S = 0
+
+    device.prepare_for_reading()
+    value = device.read_once()
+
+    assert value == 1.2345
+
+
 def test_adcmt_7461a_connect_status_uses_adc_error_query():
     handle = FakeVisaHandle()
     device = ADCMT7461A("USB0::1::INSTR", handle=handle)
