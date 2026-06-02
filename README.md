@@ -48,7 +48,7 @@ GUI は 3 パネル構成です。
 `Config` は `config/default.json` を読み書きします。最後に開いた config も記憶しますが、このプロジェクトの標準 config は `default.json` です。
 
 `Source` は GS210 を対象にします。`Meter` では 34401A、34411A、34465A、7461A を選択でき、DMM の積分条件として `NPLC` を設定します。
-ADCMT 7461A は `command_language` で SCPI/ADC を切り替えられます。標準 config は `scpi` です。GPIB では sweep 設定を送ってから `READ?` で読みます。USB では Error 113/102 を避けるため、関数設定を `:CONF:VOLT:DC` または `:CONF:CURR:DC` で1回だけ行い、`*OPC?` で同期してから各 reading を `:MEAS?` で取得します。
+ADCMT 7461A は `command_language` で SCPI/ADC を切り替えられます。標準 config は `scpi` です。GPIB では SCPI 設定を送ってから `READ?` で読みます。USB では 7461A を ADC コマンド系として扱い、`F1`/`F5`、`R0`、`ITP<nplc>` で設定してから output data を読みます。
 
 `Measurement` では sweep 形状と各点の測定条件を設定します。
 
@@ -164,11 +164,9 @@ opened config, but this project keeps one standard config: `default.json`.
 `Source` targets the GS210. `Meter` selects 34401A, 34411A, 34465A, or 7461A and exposes
 the DMM integration setting, `NPLC`.
 The ADCMT 7461A command set is selected with `command_language`. The standard
-config uses `scpi`. Over GPIB, sweep setup is sent before readings are taken
-with `READ?`. Over USB, the driver avoids repeated setup commands and `READ?`
-to avoid Error 113/102; it configures the function once with `:CONF:VOLT:DC` or
-`:CONF:CURR:DC`, synchronizes the setting with `*OPC?`, and reads each point
-with `:MEAS?`.
+config uses `scpi`. Over GPIB, SCPI setup is sent before readings are taken
+with `READ?`. Over USB, the driver treats the 7461A as an ADC-command device:
+it configures with `F1`/`F5`, `R0`, and `ITP<nplc>`, then reads output data.
 
 `Measurement` owns the sweep shape and point timing.
 

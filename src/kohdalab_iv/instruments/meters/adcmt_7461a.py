@@ -15,8 +15,8 @@ class ADCMT7461A(VisaDevice):
         "dc_current": "F5",
     }
     SCPI_FUNCTION_COMMANDS = {
-        "dc_voltage": "VOLT:DC",
-        "dc_current": "CURR:DC",
+        "dc_voltage": "VOLTAGE:DC",
+        "dc_current": "CURRENT:DC",
     }
     SRATE_BY_MAX_NPLC = (
         (0.02, "FAST"),
@@ -70,14 +70,10 @@ class ADCMT7461A(VisaDevice):
         if function is None:
             raise ValueError(f"Unsupported DMM measure function: {measure_function}")
 
-        if self._uses_usb:
-            self._write_scpi_setting(f":CONF:{function}")
-            return
-
         self._drain_scpi_errors()
         self._write_scpi_setting("*RST")
-        self._write_scpi_setting(f':SENS:FUNC "{function}"')
-        self._write_scpi_setting(f":SENS:{function}:SRATE {self._sampling_rate(nplc)}")
+        self._write_scpi_setting(f":SENSE:FUNCTION '{function}'")
+        self._write_scpi_setting(f":SENSE:{function}:SRATE {self._sampling_rate(nplc)}")
 
     def _configure_measurement_adc(self, *, measure_function: str, nplc: float, auto_range: bool) -> None:
         function = self.ADC_FUNCTION_COMMANDS.get(measure_function)
@@ -93,8 +89,6 @@ class ADCMT7461A(VisaDevice):
 
     def read_once(self) -> float:
         if self._uses_scpi:
-            if self._uses_usb:
-                return self.query_float(":MEAS?")
             return self.query_float("READ?")
         time.sleep(self.READ_DELAY_S)
         response = str(self.inst.read()).strip()
@@ -115,9 +109,6 @@ class ADCMT7461A(VisaDevice):
         return float(fmean(values))
 
     def clear_status(self) -> None:
-        if self._uses_scpi and self._uses_usb:
-            self._write_scpi_setting("*CLS")
-            return
         self.write("*CLS")
 
     def error_status(self) -> str:
@@ -135,7 +126,7 @@ class ADCMT7461A(VisaDevice):
 
     @property
     def _uses_scpi(self) -> bool:
-        return self.command_language == "scpi"
+        return self.command_language == "scpi" and not self._uses_usb
 
     @property
     def _uses_gpib(self) -> bool:
@@ -153,9 +144,6 @@ class ADCMT7461A(VisaDevice):
 
     def _write_scpi_setting(self, command: str) -> str | None:
         self.write(command)
-        if self._uses_usb:
-            self._sync_usb_scpi_setting()
-            return None
         return self._drain_scpi_errors()
 
     def _try_scpi_setting(self, command: str) -> str | None:
@@ -175,12 +163,6 @@ class ADCMT7461A(VisaDevice):
             if first_problem is None and not self._is_undefined_header(status):
                 first_problem = status
         return first_problem or last_status
-
-    def _sync_usb_scpi_setting(self) -> None:
-        try:
-            self.query("*OPC?")
-        except Exception:
-            pass
 
     def _is_no_error(self, status: str) -> bool:
         normalized = str(status).strip().lower()
