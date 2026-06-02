@@ -1,5 +1,7 @@
 import copy
 
+import pytest
+
 from kohdalab_iv.api.config import DEFAULT_CONFIG
 from kohdalab_iv.api.measurements import run_iv
 from kohdalab_iv.api.scan_plan import iv_plan_from_config
@@ -61,20 +63,36 @@ class FakeDeviceForSession:
     def __init__(self):
         self.local_called = False
         self.closed = False
+        self.connected = True
         self.local_after_close_called = False
         self.resource_manager_closed = False
+        self.resource = "GPIB0::1::INSTR"
 
     def local(self):
         self.local_called = True
 
     def close(self):
         self.closed = True
+        self.connected = False
 
     def local_after_close(self):
         self.local_after_close_called = True
 
     def close_resource_manager(self):
         self.resource_manager_closed = True
+
+    def is_connected(self):
+        return self.connected and not self.closed
+
+
+class FakeConnectDevice(FakeDeviceForSession):
+    instances = []
+
+    def __init__(self, resource, *, timeout_ms=5000):
+        super().__init__()
+        self.resource = resource
+        self.timeout_ms = timeout_ms
+        self.__class__.instances.append(self)
 
 
 def _small_config():
@@ -167,7 +185,7 @@ def test_device_session_returns_device_to_local_on_disconnect():
     assert fake.local_called is True
     assert fake.closed is True
     assert fake.local_after_close_called is True
-    assert fake.resource_manager_closed is True
+    assert fake.resource_manager_closed is False
 
 
 def test_device_session_releases_gpib_boards_after_disconnect_all(monkeypatch):
@@ -182,6 +200,57 @@ def test_device_session_releases_gpib_boards_after_disconnect_all(monkeypatch):
     session.disconnect_all()
 
     assert released == ["GPIB0"]
+
+
+def test_device_session_does_not_report_closed_devices_as_connected():
+    session = DeviceSession(copy.deepcopy(DEFAULT_CONFIG), auto_connect=False)
+    fake = FakeDeviceForSession()
+    fake.connected = False
+    session.sources["gs210"] = fake
+
+    connected = session.connected_devices()
+
+    assert connected["source.gs210"] is False
+    assert "gs210" not in session.sources
+
+
+def test_device_session_rejects_stale_device_when_auto_connect_is_disabled():
+    session = DeviceSession(copy.deepcopy(DEFAULT_CONFIG), auto_connect=False)
+    fake = FakeDeviceForSession()
+    fake.connected = False
+    session.sources["gs210"] = fake
+
+    with pytest.raises(RuntimeError, match="Device not connected"):
+        session.require("source.gs210")
+
+    assert fake.closed is True
+    assert "gs210" not in session.sources
+
+
+def test_device_session_reuses_existing_open_device(monkeypatch):
+    FakeConnectDevice.instances = []
+    monkeypatch.setitem(session_module.SOURCE_CONTROLLERS, "YOKOGAWA_GS210", FakeConnectDevice)
+    session = DeviceSession(copy.deepcopy(DEFAULT_CONFIG), auto_connect=False)
+
+    first = session.connect_device("source.gs210")
+    second = session.connect_device("source.gs210")
+
+    assert second is first
+    assert len(FakeConnectDevice.instances) == 1
+
+
+def test_device_session_replaces_stale_device_on_reconnect(monkeypatch):
+    FakeConnectDevice.instances = []
+    monkeypatch.setitem(session_module.SOURCE_CONTROLLERS, "YOKOGAWA_GS210", FakeConnectDevice)
+    session = DeviceSession(copy.deepcopy(DEFAULT_CONFIG), auto_connect=False)
+    first = session.connect_device("source.gs210")
+    first.connected = False
+
+    second = session.connect_device("source.gs210")
+
+    assert second is not first
+    assert first.closed is True
+    assert len(FakeConnectDevice.instances) == 2
 
 
 def test_device_session_supports_keysight_34465a():

@@ -39,7 +39,18 @@ class DeviceSession:
         cls = SOURCE_CONTROLLERS.get(model) if kind == "source" else METER_CONTROLLERS.get(model)
         if cls is None:
             raise ValueError(f"Unsupported {kind} model: {model}")
-        device = cls(str(cfg["resource"]), timeout_ms=int(cfg.get("timeout_ms", 5000)))
+        resource = str(cfg["resource"])
+        with self._lock:
+            existing = self._map(kind).get(key)
+        if existing is not None:
+            if (
+                isinstance(existing, cls)
+                and getattr(existing, "resource", None) == resource
+                and self._device_is_connected(existing)
+            ):
+                return existing
+            self.disconnect_device(ref)
+        device = cls(resource, timeout_ms=int(cfg.get("timeout_ms", 5000)))
         with self._lock:
             self._map(kind)[key] = device
         return device
@@ -56,25 +67,7 @@ class DeviceSession:
         with self._lock:
             device = self._map(kind).pop(key, None)
         if device is not None:
-            try:
-                if hasattr(device, "local"):
-                    device.local()
-            except Exception:
-                pass
-            try:
-                device.close()
-            except Exception:
-                pass
-            try:
-                if hasattr(device, "local_after_close"):
-                    device.local_after_close()
-            except Exception:
-                pass
-            try:
-                if hasattr(device, "close_resource_manager"):
-                    device.close_resource_manager()
-            except Exception:
-                pass
+            self._return_and_close_device(device)
 
     def disconnect_all(self) -> None:
         boards = {
@@ -95,18 +88,54 @@ class DeviceSession:
             devices = self.config.get("instruments", {}).get(kind, {})
             if isinstance(devices, dict):
                 for key in devices:
-                    connected[f"{kind}.{key}"] = key in self._map(kind)
+                    with self._lock:
+                        device = self._map(kind).get(key)
+                    is_connected = device is not None and self._device_is_connected(device)
+                    if device is not None and not is_connected:
+                        with self._lock:
+                            if self._map(kind).get(key) is device:
+                                self._map(kind).pop(key, None)
+                    connected[f"{kind}.{key}"] = is_connected
         return connected
 
     def require(self, ref: str):
         kind, key = ref.split(".", 1)
         with self._lock:
             device = self._map(kind).get(key)
-        if device is not None:
+        if device is not None and self._device_is_connected(device):
             return device
+        if device is not None:
+            with self._lock:
+                if self._map(kind).get(key) is device:
+                    self._map(kind).pop(key, None)
+            self._return_and_close_device(device)
         if not self.auto_connect:
             raise RuntimeError(f"Device not connected: {ref}")
         return self.connect_device(ref)
+
+    def _return_and_close_device(self, device) -> None:
+        try:
+            if hasattr(device, "local"):
+                device.local()
+        except Exception:
+            pass
+        try:
+            device.close()
+        except Exception:
+            pass
+        try:
+            if hasattr(device, "local_after_close"):
+                device.local_after_close()
+        except Exception:
+            pass
+
+    def _device_is_connected(self, device) -> bool:
+        if hasattr(device, "is_connected"):
+            try:
+                return bool(device.is_connected())
+            except Exception:
+                return False
+        return True
 
     def _map(self, kind: str) -> dict[str, Any]:
         if kind == "source":

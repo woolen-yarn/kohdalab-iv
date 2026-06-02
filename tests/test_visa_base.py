@@ -74,6 +74,7 @@ class FakeVisaHandle:
         self.ren_modes = []
         self.usb_control_outs = []
         self.session = object()
+        self.invalid_session = False
         self.visalib = FakeVisaLib()
         self._resource_manager = FakeResourceManager()
 
@@ -84,6 +85,8 @@ class FakeVisaHandle:
         self.ren_modes.append(mode)
 
     def get_visa_attribute(self, attribute):
+        if self.invalid_session and attribute == constants.VI_ATTR_RSRC_CLASS:
+            raise RuntimeError("Invalid session handle")
         if attribute == constants.VI_ATTR_GPIB_PRIMARY_ADDR:
             return 26
         if attribute == constants.VI_ATTR_USB_INTFC_NUM:
@@ -94,7 +97,7 @@ class FakeVisaHandle:
         self.usb_control_outs.append((request_type, request_id, request_value, index, data))
 
     def close(self):
-        pass
+        self.session = None
 
 
 def test_local_sends_scpi_local_and_gpib_gtl():
@@ -145,6 +148,25 @@ def test_34411a_local_uses_gpib_gtl_with_ren_release():
         (0x21, 0xA1, 0, 3, b""),
         (0x21, 0xA0, 0, 3, b""),
     ]
+
+
+def test_visa_device_is_connected_detects_closed_handle():
+    handle = FakeVisaHandle()
+    device = VisaDevice("GPIB0::26::INSTR", handle=handle)
+
+    assert device.is_connected() is True
+    handle.close()
+
+    assert device.is_connected() is False
+
+
+def test_visa_device_is_connected_detects_invalid_session_handle():
+    handle = FakeVisaHandle()
+    device = VisaDevice("GPIB0::26::INSTR", handle=handle)
+
+    handle.invalid_session = True
+
+    assert device.is_connected() is False
 
 
 def test_ni4882_set_ren_deasserts_ren_and_closes_board_handle():

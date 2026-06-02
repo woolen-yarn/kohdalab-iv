@@ -267,4 +267,14 @@ class VisaDevice:
             pass
 
     def is_connected(self) -> bool:
-        return getattr(self.inst, "session", None) is not None
+        if getattr(self.inst, "session", None) is None:
+            return False
+        if not hasattr(self.inst, "get_visa_attribute"):
+            return True
+        try:
+            from pyvisa import constants
+
+            self.inst.get_visa_attribute(constants.VI_ATTR_RSRC_CLASS)
+        except Exception:
+            return False
+        return True
