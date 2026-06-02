@@ -9,6 +9,44 @@ from kohdalab_iv.interfaces.common import open_visa
 _FLOAT_RE = re.compile(r"[-+]?(?:\d+(?:\.\d*)?|\.\d+)(?:[Ee][-+]?\d+)?")
 
 
+def gpib_board_from_resource(resource: str) -> str | None:
+    match = re.search(r"\b(GPIB\d*)::", str(resource), flags=re.IGNORECASE)
+    if match is None:
+        return None
+    return match.group(1).upper()
+
+
+def release_gpib_remote(board: str) -> None:
+    try:
+        import pyvisa
+        from pyvisa import constants
+
+        resource_manager = pyvisa.ResourceManager()
+    except Exception:
+        return
+    interface = None
+    try:
+        interface = resource_manager.open_resource(f"{board}::INTFC")
+        try:
+            interface.send_command(bytes([0x3F]))
+        except Exception:
+            pass
+        interface.control_ren(constants.VI_GPIB_REN_DEASSERT_GTL)
+        interface.control_ren(constants.VI_GPIB_REN_DEASSERT)
+    except Exception:
+        pass
+    finally:
+        if interface is not None:
+            try:
+                interface.close()
+            except Exception:
+                pass
+        try:
+            resource_manager.close()
+        except Exception:
+            pass
+
+
 class VisaDevice:
     def __init__(self, resource: str, *, timeout_ms: int = 5000, handle: Any | None = None):
         self.resource = resource
@@ -105,13 +143,13 @@ class VisaDevice:
                     pass
 
     def _gpib_location(self) -> tuple[str, int] | None:
-        match = re.search(r"\b(GPIB\d*)::(\d+)", self.resource, flags=re.IGNORECASE)
-        if match is None:
+        board = gpib_board_from_resource(self.resource)
+        if board is None:
             return None
         address = self._gpib_primary_address()
         if address is None:
             return None
-        return match.group(1).upper(), address
+        return board, address
 
     def _gpib_primary_address(self) -> int | None:
         try:

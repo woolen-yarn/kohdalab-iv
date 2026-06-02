@@ -6,6 +6,7 @@ from typing import Any
 from kohdalab_iv.api.config import instrument_config
 from kohdalab_iv.instruments.meters.agilent_dmm import Agilent34401A, Agilent34411A
 from kohdalab_iv.instruments.sources.gs210 import YokogawaGS210
+from kohdalab_iv.instruments.visa_base import gpib_board_from_resource, release_gpib_remote
 
 
 SOURCE_CONTROLLERS = {
@@ -75,9 +76,17 @@ class DeviceSession:
                 pass
 
     def disconnect_all(self) -> None:
+        boards = {
+            board
+            for kind in ("source", "meter")
+            for device in list(self._map(kind).values())
+            if (board := gpib_board_from_resource(getattr(device, "resource", ""))) is not None
+        }
         for kind in ("source", "meter"):
             for key in list(self._map(kind)):
                 self.disconnect_device(f"{kind}.{key}")
+        for board in sorted(boards):
+            release_gpib_remote(board)
 
     def connected_devices(self) -> dict[str, bool]:
         connected: dict[str, bool] = {}

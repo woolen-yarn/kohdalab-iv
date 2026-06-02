@@ -3,6 +3,7 @@ import copy
 from kohdalab_iv.api.config import DEFAULT_CONFIG
 from kohdalab_iv.api.measurements import run_iv
 from kohdalab_iv.api.scan_plan import iv_plan_from_config
+from kohdalab_iv.api import session as session_module
 from kohdalab_iv.api.session import DeviceSession
 
 
@@ -166,3 +167,17 @@ def test_device_session_returns_device_to_local_on_disconnect():
     assert fake.closed is True
     assert fake.local_after_close_called is True
     assert fake.resource_manager_closed is True
+
+
+def test_device_session_releases_gpib_boards_after_disconnect_all(monkeypatch):
+    released = []
+    session = DeviceSession(copy.deepcopy(DEFAULT_CONFIG), auto_connect=False)
+    session.sources["gs210"] = FakeDeviceForSession()
+    session.sources["gs210"].resource = "GPIB0::2::INSTR"
+    session.meters["dmm"] = FakeDeviceForSession()
+    session.meters["dmm"].resource = "GPIB0::26::INSTR"
+    monkeypatch.setattr(session_module, "release_gpib_remote", released.append)
+
+    session.disconnect_all()
+
+    assert released == ["GPIB0"]
