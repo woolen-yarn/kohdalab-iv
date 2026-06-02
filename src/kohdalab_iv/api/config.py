@@ -108,7 +108,13 @@ DEFAULT_CONFIG: dict[str, Any] = {
                 "transport": "visa",
                 "resource": "GPIB0::2::INSTR",
                 "timeout_ms": 5000,
-            }
+            },
+            "yokogawa_7651": {
+                "model": "YOKOGAWA_7651",
+                "transport": "visa",
+                "resource": "GPIB0::1::INSTR",
+                "timeout_ms": 5000,
+            },
         },
         "meter": {
             "dmm_34401a": {

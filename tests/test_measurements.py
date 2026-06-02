@@ -11,6 +11,7 @@ from kohdalab_iv.instruments.meters.adcmt_7461a import ADCMT7461A
 from kohdalab_iv.instruments.meters.agilent_34411a import Agilent34411A
 from kohdalab_iv.instruments.meters.keysight_34411a import Keysight34411A
 from kohdalab_iv.instruments.meters.keysight_34465a import Keysight34465A
+from kohdalab_iv.instruments.sources.yokogawa_7651 import Yokogawa7651
 
 
 class FakeSource:
@@ -339,6 +340,10 @@ def test_device_session_supports_agilent_34411a():
 
 def test_device_session_supports_adcmt_7461a():
     assert session_module.METER_CONTROLLERS["ADCMT_7461A"] is ADCMT7461A
+
+
+def test_device_session_supports_yokogawa_7651():
+    assert session_module.SOURCE_CONTROLLERS["YOKOGAWA_7651"] is Yokogawa7651
 
 
 def test_device_session_passes_adcmt_command_language(monkeypatch):

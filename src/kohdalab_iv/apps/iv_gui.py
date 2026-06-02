@@ -12,7 +12,7 @@ from kohdalab_iv.api.scan_plan import iv_plan_from_config
 from kohdalab_iv.interfaces.common import list_visa_resources
 
 
-SOURCE_MODELS = ["YOKOGAWA_GS210"]
+SOURCE_MODELS = ["YOKOGAWA_GS210", "YOKOGAWA_7651"]
 METER_MODELS = ["AGILENT_34401A", "AGILENT_34411A", "KEYSIGHT_34411A", "KEYSIGHT_34465A", "ADCMT_7461A"]
 CURRENT_UNITS = ["pA", "nA", "uA", "mA", "A"]
 VOLTAGE_UNITS = ["nV", "uV", "mV", "V"]
@@ -161,6 +161,7 @@ def main() -> None:
 
             self.source_model_combo = QtWidgets.QComboBox()
             self.source_model_combo.addItems(SOURCE_MODELS)
+            self.source_model_combo.currentTextChanged.connect(self._source_model_changed)
             self.source_resource_combo = QtWidgets.QComboBox()
             self.source_resource_combo.setEditable(True)
             self.source_refresh_button = QtWidgets.QPushButton("Refresh")
@@ -565,6 +566,12 @@ def main() -> None:
                     self.meter_resource_combo.setCurrentText(str(cfg.get("resource", "")))
                     return
 
+        def _source_model_changed(self, model: str) -> None:
+            for key, cfg in self.config.get("instruments", {}).get("source", {}).items():
+                if str(cfg.get("model", "")).upper() == model:
+                    self.source_resource_combo.setCurrentText(str(cfg.get("resource", "")))
+                    return
+
         def _load_fields(self) -> None:
             settings = self.config["measurements"]["iv"]
             mode = str(settings.get("mode", "dc_vi"))
@@ -604,7 +611,7 @@ def main() -> None:
 
         def _config_from_fields(self) -> dict[str, Any]:
             config = copy.deepcopy(self.config)
-            source_key = self._source_key()
+            source_key = self._source_key_for_selected_model(config)
             meter_key = self._meter_key_for_selected_model(config)
             source_model = self.source_model_combo.currentText().strip().upper() or "YOKOGAWA_GS210"
             meter_model = self.meter_model_combo.currentText().strip().upper()
@@ -658,6 +665,15 @@ def main() -> None:
             safety["on_error"] = "output_off"
             safety["output_off_on_finish"] = True
             return config
+
+        def _source_key_for_selected_model(self, config: dict[str, Any]) -> str:
+            model = self.source_model_combo.currentText().strip().upper()
+            for key, cfg in config.get("instruments", {}).get("source", {}).items():
+                if str(cfg.get("model", "")).upper() == model:
+                    return key
+            current = self._source_key()
+            config["instruments"].setdefault("source", {}).setdefault(current, {})
+            return current
 
         def _meter_key_for_selected_model(self, config: dict[str, Any]) -> str:
             model = self.meter_model_combo.currentText().strip().upper()

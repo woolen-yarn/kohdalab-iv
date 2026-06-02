@@ -3,6 +3,7 @@ from pyvisa import constants
 from kohdalab_iv.instruments.meters.adcmt_7461a import ADCMT7461A
 from kohdalab_iv.instruments.meters.agilent_34401a import Agilent34401A
 from kohdalab_iv.instruments.meters.keysight_34411a import Keysight34411A
+from kohdalab_iv.instruments.sources.yokogawa_7651 import Yokogawa7651
 from kohdalab_iv.instruments.visa_base import VisaDevice, _ni4882_set_ren
 
 
@@ -378,6 +379,48 @@ def test_adcmt_7461a_local_aborts_pending_scpi_measurement_before_addressed_gtl(
     assert handle.visalib.gpib_commands == [
         (handle.session, bytes([0x3F, 0x20 + 26, 0x01, 0x3F])),
     ]
+    assert handle.ren_modes == [constants.VI_GPIB_REN_ADDRESS_GTL]
+
+
+def test_yokogawa_7651_configures_voltage_source_with_current_limit():
+    handle = FakeVisaHandle()
+    device = Yokogawa7651("GPIB0::1::INSTR", handle=handle)
+
+    device.configure_source(source_function="voltage", source_range=4, hardware_compliance=0.01)
+
+    assert handle.commands == ["H0;E", "F1;E", "R4;E", "LA10;E", "S0;E"]
+
+
+def test_yokogawa_7651_configures_current_source_with_voltage_limit():
+    handle = FakeVisaHandle()
+    device = Yokogawa7651("GPIB0::1::INSTR", handle=handle)
+
+    device.configure_source(source_function="current", source_range=5, hardware_compliance=3.0)
+
+    assert handle.commands == ["H0;E", "F5;E", "R5;E", "LV3;E", "S0;E"]
+
+
+def test_yokogawa_7651_output_control_and_readback():
+    handle = FakeVisaHandle()
+    handle.query_responses = ["STS1=16", "+1.234E-3"]
+    device = Yokogawa7651("GPIB0::1::INSTR", handle=handle)
+
+    device.output_on()
+    assert device.output_state() is True
+    value = device.read_level()
+    device.output_off()
+
+    assert value == 1.234e-3
+    assert handle.commands == ["O1;E", "OC;E", "OD;E", "O0;E"]
+
+
+def test_yokogawa_7651_local_uses_gpib_gtl_without_scpi_system_local():
+    handle = FakeVisaHandle()
+    device = Yokogawa7651("GPIB0::1::INSTR", handle=handle)
+
+    device.local()
+
+    assert handle.commands == []
     assert handle.ren_modes == [constants.VI_GPIB_REN_ADDRESS_GTL]
 
 

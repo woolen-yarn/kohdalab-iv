@@ -96,6 +96,26 @@ def test_plan_accepts_adcmt_7461a_meter_nplc_range():
     assert plan.nplc == 1.234
 
 
+def test_plan_accepts_yokogawa_7651_source():
+    config = copy.deepcopy(DEFAULT_CONFIG)
+    settings = config["measurements"]["iv"]
+    config["roles"]["iv"]["source"] = "source.yokogawa_7651"
+    settings["mode"] = "dc_iv"
+    settings["scan"]["pattern"] = "linear"
+    settings["scan"]["start"] = {"value": 0.0, "unit": "mV"}
+    settings["scan"]["stop"] = {"value": 1.0, "unit": "mV"}
+    settings["scan"]["step"] = {"value": 0.1, "unit": "mV"}
+    settings["safety"]["max_abs_source"] = {"value": 1.0, "unit": "mV"}
+    settings["safety"]["compliance"] = {"value": 10.0, "unit": "uA"}
+    settings["safety"]["ramp_step"] = {"value": 0.1, "unit": "mV"}
+
+    plan = iv_plan_from_config(config)
+
+    assert plan.source_model == "YOKOGAWA_7651"
+    assert plan.source_range.name == "10mV"
+    assert plan.source_range.command_value == 2.0
+
+
 def test_plan_rejects_adcmt_7461a_nplc_below_range():
     config = copy.deepcopy(DEFAULT_CONFIG)
     config["roles"]["iv"]["measure"] = "meter.dmm_7461a"

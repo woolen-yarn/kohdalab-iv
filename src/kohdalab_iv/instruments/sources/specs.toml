@@ -68,3 +68,68 @@ name = "200mA"
 command_value = 0.2
 max_abs_A = 200e-3
 resolution_A = 1e-6
+
+[YOKOGAWA_7651]
+display_name = "Yokogawa 7651"
+roles = ["source"]
+source_modes = ["voltage", "current"]
+max_abs_V = 32.0
+max_abs_A = 0.12
+supports_output = true
+supports_software_ramp = true
+supports_voltage_limit = true
+supports_current_limit = true
+current_limit_min_A = 0.005
+current_limit_max_A = 0.12
+current_limit_resolution_A = 0.001
+voltage_limit_min_V = 1.0
+voltage_limit_max_V = 30.0
+voltage_limit_resolution_V = 1.0
+
+[[YOKOGAWA_7651.voltage_ranges]]
+name = "10mV"
+command_value = 2
+max_abs_V = 0.012
+resolution_V = 100e-9
+
+[[YOKOGAWA_7651.voltage_ranges]]
+name = "100mV"
+command_value = 3
+max_abs_V = 0.12
+resolution_V = 1e-6
+
+[[YOKOGAWA_7651.voltage_ranges]]
+name = "1V"
+command_value = 4
+max_abs_V = 1.2
+resolution_V = 10e-6
+
+[[YOKOGAWA_7651.voltage_ranges]]
+name = "10V"
+command_value = 5
+max_abs_V = 12.0
+resolution_V = 100e-6
+
+[[YOKOGAWA_7651.voltage_ranges]]
+name = "30V"
+command_value = 6
+max_abs_V = 32.0
+resolution_V = 1e-3
+
+[[YOKOGAWA_7651.current_ranges]]
+name = "1mA"
+command_value = 4
+max_abs_A = 1.2e-3
+resolution_A = 10e-9
+
+[[YOKOGAWA_7651.current_ranges]]
+name = "10mA"
+command_value = 5
+max_abs_A = 12e-3
+resolution_A = 100e-9
+
+[[YOKOGAWA_7651.current_ranges]]
+name = "100mA"
+command_value = 6
+max_abs_A = 120e-3
+resolution_A = 1e-6

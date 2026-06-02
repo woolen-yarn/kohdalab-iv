@@ -11,6 +11,7 @@ Version: 1.0
 標準構成:
 
 - Source: Yokogawa GS210, `YOKOGAWA_GS210`
+- Optional source: Yokogawa 7651, `YOKOGAWA_7651`
 - Source VISA resource: `GPIB0::2::INSTR`
 - Meter: Agilent/HP 34401A, `AGILENT_34401A`
 - Meter VISA resource: `GPIB0::26::INSTR`
@@ -40,7 +41,7 @@ config/default.json
 
 `dc_vi`
 
-- GS210 で電流を source します。
+- 設定された source で電流を source します。
 - DMM で電圧を measure します。
 - live plot の x 軸は current です。
 - live plot の y 軸は voltage です。
@@ -48,7 +49,7 @@ config/default.json
 
 `dc_iv`
 
-- GS210 で電圧を source します。
+- 設定された source で電圧を source します。
 - DMM で電流を measure します。
 - live plot の x 軸は voltage です。
 - live plot の y 軸は current です。
@@ -141,13 +142,13 @@ GUI は最後に開いた config path を記憶します。記憶した path が
 
 Controls:
 
-- Device: `YOKOGAWA_GS210`
+- Device: `YOKOGAWA_GS210` or `YOKOGAWA_7651`
 - Resource
 - Refresh
 - Connect
 - Disconnect
 
-Source connect 時には GS210 を安全側に初期化します。具体的には output off、level zero、output off を実行します。
+Source connect 時には source を安全側に初期化します。具体的には output off、level zero、output off を実行します。7651 は GS210 SCPI ではなく `F`/`R`/`S`/`O` 系コマンドで制御します。
 
 #### Meter panel
 
@@ -380,6 +381,7 @@ core from the GUI, CLI, and Jupyter notebooks.
 Standard setup:
 
 - Source: Yokogawa GS210, `YOKOGAWA_GS210`
+- Optional source: Yokogawa 7651, `YOKOGAWA_7651`
 - Source VISA resource: `GPIB0::2::INSTR`
 - Meter: Agilent/HP 34401A, `AGILENT_34401A`
 - Meter VISA resource: `GPIB0::26::INSTR`
@@ -410,7 +412,7 @@ The project supports two DC sweep modes.
 
 `dc_vi`
 
-- Source current with the GS210.
+- Source current with the configured source.
 - Measure voltage with the DMM.
 - The live plot x-axis is current.
 - The live plot y-axis is voltage.
@@ -418,7 +420,7 @@ The project supports two DC sweep modes.
 
 `dc_iv`
 
-- Source voltage with the GS210.
+- Source voltage with the configured source.
 - Measure current with the DMM.
 - The live plot x-axis is voltage.
 - The live plot y-axis is current.
@@ -517,14 +519,15 @@ exists, it falls back to `config/default.json`.
 
 Controls:
 
-- Device: `YOKOGAWA_GS210`
+- Device: `YOKOGAWA_GS210` or `YOKOGAWA_7651`
 - Resource
 - Refresh
 - Connect
 - Disconnect
 
-Source connect initializes the GS210 to a safe state by setting output off,
-level zero, and output off again.
+Source connect initializes the source to a safe state by setting output off,
+level zero, and output off again. The 7651 uses legacy `F`/`R`/`S`/`O`
+commands rather than GS210 SCPI commands.
 
 #### Meter Panel
 

@@ -10,11 +10,13 @@ from kohdalab_iv.instruments.meters.agilent_34411a import Agilent34411A
 from kohdalab_iv.instruments.meters.keysight_34411a import Keysight34411A
 from kohdalab_iv.instruments.meters.keysight_34465a import Keysight34465A
 from kohdalab_iv.instruments.sources.gs210 import YokogawaGS210
+from kohdalab_iv.instruments.sources.yokogawa_7651 import Yokogawa7651
 from kohdalab_iv.instruments.visa_base import gpib_board_from_resource, release_gpib_remote
 
 
 SOURCE_CONTROLLERS = {
     "YOKOGAWA_GS210": YokogawaGS210,
+    "YOKOGAWA_7651": Yokogawa7651,
 }
 
 METER_CONTROLLERS = {
