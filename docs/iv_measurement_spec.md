@@ -244,7 +244,7 @@ GUI close、Source Disconnect、All Disconnect:
 
 Agilent/Keysight 34411A と Keysight 34465A は同じ 34411A 系の local sequence を使います。ADCMT 7461A は timeout などで未完了の測定が残った状態でも復帰しやすいように、local release の前に VISA clear、`:ABORt`、`*CLS` を試します。ADCMT 7461A の個別 disconnect では、GPIB 接続は addressed GTL だけを試し、GPIB board の REN deassert は行いません。USB 接続では USBTMC/USB488 の local/REN release を試します。
 
-ADCMT 7461A は `command_language` で SCPI/ADC を切り替えます。標準 config は `scpi` です。GPIB の SCPI では測定開始時に `*RST`、`:SENSE:FUNCTION 'VOLTAGE:DC'` または `:SENSE:FUNCTION 'CURRENT:DC'`、`:SENSE:<function>:SRATE <rate>` を送り、測定値は `READ?` で取得します。GPIB では SCPI setting command ごとに `:SYSTem:ERRor?` を読み、setting command の連続送信を避けます。USB の SCPI では Error 113/102 を避けるため、sweep 開始時の設定コマンドと `READ?` を使わず、各 reading を `:MEASure:VOLTAGE:DC?` または `:MEASure:CURRENT:DC?` で取得します。ADC mode を明示した場合だけ、従来通り `F1`/`F5`、`R0`、`ITP<nplc>`、`ERR?` を使います。
+ADCMT 7461A は `command_language` で SCPI/ADC を切り替えます。標準 config は `scpi` です。GPIB の SCPI では測定開始時に `*RST`、`:SENS:FUNC "VOLT:DC"` または `:SENS:FUNC "CURR:DC"`、`:SENS:<function>:SRATE <rate>` を送り、測定値は `READ?` で取得します。GPIB では SCPI setting command ごとに `:SYSTem:ERRor?` を読み、setting command の連続送信を避けます。USB の SCPI では Error 113/102 を避けるため、関数設定を `:CONF:VOLT:DC` または `:CONF:CURR:DC` で1回だけ行い、`*OPC?` で同期してから各 reading を `:MEAS?` で取得します。ADC mode を明示した場合だけ、従来通り `F1`/`F5`、`R0`、`ITP<nplc>`、`ERR?` を使います。
 
 ### CSV output
 
@@ -644,14 +644,15 @@ individual ADCMT 7461A disconnect, GPIB connections use addressed GTL only and
 do not deassert board REN. USB connections use USBTMC/USB488 local/REN release.
 
 The ADCMT 7461A command set is selected with `command_language`. The standard
-config uses `scpi`. Over GPIB, SCPI setup sends `*RST`,
-`:SENSE:FUNCTION 'VOLTAGE:DC'` or `:SENSE:FUNCTION 'CURRENT:DC'`, and
-`:SENSE:<function>:SRATE <rate>`, then each point is read with `READ?`. On GPIB,
-each SCPI setting command is followed by `:SYSTem:ERRor?` to avoid consecutive
-setting-command errors. Over USB, the driver avoids sweep setup commands and
-`READ?` to avoid Error 113/102; each point is read with
-`:MEASure:VOLTAGE:DC?` or `:MEASure:CURRENT:DC?`. Only explicit ADC mode uses
-the legacy `F1`/`F5`, `R0`, `ITP<nplc>`, and `ERR?` sequence.
+config uses `scpi`. Over GPIB, SCPI setup sends `*RST`, `:SENS:FUNC "VOLT:DC"`
+or `:SENS:FUNC "CURR:DC"`, and `:SENS:<function>:SRATE <rate>`, then each point
+is read with `READ?`. On GPIB, each SCPI setting command is followed by
+`:SYSTem:ERRor?` to avoid consecutive setting-command errors. Over USB, the
+driver avoids repeated setup commands and `READ?` to avoid Error 113/102; it
+configures the function once with `:CONF:VOLT:DC` or `:CONF:CURR:DC`,
+synchronizes the setting with `*OPC?`, and reads each point with `:MEAS?`. Only
+explicit ADC mode uses the legacy `F1`/`F5`, `R0`, `ITP<nplc>`, and `ERR?`
+sequence.
 
 ### CSV Output
 

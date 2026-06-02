@@ -179,9 +179,9 @@ def test_adcmt_7461a_configures_dc_voltage_and_reads_with_gpib_scpi_read():
         ":SYSTem:ERRor?",
         "*RST",
         ":SYSTem:ERRor?",
-        ":SENSE:FUNCTION 'VOLTAGE:DC'",
+        ':SENS:FUNC "VOLT:DC"',
         ":SYSTem:ERRor?",
-        ":SENSE:VOLTAGE:DC:SRATE SSLOW",
+        ":SENS:VOLT:DC:SRATE SSLOW",
         ":SYSTem:ERRor?",
         "READ?",
     ]
@@ -190,28 +190,32 @@ def test_adcmt_7461a_configures_dc_voltage_and_reads_with_gpib_scpi_read():
 
 def test_adcmt_7461a_configures_dc_voltage_and_reads_with_usb_scpi_read():
     handle = FakeVisaHandle()
-    handle.query_responses = ["+1.234500E+00"]
+    handle.query_responses = ["1", "+1.234500E+00"]
     device = ADCMT7461A("USB0::1::INSTR", handle=handle)
 
     device.configure_measurement(measure_function="dc_voltage", nplc=1.234, auto_range=True)
     value = device.read_once()
 
     assert handle.commands == [
-        ":MEASure:VOLTAGE:DC?",
+        ":CONF:VOLT:DC",
+        "*OPC?",
+        ":MEAS?",
     ]
     assert value == 1.2345
 
 
 def test_adcmt_7461a_usb_scpi_current_reads_with_measure_function_query():
     handle = FakeVisaHandle()
-    handle.query_responses = ["+1.234500E-06"]
+    handle.query_responses = ["1", "+1.234500E-06"]
     device = ADCMT7461A("USB0::1::INSTR", handle=handle)
 
     device.configure_measurement(measure_function="dc_current", nplc=1.0, auto_range=True)
     value = device.read_once()
 
     assert handle.commands == [
-        ":MEASure:CURRENT:DC?",
+        ":CONF:CURR:DC",
+        "*OPC?",
+        ":MEAS?",
     ]
     assert value == 1.2345e-6
 
@@ -226,9 +230,9 @@ def test_adcmt_7461a_configures_dc_current_without_auto_range_with_gpib_scpi():
         ":SYSTem:ERRor?",
         "*RST",
         ":SYSTem:ERRor?",
-        ":SENSE:FUNCTION 'CURRENT:DC'",
+        ':SENS:FUNC "CURR:DC"',
         ":SYSTem:ERRor?",
-        ":SENSE:CURRENT:DC:SRATE SLOW",
+        ":SENS:CURR:DC:SRATE SLOW",
         ":SYSTem:ERRor?",
     ]
 
@@ -282,7 +286,7 @@ def test_adcmt_7461a_discards_first_reading_after_settle():
 
 def test_adcmt_7461a_usb_discards_first_reading_with_measure_query():
     handle = FakeVisaHandle()
-    handle.query_responses = ["0.0", "1.2345"]
+    handle.query_responses = ["1", "0.0", "1.2345"]
     device = ADCMT7461A("USB0::1::INSTR", handle=handle)
 
     device.configure_measurement(measure_function="dc_voltage", nplc=1.0)
@@ -290,7 +294,7 @@ def test_adcmt_7461a_usb_discards_first_reading_with_measure_query():
     value = device.read_once()
 
     assert value == 1.2345
-    assert handle.commands == [":MEASure:VOLTAGE:DC?", ":MEASure:VOLTAGE:DC?"]
+    assert handle.commands == [":CONF:VOLT:DC", "*OPC?", ":MEAS?", ":MEAS?"]
 
 
 def test_adcmt_7461a_usb_connect_status_clears_without_scpi_error_query():
@@ -300,7 +304,7 @@ def test_adcmt_7461a_usb_connect_status_clears_without_scpi_error_query():
     status = device.connect_status()
 
     assert status == "status cleared"
-    assert handle.commands == ["*CLS"]
+    assert handle.commands == ["*CLS", "*OPC?"]
 
 
 def test_adcmt_7461a_gpib_connect_status_uses_scpi_error_query():
@@ -346,9 +350,9 @@ def test_adcmt_7461a_scpi_syncs_after_setting_commands():
         ":SYSTem:ERRor?",
         "*RST",
         ":SYSTem:ERRor?",
-        ":SENSE:FUNCTION 'VOLTAGE:DC'",
+        ':SENS:FUNC "VOLT:DC"',
         ":SYSTem:ERRor?",
-        ":SENSE:VOLTAGE:DC:SRATE MED",
+        ":SENS:VOLT:DC:SRATE MED",
         ":SYSTem:ERRor?",
     ]
 
