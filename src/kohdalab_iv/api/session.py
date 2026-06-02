@@ -62,9 +62,15 @@ class DeviceSession:
 
     def disconnect_device(self, ref: str) -> None:
         kind, key = self._split_ref(ref)
+        self._disconnect_device(kind, key, release_board=True)
+
+    def _disconnect_device(self, kind: str, key: str, *, release_board: bool) -> None:
         device = self._pop_device(kind, key)
         if device is not None:
+            board = gpib_board_from_resource(getattr(device, "resource", ""))
             self._return_and_close_device(device)
+            if release_board and board is not None:
+                release_gpib_remote(board)
 
     def disconnect_all(self) -> None:
         boards = {
@@ -75,7 +81,7 @@ class DeviceSession:
         }
         for kind in ("source", "meter"):
             for key in self._connected_keys(kind):
-                self.disconnect_device(f"{kind}.{key}")
+                self._disconnect_device(kind, key, release_board=False)
         for board in sorted(boards):
             release_gpib_remote(board)
 

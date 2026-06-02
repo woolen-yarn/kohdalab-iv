@@ -206,6 +206,7 @@ def test_run_iv_uses_stop_cleanup_for_user_stop(tmp_path):
 def test_device_session_returns_device_to_local_on_disconnect():
     session = DeviceSession(copy.deepcopy(DEFAULT_CONFIG), auto_connect=False)
     fake = FakeDeviceForSession()
+    fake.resource = "USB0::1::INSTR"
     session.sources["gs210"] = fake
 
     session.disconnect_device("source.gs210")
@@ -214,6 +215,18 @@ def test_device_session_returns_device_to_local_on_disconnect():
     assert fake.closed is True
     assert fake.local_after_close_called is True
     assert fake.resource_manager_closed is False
+
+
+def test_device_session_releases_gpib_board_after_single_disconnect(monkeypatch):
+    released = []
+    session = DeviceSession(copy.deepcopy(DEFAULT_CONFIG), auto_connect=False)
+    session.sources["gs210"] = FakeDeviceForSession()
+    session.sources["gs210"].resource = "GPIB0::2::INSTR"
+    monkeypatch.setattr(session_module, "release_gpib_remote", released.append)
+
+    session.disconnect_device("source.gs210")
+
+    assert released == ["GPIB0"]
 
 
 def test_device_session_releases_gpib_boards_after_disconnect_all(monkeypatch):
