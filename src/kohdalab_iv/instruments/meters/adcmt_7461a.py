@@ -38,6 +38,7 @@ class ADCMT7461A(VisaDevice):
     ):
         super().__init__(resource, timeout_ms=timeout_ms, handle=handle)
         self.command_language = str(command_language or "scpi").strip().lower()
+        self._scpi_measure_function = "VOLTAGE:DC"
 
     def local(self) -> None:
         self.prepare_for_disconnect()
@@ -70,8 +71,11 @@ class ADCMT7461A(VisaDevice):
         if function is None:
             raise ValueError(f"Unsupported DMM measure function: {measure_function}")
 
-        if not self._uses_usb:
-            self._drain_scpi_errors()
+        self._scpi_measure_function = function
+        if self._uses_usb:
+            return
+
+        self._drain_scpi_errors()
         self._write_scpi_setting("*RST")
         self._write_scpi_setting(f":SENSE:FUNCTION '{function}'")
         self._write_scpi_setting(f":SENSE:{function}:SRATE {self._sampling_rate(nplc)}")
@@ -90,6 +94,8 @@ class ADCMT7461A(VisaDevice):
 
     def read_once(self) -> float:
         if self._uses_scpi:
+            if self._uses_usb:
+                return self.query_float(f":MEASure:{self._scpi_measure_function}?")
             return self.query_float("READ?")
         time.sleep(self.READ_DELAY_S)
         response = str(self.inst.read()).strip()
