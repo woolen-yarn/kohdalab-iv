@@ -144,7 +144,7 @@ DEFAULT_CONFIG: dict[str, Any] = {
                 "custom_points": [],
             },
             "timing": {
-                "pre_delay_s": 1.0,
+                "pre_delay_s": 0.1,
                 "settle_s": 0.2,
                 "post_zero_delay_s": 0.1,
                 "ramp_step_wait_s": 0.02,

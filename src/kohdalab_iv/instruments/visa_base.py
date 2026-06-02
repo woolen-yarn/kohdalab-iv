@@ -161,5 +161,14 @@ class VisaDevice:
     def close(self) -> None:
         self.inst.close()
 
+    def close_resource_manager(self) -> None:
+        resource_manager = getattr(self.inst, "_resource_manager", None)
+        if resource_manager is None:
+            return
+        try:
+            resource_manager.close()
+        except Exception:
+            pass
+
     def is_connected(self) -> bool:
         return getattr(self.inst, "session", None) is not None

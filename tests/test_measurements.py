@@ -60,6 +60,7 @@ class FakeDeviceForSession:
         self.local_called = False
         self.closed = False
         self.local_after_close_called = False
+        self.resource_manager_closed = False
 
     def local(self):
         self.local_called = True
@@ -69,6 +70,9 @@ class FakeDeviceForSession:
 
     def local_after_close(self):
         self.local_after_close_called = True
+
+    def close_resource_manager(self):
+        self.resource_manager_closed = True
 
 
 def _small_config():
@@ -85,7 +89,6 @@ def _small_config():
     safety["compliance"] = {"value": 10, "unit": "uA"}
     safety["ramp_step"] = {"value": 10, "unit": "mV"}
     timing = settings["timing"]
-    timing["pre_delay_s"] = 0.0
     timing["settle_s"] = 0.0
     timing["ramp_step_wait_s"] = 0.0
     return config
@@ -162,3 +165,4 @@ def test_device_session_returns_device_to_local_on_disconnect():
     assert fake.local_called is True
     assert fake.closed is True
     assert fake.local_after_close_called is True
+    assert fake.resource_manager_closed is True
