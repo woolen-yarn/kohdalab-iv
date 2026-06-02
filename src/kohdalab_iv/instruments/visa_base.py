@@ -58,6 +58,62 @@ class VisaDevice:
             pass
 
     def gpib_send_go_to_local(self) -> None:
+        address = self._gpib_primary_address()
+        if address is None:
+            return
+        try:
+            self.inst.visalib.gpib_command(self.inst.session, self._gpib_gtl_command(address))
+        except Exception:
+            pass
+
+    def gpib_interface_go_to_local(self, *, release_ren: bool = False) -> None:
+        location = self._gpib_location()
+        if location is None:
+            return
+        board, address = location
+        resource_manager = getattr(self.inst, "_resource_manager", None)
+        created_resource_manager = False
+        if resource_manager is None:
+            try:
+                import pyvisa
+
+                resource_manager = pyvisa.ResourceManager()
+                created_resource_manager = True
+            except Exception:
+                return
+        interface = None
+        try:
+            interface = resource_manager.open_resource(f"{board}::INTFC")
+            interface.send_command(self._gpib_gtl_command(address))
+            if release_ren:
+                from pyvisa import constants
+
+                interface.control_ren(constants.VI_GPIB_REN_DEASSERT_GTL)
+                interface.control_ren(constants.VI_GPIB_REN_DEASSERT)
+        except Exception:
+            pass
+        finally:
+            if interface is not None:
+                try:
+                    interface.close()
+                except Exception:
+                    pass
+            if created_resource_manager:
+                try:
+                    resource_manager.close()
+                except Exception:
+                    pass
+
+    def _gpib_location(self) -> tuple[str, int] | None:
+        match = re.search(r"\b(GPIB\d*)::(\d+)", self.resource, flags=re.IGNORECASE)
+        if match is None:
+            return None
+        address = self._gpib_primary_address()
+        if address is None:
+            return None
+        return match.group(1).upper(), address
+
+    def _gpib_primary_address(self) -> int | None:
         try:
             from pyvisa import constants
 
@@ -65,14 +121,14 @@ class VisaDevice:
         except Exception:
             match = re.search(r"GPIB\d*::(\d+)", self.resource, flags=re.IGNORECASE)
             if match is None:
-                return
+                return None
             address = int(match.group(1))
         if not 0 <= address <= 30:
-            return
-        try:
-            self.inst.visalib.gpib_command(self.inst.session, bytes([0x3F, 0x20 + address, 0x01]))
-        except Exception:
-            pass
+            return None
+        return address
+
+    def _gpib_gtl_command(self, address: int) -> bytes:
+        return bytes([0x3F, 0x20 + address, 0x01, 0x3F])
 
     def gpib_deassert_ren(self) -> None:
         try:

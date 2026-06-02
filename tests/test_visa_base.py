@@ -12,6 +12,32 @@ class FakeVisaLib:
         self.gpib_commands.append((session, command))
 
 
+class FakeGPIBInterface:
+    def __init__(self):
+        self.commands = []
+        self.ren_modes = []
+        self.closed = False
+
+    def send_command(self, command):
+        self.commands.append(command)
+
+    def control_ren(self, mode):
+        self.ren_modes.append(mode)
+
+    def close(self):
+        self.closed = True
+
+
+class FakeResourceManager:
+    def __init__(self):
+        self.opened_resources = []
+        self.interface = FakeGPIBInterface()
+
+    def open_resource(self, resource):
+        self.opened_resources.append(resource)
+        return self.interface
+
+
 class FakeVisaHandle:
     def __init__(self):
         self.commands = []
@@ -19,6 +45,7 @@ class FakeVisaHandle:
         self.usb_control_outs = []
         self.session = object()
         self.visalib = FakeVisaLib()
+        self._resource_manager = FakeResourceManager()
 
     def write(self, command):
         self.commands.append(command)
@@ -67,8 +94,17 @@ def test_34411a_local_uses_gpib_gtl_with_ren_release():
     device.local()
 
     assert handle.commands == []
+    assert handle._resource_manager.opened_resources == ["GPIB0::INTFC"]
+    assert handle._resource_manager.interface.commands == [
+        bytes([0x3F, 0x20 + 26, 0x01, 0x3F]),
+    ]
+    assert handle._resource_manager.interface.ren_modes == [
+        constants.VI_GPIB_REN_DEASSERT_GTL,
+        constants.VI_GPIB_REN_DEASSERT,
+    ]
+    assert handle._resource_manager.interface.closed is True
     assert handle.visalib.gpib_commands == [
-        (handle.session, bytes([0x3F, 0x20 + 26, 0x01])),
+        (handle.session, bytes([0x3F, 0x20 + 26, 0x01, 0x3F])),
     ]
     assert handle.ren_modes == [
         constants.VI_GPIB_REN_ADDRESS_GTL,
