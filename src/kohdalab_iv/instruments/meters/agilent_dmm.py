@@ -51,6 +51,9 @@ class Agilent34411A(AgilentDMM):
         self.usb_deassert_ren()
         self.gpib_deassert_ren()
 
+    def local_after_close(self) -> None:
+        self.gpib_interface_go_to_local(release_ren=True)
+
     def configure_measurement(self, *, measure_function: str, nplc: float, auto_range: bool = True) -> None:
         super().configure_measurement(
             measure_function=measure_function,

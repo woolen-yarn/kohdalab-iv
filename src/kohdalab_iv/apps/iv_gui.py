@@ -199,6 +199,7 @@ def main() -> None:
             self.start_unit_combo = QtWidgets.QComboBox()
             self.end_unit_combo = QtWidgets.QComboBox()
             self.step_unit_combo = QtWidgets.QComboBox()
+            self.pre_delay_spin = self._spin(0.0, 3600.0, 3, 1.0)
             self.wait_spin = self._spin(0.0, 3600.0, 3, 0.2)
             self.average_count_spin = QtWidgets.QSpinBox()
             self.average_count_spin.setRange(1, 1000)
@@ -443,6 +444,7 @@ def main() -> None:
             left.addRow("Start", self._quantity_row(self.start_spin, self.start_unit_combo))
             left.addRow("End", self._quantity_row(self.end_spin, self.end_unit_combo))
             left.addRow("Step", self._quantity_row(self.step_spin, self.step_unit_combo))
+            left.addRow("Output delay (s)", self.pre_delay_spin)
             left.addRow("Wait time (s)", self.wait_spin)
             left.addRow("Average count", self.average_count_spin)
 
@@ -593,6 +595,7 @@ def main() -> None:
                 self._replace_units(unit, self._mode_units(mode), unit_text)
 
             timing = settings.get("timing", {})
+            self.pre_delay_spin.setValue(float(timing.get("pre_delay_s", 1.0)))
             self.wait_spin.setValue(float(timing.get("settle_s", 0.2)))
             self.average_count_spin.setValue(int(timing.get("average_count", 1)))
             self.nplc_spin.setValue(float(timing.get("nplc", 1.0)))
@@ -629,7 +632,7 @@ def main() -> None:
             scan.setdefault("custom_points", [])
 
             timing = settings.setdefault("timing", {})
-            timing["pre_delay_s"] = float(timing.get("pre_delay_s", 0.1))
+            timing["pre_delay_s"] = self.pre_delay_spin.value()
             timing["settle_s"] = self.wait_spin.value()
             timing["post_zero_delay_s"] = float(timing.get("post_zero_delay_s", 0.1))
             timing["ramp_step_wait_s"] = float(timing.get("ramp_step_wait_s", 0.02))

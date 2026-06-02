@@ -63,6 +63,11 @@ class DeviceSession:
                 device.close()
             except Exception:
                 pass
+            try:
+                if hasattr(device, "local_after_close"):
+                    device.local_after_close()
+            except Exception:
+                pass
 
     def disconnect_all(self) -> None:
         for kind in ("source", "meter"):
