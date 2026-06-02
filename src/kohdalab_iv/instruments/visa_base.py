@@ -65,6 +65,26 @@ class VisaDevice:
         except Exception:
             pass
 
+    def usb_go_to_local(self) -> None:
+        self._usb488_control_out(request_id=0xA1)
+
+    def usb_deassert_ren(self) -> None:
+        self._usb488_control_out(request_id=0xA0, request_value=0)
+
+    def _usb488_control_out(self, *, request_id: int, request_value: int = 0) -> None:
+        if not hasattr(self.inst, "control_out"):
+            return
+        try:
+            from pyvisa import constants
+
+            interface = int(self.inst.get_visa_attribute(constants.VI_ATTR_USB_INTFC_NUM))
+        except Exception:
+            interface = 0
+        try:
+            self.inst.control_out(0x21, int(request_id), int(request_value), interface, b"")
+        except Exception:
+            pass
+
     def close(self) -> None:
         self.inst.close()
 
