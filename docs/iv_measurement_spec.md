@@ -244,7 +244,7 @@ GUI close、Source Disconnect、All Disconnect:
 
 Agilent/Keysight 34411A と Keysight 34465A は同じ 34411A 系の local sequence を使います。ADCMT 7461A も同じ local release 経路を使います。USB 接続では USBTMC/USB488 の local/REN release、GPIB 接続では GTL/REN release を試します。
 
-ADCMT 7461A は `command_language` で SCPI/ADC を切り替えます。標準 config は `scpi` です。SCPI では測定開始時に `*RST`、`:SENSE:FUNCTION 'VOLTAGE:DC'` または `:SENSE:FUNCTION 'CURRENT:DC'`、必要に応じて `:SENSE:<function>:RANGE:AUTO ON`、`:SENSE:<function>:NPLCYCLES <nplc>` を送り、測定値は `:FETCH?` で取得します。connect 時の status check は `:SYSTem:ERRor?` を使います。ADC mode を明示した場合だけ、従来通り `F1`/`F5`、`R0`、`ITP<nplc>`、`ERR?` を使います。
+ADCMT 7461A は `command_language` で SCPI/ADC を切り替えます。標準 config は `scpi` です。SCPI では測定開始時に `*RST`、`:SENSE:FUNCTION 'VOLTAGE:DC'` または `:SENSE:FUNCTION 'CURRENT:DC'`、必要に応じて `:SENSE:<function>:RANGE:AUTO ON`、`:SENSE:<function>:NPLCYCLES <nplc>` を送り、測定値は `:READ?` で取得します。connect 時の status check は `:SYSTem:ERRor?` を使います。ADC mode を明示した場合だけ、従来通り `F1`/`F5`、`R0`、`ITP<nplc>`、`ERR?` を使います。
 
 ### CSV output
 
@@ -640,7 +640,7 @@ USBTMC/USB488 local/REN release; GPIB connections use GTL/REN release.
 The ADCMT 7461A command set is selected with `command_language`. The standard
 config uses `scpi`. SCPI setup sends `*RST`, `:SENSE:FUNCTION 'VOLTAGE:DC'` or
 `:SENSE:FUNCTION 'CURRENT:DC'`, optional `:SENSE:<function>:RANGE:AUTO ON`, and
-`:SENSE:<function>:NPLCYCLES <nplc>`. Each point is read with `:FETCH?`, and
+`:SENSE:<function>:NPLCYCLES <nplc>`. Each point is read with `:READ?`, and
 connect status uses `:SYSTem:ERRor?`. Only explicit ADC mode uses the legacy
 `F1`/`F5`, `R0`, `ITP<nplc>`, and `ERR?` sequence.
 

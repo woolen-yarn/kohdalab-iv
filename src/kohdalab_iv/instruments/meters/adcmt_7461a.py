@@ -70,7 +70,7 @@ class ADCMT7461A(VisaDevice):
 
     def read_once(self) -> float:
         if self._uses_scpi:
-            return self.query_float(":FETCH?")
+            return self.query_float(":READ?")
         time.sleep(self.READ_DELAY_S)
         response = str(self.inst.read()).strip()
         match = _FLOAT_RE.search(response)

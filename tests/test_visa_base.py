@@ -163,7 +163,7 @@ def test_34411a_local_uses_gpib_gtl_with_ren_release():
     ]
 
 
-def test_adcmt_7461a_configures_dc_voltage_and_reads_with_scpi_fetch():
+def test_adcmt_7461a_configures_dc_voltage_and_reads_with_scpi_read():
     handle = FakeVisaHandle()
     handle.query_responses = ["+1.234500E+00"]
     device = ADCMT7461A("GPIB0::27::INSTR", handle=handle)
@@ -176,7 +176,7 @@ def test_adcmt_7461a_configures_dc_voltage_and_reads_with_scpi_fetch():
         ":SENSE:FUNCTION 'VOLTAGE:DC'",
         ":SENSE:VOLTAGE:DC:RANGE:AUTO ON",
         ":SENSE:VOLTAGE:DC:NPLCYCLES 1.234",
-        ":FETCH?",
+        ":READ?",
     ]
     assert value == 1.2345
 
@@ -238,7 +238,7 @@ def test_adcmt_7461a_discards_first_reading_after_settle():
     value = device.read_once()
 
     assert value == 1.2345
-    assert handle.commands == [":FETCH?", ":FETCH?"]
+    assert handle.commands == [":READ?", ":READ?"]
 
 
 def test_adcmt_7461a_connect_status_uses_scpi_error_query_by_default():
