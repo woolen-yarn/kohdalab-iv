@@ -3,6 +3,7 @@ import copy
 import pytest
 
 from kohdalab_iv.api.config import DEFAULT_CONFIG
+from kohdalab_iv.api import measurements as measurements_module
 from kohdalab_iv.api.measurements import run_iv
 from kohdalab_iv.api.scan_plan import iv_plan_from_config
 from kohdalab_iv.api import session as session_module
@@ -169,6 +170,43 @@ def test_run_iv_prepares_meter_after_source_settle_before_read(tmp_path):
         ("prepare", None),
         ("read", 1),
     ]
+
+
+def test_run_iv_waits_after_initial_ramp_before_first_read(tmp_path, monkeypatch):
+    events = []
+    config = _small_config()
+    settings = config["measurements"]["iv"]
+    settings["scan"]["start"] = {"value": 10, "unit": "mV"}
+    settings["scan"]["stop"] = {"value": 20, "unit": "mV"}
+    settings["timing"]["start_settle_s"] = 0.123
+    settings["timing"]["settle_s"] = 0.0
+    settings["timing"]["pre_delay_s"] = 0.0
+
+    class EventSource(FakeSource):
+        def set_level(self, value):
+            events.append(("level", float(value)))
+            super().set_level(value)
+
+    class EventMeter(FakeMeter):
+        def prepare_for_reading(self):
+            events.append(("prepare", None))
+            super().prepare_for_reading()
+
+    def fake_sleep(duration_s, should_continue):
+        events.append(("sleep", float(duration_s)))
+        return True
+
+    monkeypatch.setattr(measurements_module, "_sleep_interruptible", fake_sleep)
+    plan = iv_plan_from_config(config)
+    source = EventSource()
+    meter = EventMeter([1e-6, 2e-6])
+    session = FakeSession(source, meter)
+
+    run_iv(config, plan=plan, output=tmp_path / "run.csv", session=session)
+
+    first_prepare_index = events.index(("prepare", None))
+    start_wait_index = events.index(("sleep", 0.123))
+    assert start_wait_index < first_prepare_index
 
 
 def test_run_iv_stops_after_compliance(tmp_path):

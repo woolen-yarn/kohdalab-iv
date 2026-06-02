@@ -153,6 +153,11 @@ def run_iv(
                 wait_s=plan.ramp_step_wait_s,
                 should_continue=should_continue,
             )
+            _emit(on_status, STATUS_WAITING)
+            if not _sleep_interruptible(plan.start_settle_s, should_continue):
+                cleanup_action = plan.on_stop
+                normal_cleanup = True
+                return rows
 
         _emit(on_status, STATUS_RUNNING)
         with out.open("w", newline="", encoding="utf-8") as f:

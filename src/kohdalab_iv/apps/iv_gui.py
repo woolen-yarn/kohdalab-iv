@@ -706,6 +706,7 @@ def main() -> None:
 
             timing = settings.setdefault("timing", {})
             timing["pre_delay_s"] = float(timing.get("pre_delay_s", 0.1))
+            timing["start_settle_s"] = float(timing.get("start_settle_s", 0.5))
             timing["settle_s"] = self.wait_spin.value()
             timing["post_zero_delay_s"] = float(timing.get("post_zero_delay_s", 0.1))
             timing["ramp_step_wait_s"] = float(timing.get("ramp_step_wait_s", 0.02))
@@ -1128,13 +1129,6 @@ def main() -> None:
     app = QtWidgets.QApplication(sys.argv)
     window = IVGui()
     window.show()
-
-    def show_main_window() -> None:
-        window.showNormal()
-        window.raise_()
-        window.activateWindow()
-
-    QtCore.QTimer.singleShot(0, show_main_window)
     sys.exit(app.exec())
 
 

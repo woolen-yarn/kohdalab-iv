@@ -49,6 +49,7 @@ class IvPlan:
     ramp_step: float
     ramp_step_wait_s: float
     pre_delay_s: float
+    start_settle_s: float
     settle_s: float
     post_zero_delay_s: float
     nplc: float
@@ -300,6 +301,7 @@ def iv_plan_from_config(config: dict[str, Any], measurement_name: str = "iv") ->
         ramp_step=ramp_step,
         ramp_step_wait_s=float(timing.get("ramp_step_wait_s", 0.02)),
         pre_delay_s=float(timing.get("pre_delay_s", 0.0)),
+        start_settle_s=float(timing.get("start_settle_s", 0.5)),
         settle_s=float(timing.get("settle_s", 0.1)),
         post_zero_delay_s=float(timing.get("post_zero_delay_s", 0.0)),
         nplc=nplc,

@@ -173,6 +173,7 @@ DEFAULT_CONFIG: dict[str, Any] = {
             },
             "timing": {
                 "pre_delay_s": 0.1,
+                "start_settle_s": 0.5,
                 "settle_s": 0.2,
                 "post_zero_delay_s": 0.1,
                 "ramp_step_wait_s": 0.02,

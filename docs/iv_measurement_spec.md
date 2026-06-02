@@ -178,6 +178,8 @@ Controls:
 Start、End、Step は unit 付きで扱います。選べる unit は mode に応じて変わります。
 
 `Wait time` は `timing.settle_s` に対応します。source target を設定した後、DMM を読む前に待つ時間です。
+`timing.start_settle_s` は GUI には出さない内部 timing で、source が sweep の start に
+到達した後、最初の読み出し前だけ追加で待つ時間です。標準値は 0.5 s です。
 
 `Average count` は `timing.average_count` に対応します。DMM を複数回読み、その算術平均を 1 点の値として使います。
 
@@ -563,6 +565,9 @@ with the selected mode.
 
 `Wait time` maps to `timing.settle_s`. It is the delay after each source target
 is applied and before reading the meter.
+`timing.start_settle_s` is an internal timing value that is not exposed in the
+GUI. It adds a delay after the source reaches the sweep start point and before
+the first read. The standard value is 0.5 s.
 
 `Average count` maps to `timing.average_count`. The DMM is read repeatedly and
 the arithmetic mean is used as the point value.
