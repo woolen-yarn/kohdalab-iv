@@ -13,7 +13,7 @@ from kohdalab_iv.interfaces.common import list_visa_resources
 
 
 SOURCE_MODELS = ["YOKOGAWA_GS210"]
-METER_MODELS = ["AGILENT_34401A", "KEYSIGHT_34411A", "KEYSIGHT_34465A"]
+METER_MODELS = ["AGILENT_34401A", "AGILENT_34411A", "KEYSIGHT_34411A", "KEYSIGHT_34465A", "ADCMT_7461A"]
 CURRENT_UNITS = ["pA", "nA", "uA", "mA", "A"]
 VOLTAGE_UNITS = ["nV", "uV", "mV", "V"]
 MODE_LABELS = {

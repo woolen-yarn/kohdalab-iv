@@ -207,7 +207,11 @@ def _hardware_compliance(spec: dict[str, Any], source_function: str, requested: 
 
 
 def _nplc_supported(meter_spec: dict[str, Any], nplc: float) -> bool:
-    return any(abs(float(value) - nplc) < 1e-12 for value in meter_spec.get("nplc_values", []))
+    if any(abs(float(value) - nplc) < 1e-12 for value in meter_spec.get("nplc_values", [])):
+        return True
+    if "nplc_min" in meter_spec and "nplc_max" in meter_spec:
+        return float(meter_spec["nplc_min"]) <= nplc <= float(meter_spec["nplc_max"])
+    return False
 
 
 def iv_plan_from_config(config: dict[str, Any], measurement_name: str = "iv") -> IvPlan:

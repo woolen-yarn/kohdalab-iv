@@ -118,6 +118,13 @@ DEFAULT_CONFIG: dict[str, Any] = {
                 "timeout_ms": 10000,
                 "auto_range": True,
             },
+            "dmm_agilent_34411a": {
+                "model": "AGILENT_34411A",
+                "transport": "visa",
+                "resource": "USB0::0x0000::0x0000::INSTR",
+                "timeout_ms": 10000,
+                "auto_range": True,
+            },
             "dmm_34411a": {
                 "model": "KEYSIGHT_34411A",
                 "transport": "visa",
@@ -129,6 +136,13 @@ DEFAULT_CONFIG: dict[str, Any] = {
                 "model": "KEYSIGHT_34465A",
                 "transport": "visa",
                 "resource": "USB0::0x0000::0x0000::INSTR",
+                "timeout_ms": 10000,
+                "auto_range": True,
+            },
+            "dmm_7461a": {
+                "model": "ADCMT_7461A",
+                "transport": "visa",
+                "resource": "GPIB0::27::INSTR",
                 "timeout_ms": 10000,
                 "auto_range": True,
             }

@@ -1,5 +1,6 @@
 from pyvisa import constants
 
+from kohdalab_iv.instruments.meters.adcmt_dmm import ADCMT7461A
 from kohdalab_iv.instruments.meters.agilent_dmm import Agilent34401A, Keysight34411A
 from kohdalab_iv.instruments.visa_base import VisaDevice, _ni4882_set_ren
 
@@ -73,6 +74,7 @@ class FakeVisaHandle:
         self.commands = []
         self.ren_modes = []
         self.usb_control_outs = []
+        self.read_responses = ["0"]
         self.session = object()
         self.invalid_session = False
         self.visalib = FakeVisaLib()
@@ -95,6 +97,9 @@ class FakeVisaHandle:
 
     def control_out(self, request_type, request_id, request_value, index, data=b""):
         self.usb_control_outs.append((request_type, request_id, request_value, index, data))
+
+    def read(self):
+        return self.read_responses.pop(0)
 
     def close(self):
         self.session = None
@@ -147,6 +152,35 @@ def test_34411a_local_uses_gpib_gtl_with_ren_release():
     assert handle.usb_control_outs == [
         (0x21, 0xA1, 0, 3, b""),
         (0x21, 0xA0, 0, 3, b""),
+    ]
+
+
+def test_adcmt_7461a_configures_dc_voltage_and_reads_with_measure_query():
+    handle = FakeVisaHandle()
+    handle.read_responses = ["1.2345"]
+    device = ADCMT7461A("GPIB0::27::INSTR", handle=handle)
+
+    device.configure_measurement(measure_function="dc_voltage", nplc=1.234, auto_range=True)
+    value = device.read_once()
+
+    assert handle.commands == [
+        "CONFigure:VOLTage:DC",
+        "SENSe:VOLTage:DC:RANGe:AUTO ON",
+        "SENSe:VOLTage:DC:NPLCycles 1.234",
+        "MEASure?",
+    ]
+    assert value == 1.2345
+
+
+def test_adcmt_7461a_configures_dc_current_without_auto_range():
+    handle = FakeVisaHandle()
+    device = ADCMT7461A("GPIB0::27::INSTR", handle=handle)
+
+    device.configure_measurement(measure_function="dc_current", nplc=10, auto_range=False)
+
+    assert handle.commands == [
+        "CONFigure:CURRent:DC",
+        "SENSe:CURRent:DC:NPLCycles 10",
     ]
 
 

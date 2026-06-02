@@ -121,8 +121,8 @@ class VisaDevice:
             return str(self.inst.read()).strip()
         return str(self.inst.query(command)).strip()
 
-    def query_float(self, command: str) -> float:
-        response = self.query(command)
+    def query_float(self, command: str, *, delay_s: float = 0.0) -> float:
+        response = self.query(command, delay_s=delay_s)
         match = _FLOAT_RE.search(response)
         if not match:
             raise RuntimeError(f"Unexpected numeric response for {command}: {response!r}")
@@ -143,6 +143,15 @@ class VisaDevice:
         except Exception:
             pass
         self.gpib_go_to_local()
+
+    def release_remote_control(self) -> None:
+        self.gpib_interface_go_to_local(release_ren=True)
+        self.gpib_send_go_to_local()
+        self.gpib_go_to_local()
+        self.usb_go_to_local()
+        self.gpib_go_to_local(release_ren=True)
+        self.usb_deassert_ren()
+        self.gpib_deassert_ren()
 
     def gpib_go_to_local(self, *, release_ren: bool = False) -> None:
         try:

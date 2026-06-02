@@ -7,7 +7,8 @@ from kohdalab_iv.api.measurements import run_iv
 from kohdalab_iv.api.scan_plan import iv_plan_from_config
 from kohdalab_iv.api import session as session_module
 from kohdalab_iv.api.session import DeviceSession
-from kohdalab_iv.instruments.meters.agilent_dmm import Keysight34411A, Keysight34465A
+from kohdalab_iv.instruments.meters.adcmt_dmm import ADCMT7461A
+from kohdalab_iv.instruments.meters.agilent_dmm import Agilent34411A, Keysight34411A, Keysight34465A
 
 
 class FakeSource:
@@ -259,4 +260,11 @@ def test_device_session_supports_keysight_34465a():
 
 def test_device_session_supports_keysight_34411a():
     assert session_module.METER_CONTROLLERS["KEYSIGHT_34411A"] is Keysight34411A
-    assert "AGILENT_34411A" not in session_module.METER_CONTROLLERS
+
+
+def test_device_session_supports_agilent_34411a():
+    assert session_module.METER_CONTROLLERS["AGILENT_34411A"] is Agilent34411A
+
+
+def test_device_session_supports_adcmt_7461a():
+    assert session_module.METER_CONTROLLERS["ADCMT_7461A"] is ADCMT7461A

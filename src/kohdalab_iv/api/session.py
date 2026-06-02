@@ -4,7 +4,8 @@ from threading import RLock
 from typing import Any
 
 from kohdalab_iv.api.config import instrument_config
-from kohdalab_iv.instruments.meters.agilent_dmm import Agilent34401A, Keysight34411A, Keysight34465A
+from kohdalab_iv.instruments.meters.adcmt_dmm import ADCMT7461A
+from kohdalab_iv.instruments.meters.agilent_dmm import Agilent34401A, Agilent34411A, Keysight34411A, Keysight34465A
 from kohdalab_iv.instruments.sources.gs210 import YokogawaGS210
 from kohdalab_iv.instruments.visa_base import gpib_board_from_resource, release_gpib_remote
 
@@ -15,8 +16,10 @@ SOURCE_CONTROLLERS = {
 
 METER_CONTROLLERS = {
     "AGILENT_34401A": Agilent34401A,
+    "AGILENT_34411A": Agilent34411A,
     "KEYSIGHT_34411A": Keysight34411A,
     "KEYSIGHT_34465A": Keysight34465A,
+    "ADCMT_7461A": ADCMT7461A,
 }
 
 
@@ -33,39 +36,30 @@ class DeviceSession:
             self.config = config
 
     def connect_device(self, ref: str):
-        kind, key = ref.split(".", 1)
+        kind, key = self._split_ref(ref)
         cfg = instrument_config(self.config, ref)
         model = str(cfg["model"]).strip().upper()
-        cls = SOURCE_CONTROLLERS.get(model) if kind == "source" else METER_CONTROLLERS.get(model)
-        if cls is None:
-            raise ValueError(f"Unsupported {kind} model: {model}")
+        cls = self._controller_for(kind, model)
         resource = str(cfg["resource"])
-        with self._lock:
-            existing = self._map(kind).get(key)
+
+        existing = self._get_device(kind, key)
         if existing is not None:
-            if (
-                isinstance(existing, cls)
-                and getattr(existing, "resource", None) == resource
-                and self._device_is_connected(existing)
-            ):
+            if self._can_reuse_device(existing, cls=cls, resource=resource):
                 return existing
             self.disconnect_device(ref)
+
         device = cls(resource, timeout_ms=int(cfg.get("timeout_ms", 5000)))
-        with self._lock:
-            self._map(kind)[key] = device
+        self._set_device(kind, key, device)
         return device
 
     def connect_all(self) -> None:
         for kind in ("source", "meter"):
-            devices = self.config.get("instruments", {}).get(kind, {})
-            if isinstance(devices, dict):
-                for key in devices:
-                    self.connect_device(f"{kind}.{key}")
+            for key in self._configured_keys(kind):
+                self.connect_device(f"{kind}.{key}")
 
     def disconnect_device(self, ref: str) -> None:
-        kind, key = ref.split(".", 1)
-        with self._lock:
-            device = self._map(kind).pop(key, None)
+        kind, key = self._split_ref(ref)
+        device = self._pop_device(kind, key)
         if device is not None:
             self._return_and_close_device(device)
 
@@ -73,11 +67,11 @@ class DeviceSession:
         boards = {
             board
             for kind in ("source", "meter")
-            for device in list(self._map(kind).values())
+            for device in self._devices_snapshot(kind)
             if (board := gpib_board_from_resource(getattr(device, "resource", ""))) is not None
         }
         for kind in ("source", "meter"):
-            for key in list(self._map(kind)):
+            for key in self._connected_keys(kind):
                 self.disconnect_device(f"{kind}.{key}")
         for board in sorted(boards):
             release_gpib_remote(board)
@@ -85,49 +79,52 @@ class DeviceSession:
     def connected_devices(self) -> dict[str, bool]:
         connected: dict[str, bool] = {}
         for kind in ("source", "meter"):
-            devices = self.config.get("instruments", {}).get(kind, {})
-            if isinstance(devices, dict):
-                for key in devices:
-                    with self._lock:
-                        device = self._map(kind).get(key)
-                    is_connected = device is not None and self._device_is_connected(device)
-                    if device is not None and not is_connected:
-                        with self._lock:
-                            if self._map(kind).get(key) is device:
-                                self._map(kind).pop(key, None)
-                    connected[f"{kind}.{key}"] = is_connected
+            for key in self._configured_keys(kind):
+                connected[f"{kind}.{key}"] = self._connection_state(kind, key)
         return connected
 
     def require(self, ref: str):
-        kind, key = ref.split(".", 1)
-        with self._lock:
-            device = self._map(kind).get(key)
+        kind, key = self._split_ref(ref)
+        device = self._get_device(kind, key)
         if device is not None and self._device_is_connected(device):
             return device
         if device is not None:
-            with self._lock:
-                if self._map(kind).get(key) is device:
-                    self._map(kind).pop(key, None)
-            self._return_and_close_device(device)
+            self._discard_device(kind, key, device, close=True)
         if not self.auto_connect:
             raise RuntimeError(f"Device not connected: {ref}")
         return self.connect_device(ref)
 
+    def _controller_for(self, kind: str, model: str):
+        if kind == "source":
+            cls = SOURCE_CONTROLLERS.get(model)
+        elif kind == "meter":
+            cls = METER_CONTROLLERS.get(model)
+        else:
+            raise ValueError(f"Unsupported device kind: {kind}")
+        if cls is None:
+            raise ValueError(f"Unsupported {kind} model: {model}")
+        return cls
+
+    def _can_reuse_device(self, device, *, cls, resource: str) -> bool:
+        return (
+            isinstance(device, cls)
+            and getattr(device, "resource", None) == resource
+            and self._device_is_connected(device)
+        )
+
+    def _connection_state(self, kind: str, key: str) -> bool:
+        device = self._get_device(kind, key)
+        if device is None:
+            return False
+        if self._device_is_connected(device):
+            return True
+        self._discard_device(kind, key, device, close=False)
+        return False
+
     def _return_and_close_device(self, device) -> None:
-        try:
-            if hasattr(device, "local"):
-                device.local()
-        except Exception:
-            pass
-        try:
-            device.close()
-        except Exception:
-            pass
-        try:
-            if hasattr(device, "local_after_close"):
-                device.local_after_close()
-        except Exception:
-            pass
+        self._call_if_present(device, "local")
+        self._call_if_present(device, "close")
+        self._call_if_present(device, "local_after_close")
 
     def _device_is_connected(self, device) -> bool:
         if hasattr(device, "is_connected"):
@@ -136,6 +133,55 @@ class DeviceSession:
             except Exception:
                 return False
         return True
+
+    def _discard_device(self, kind: str, key: str, device, *, close: bool) -> None:
+        with self._lock:
+            if self._map(kind).get(key) is device:
+                self._map(kind).pop(key, None)
+        if close:
+            self._return_and_close_device(device)
+
+    def _call_if_present(self, device, method_name: str) -> None:
+        method = getattr(device, method_name, None)
+        if method is None:
+            return
+        try:
+            method()
+        except Exception:
+            pass
+
+    def _configured_keys(self, kind: str) -> list[str]:
+        devices = self.config.get("instruments", {}).get(kind, {})
+        return list(devices) if isinstance(devices, dict) else []
+
+    def _connected_keys(self, kind: str) -> list[str]:
+        with self._lock:
+            return list(self._map(kind))
+
+    def _devices_snapshot(self, kind: str) -> list[Any]:
+        with self._lock:
+            return list(self._map(kind).values())
+
+    def _get_device(self, kind: str, key: str):
+        with self._lock:
+            return self._map(kind).get(key)
+
+    def _set_device(self, kind: str, key: str, device) -> None:
+        with self._lock:
+            self._map(kind)[key] = device
+
+    def _pop_device(self, kind: str, key: str):
+        with self._lock:
+            return self._map(kind).pop(key, None)
+
+    def _split_ref(self, ref: str) -> tuple[str, str]:
+        try:
+            kind, key = ref.split(".", 1)
+        except ValueError as e:
+            raise ValueError(f"Invalid device ref: {ref}") from e
+        if not kind or not key:
+            raise ValueError(f"Invalid device ref: {ref}")
+        return kind, key
 
     def _map(self, kind: str) -> dict[str, Any]:
         if kind == "source":

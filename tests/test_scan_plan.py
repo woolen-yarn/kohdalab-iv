@@ -74,13 +74,35 @@ def test_plan_accepts_keysight_34465a_meter():
     assert plan.nplc == 0.001
 
 
-def test_plan_rejects_legacy_agilent_34411a_meter():
+def test_plan_accepts_agilent_34411a_meter():
     config = copy.deepcopy(DEFAULT_CONFIG)
-    config["roles"]["iv"]["measure"] = "meter.dmm_34411a"
-    config["roles"]["vi"]["measure"] = "meter.dmm_34411a"
-    config["instruments"]["meter"]["dmm_34411a"]["model"] = "AGILENT_34411A"
+    config["roles"]["iv"]["measure"] = "meter.dmm_agilent_34411a"
+    config["roles"]["vi"]["measure"] = "meter.dmm_agilent_34411a"
 
-    with pytest.raises(ValueError, match="Unsupported meter model"):
+    plan = iv_plan_from_config(config)
+
+    assert plan.measure_model == "AGILENT_34411A"
+
+
+def test_plan_accepts_adcmt_7461a_meter_nplc_range():
+    config = copy.deepcopy(DEFAULT_CONFIG)
+    config["roles"]["iv"]["measure"] = "meter.dmm_7461a"
+    config["roles"]["vi"]["measure"] = "meter.dmm_7461a"
+    config["measurements"]["iv"]["timing"]["nplc"] = 1.234
+
+    plan = iv_plan_from_config(config)
+
+    assert plan.measure_model == "ADCMT_7461A"
+    assert plan.nplc == 1.234
+
+
+def test_plan_rejects_adcmt_7461a_nplc_below_range():
+    config = copy.deepcopy(DEFAULT_CONFIG)
+    config["roles"]["iv"]["measure"] = "meter.dmm_7461a"
+    config["roles"]["vi"]["measure"] = "meter.dmm_7461a"
+    config["measurements"]["iv"]["timing"]["nplc"] = 0.001
+
+    with pytest.raises(ValueError, match="ADCMT_7461A does not support nplc"):
         iv_plan_from_config(config)
 
 
