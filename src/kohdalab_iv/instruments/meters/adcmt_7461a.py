@@ -34,10 +34,19 @@ class ADCMT7461A(VisaDevice):
         self.command_language = str(command_language or "scpi").strip().lower()
 
     def local(self) -> None:
+        self.prepare_for_disconnect()
         self.release_remote_control()
 
     def local_after_close(self) -> None:
         self.gpib_interface_go_to_local(release_ren=True)
+
+    def prepare_for_disconnect(self) -> None:
+        self.clear()
+        if self._uses_scpi:
+            self._try_write(":ABORt")
+        else:
+            self._try_write("H0")
+        self._try_write("*CLS")
 
     def configure_measurement(self, *, measure_function: str, nplc: float, auto_range: bool = True) -> None:
         if self._uses_scpi:

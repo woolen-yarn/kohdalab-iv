@@ -242,7 +242,7 @@ GUI close、Source Disconnect、All Disconnect:
 
 34401A には `SYST:LOC` を送りません。34401A の RS-232 専用 command error を避けるため、GPIB GTL で local に戻します。
 
-Agilent/Keysight 34411A と Keysight 34465A は同じ 34411A 系の local sequence を使います。ADCMT 7461A も同じ local release 経路を使います。USB 接続では USBTMC/USB488 の local/REN release、GPIB 接続では GTL/REN release を試します。
+Agilent/Keysight 34411A と Keysight 34465A は同じ 34411A 系の local sequence を使います。ADCMT 7461A も同じ local release 経路を使います。ADCMT 7461A は timeout などで未完了の測定が残った状態でも復帰しやすいように、local release の前に VISA clear、`:ABORt`、`*CLS` を試します。USB 接続では USBTMC/USB488 の local/REN release、GPIB 接続では GTL/REN release を試します。
 
 ADCMT 7461A は `command_language` で SCPI/ADC を切り替えます。標準 config は `scpi` です。SCPI では測定開始時に `*RST`、`:SENSE:FUNCTION 'VOLTAGE:DC'` または `:SENSE:FUNCTION 'CURRENT:DC'`、必要に応じて `:SENSE:<function>:RANGE:AUTO ON`、`:SENSE:<function>:NPLCYCLES <nplc>` を送り、測定値は `:READ?` で取得します。connect 時の status check は `:SYSTem:ERRor?` を使います。ADC mode を明示した場合だけ、従来通り `F1`/`F5`、`R0`、`ITP<nplc>`、`ERR?` を使います。
 
@@ -634,7 +634,9 @@ The 34401A does not receive `SYST:LOC`; local return is handled through GPIB GTL
 to avoid the 34401A RS-232-only command error.
 
 The Agilent/Keysight 34411A and Keysight 34465A use the same 34411A-family local
-sequence. The ADCMT 7461A uses the same local-release path. USB connections use
+sequence. The ADCMT 7461A uses the same local-release path. Before local
+release, the ADCMT 7461A also tries VISA clear, `:ABORt`, and `*CLS` so a timed
+out or pending measurement is easier to recover from. USB connections use
 USBTMC/USB488 local/REN release; GPIB connections use GTL/REN release.
 
 The ADCMT 7461A command set is selected with `command_language`. The standard

@@ -75,6 +75,7 @@ class FakeVisaHandle:
         self.commands = []
         self.ren_modes = []
         self.usb_control_outs = []
+        self.clear_count = 0
         self.query_responses = []
         self.read_responses = ["0"]
         self.session = object()
@@ -90,6 +91,9 @@ class FakeVisaHandle:
         if self.query_responses:
             return self.query_responses.pop(0)
         return "0,No error"
+
+    def clear(self):
+        self.clear_count += 1
 
     def control_ren(self, mode):
         self.ren_modes.append(mode)
@@ -260,6 +264,18 @@ def test_adcmt_7461a_connect_status_uses_adc_error_query_when_configured():
 
     assert status == "0,No error"
     assert handle.commands == ["*CLS", "ERR?"]
+
+
+def test_adcmt_7461a_local_aborts_pending_scpi_measurement_before_gtl():
+    handle = FakeVisaHandle()
+    device = ADCMT7461A("GPIB0::27::INSTR", handle=handle)
+
+    device.local()
+
+    assert handle.clear_count == 1
+    assert handle.commands[:2] == [":ABORt", "*CLS"]
+    assert handle._resource_manager.opened_resources == ["GPIB0::INTFC"]
+    assert handle.ren_modes[-1] == constants.VI_GPIB_REN_DEASSERT
 
 
 def test_visa_device_is_connected_detects_closed_handle():
