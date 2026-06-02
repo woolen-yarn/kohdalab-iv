@@ -70,12 +70,11 @@ class ADCMT7461A(VisaDevice):
         if function is None:
             raise ValueError(f"Unsupported DMM measure function: {measure_function}")
 
-        self._drain_scpi_errors()
+        if not self._uses_usb:
+            self._drain_scpi_errors()
         self._write_scpi_setting("*RST")
         self._write_scpi_setting(f":SENSE:FUNCTION '{function}'")
-        if auto_range:
-            self._try_scpi_setting(f":SENSE:{function}:RANGE:AUTO ON")
-        self._try_scpi_setting(f":SENSE:{function}:SRATE {self._sampling_rate(nplc)}")
+        self._write_scpi_setting(f":SENSE:{function}:SRATE {self._sampling_rate(nplc)}")
 
     def _configure_measurement_adc(self, *, measure_function: str, nplc: float, auto_range: bool) -> None:
         function = self.ADC_FUNCTION_COMMANDS.get(measure_function)
@@ -146,6 +145,8 @@ class ADCMT7461A(VisaDevice):
 
     def _write_scpi_setting(self, command: str) -> str | None:
         self.write(command)
+        if self._uses_usb:
+            return None
         return self._drain_scpi_errors()
 
     def _try_scpi_setting(self, command: str) -> str | None:

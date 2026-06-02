@@ -167,9 +167,9 @@ def test_34411a_local_uses_gpib_gtl_with_ren_release():
     ]
 
 
-def test_adcmt_7461a_configures_dc_voltage_and_reads_with_scpi_read():
+def test_adcmt_7461a_configures_dc_voltage_and_reads_with_gpib_scpi_read():
     handle = FakeVisaHandle()
-    handle.query_responses = ["0,No error"] * 5 + ["+1.234500E+00"]
+    handle.query_responses = ["0,No error"] * 4 + ["+1.234500E+00"]
     device = ADCMT7461A("GPIB0::27::INSTR", handle=handle)
 
     device.configure_measurement(measure_function="dc_voltage", nplc=1.234, auto_range=True)
@@ -181,8 +181,6 @@ def test_adcmt_7461a_configures_dc_voltage_and_reads_with_scpi_read():
         ":SYSTem:ERRor?",
         ":SENSE:FUNCTION 'VOLTAGE:DC'",
         ":SYSTem:ERRor?",
-        ":SENSE:VOLTAGE:DC:RANGE:AUTO ON",
-        ":SYSTem:ERRor?",
         ":SENSE:VOLTAGE:DC:SRATE SSLOW",
         ":SYSTem:ERRor?",
         ":READ?",
@@ -190,7 +188,24 @@ def test_adcmt_7461a_configures_dc_voltage_and_reads_with_scpi_read():
     assert value == 1.2345
 
 
-def test_adcmt_7461a_configures_dc_current_without_auto_range_with_scpi():
+def test_adcmt_7461a_configures_dc_voltage_and_reads_with_usb_scpi_read():
+    handle = FakeVisaHandle()
+    handle.query_responses = ["+1.234500E+00"]
+    device = ADCMT7461A("USB0::1::INSTR", handle=handle)
+
+    device.configure_measurement(measure_function="dc_voltage", nplc=1.234, auto_range=True)
+    value = device.read_once()
+
+    assert handle.commands == [
+        "*RST",
+        ":SENSE:FUNCTION 'VOLTAGE:DC'",
+        ":SENSE:VOLTAGE:DC:SRATE SSLOW",
+        ":READ?",
+    ]
+    assert value == 1.2345
+
+
+def test_adcmt_7461a_configures_dc_current_without_auto_range_with_gpib_scpi():
     handle = FakeVisaHandle()
     device = ADCMT7461A("GPIB0::27::INSTR", handle=handle)
 
@@ -298,7 +313,7 @@ def test_adcmt_7461a_connect_status_uses_adc_error_query_when_configured():
 
 def test_adcmt_7461a_scpi_syncs_after_setting_commands():
     handle = FakeVisaHandle()
-    handle.query_responses = ["0,No error"] * 5
+    handle.query_responses = ["0,No error"] * 4
     device = ADCMT7461A("GPIB0::27::INSTR", handle=handle)
 
     device.configure_measurement(measure_function="dc_voltage", nplc=0.2, auto_range=True)
@@ -308,8 +323,6 @@ def test_adcmt_7461a_scpi_syncs_after_setting_commands():
         "*RST",
         ":SYSTem:ERRor?",
         ":SENSE:FUNCTION 'VOLTAGE:DC'",
-        ":SYSTem:ERRor?",
-        ":SENSE:VOLTAGE:DC:RANGE:AUTO ON",
         ":SYSTem:ERRor?",
         ":SENSE:VOLTAGE:DC:SRATE MED",
         ":SYSTem:ERRor?",
