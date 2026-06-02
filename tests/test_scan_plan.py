@@ -62,6 +62,28 @@ def test_vi_plan_uses_current_source_and_voltage_meter():
     assert {point.direction for point in plan.points} == {"forward"}
 
 
+def test_plan_accepts_keysight_34465a_meter():
+    config = copy.deepcopy(DEFAULT_CONFIG)
+    config["roles"]["iv"]["measure"] = "meter.dmm_34465a"
+    config["roles"]["vi"]["measure"] = "meter.dmm_34465a"
+    config["measurements"]["iv"]["timing"]["nplc"] = 0.001
+
+    plan = iv_plan_from_config(config)
+
+    assert plan.measure_model == "KEYSIGHT_34465A"
+    assert plan.nplc == 0.001
+
+
+def test_plan_rejects_legacy_agilent_34411a_meter():
+    config = copy.deepcopy(DEFAULT_CONFIG)
+    config["roles"]["iv"]["measure"] = "meter.dmm_34411a"
+    config["roles"]["vi"]["measure"] = "meter.dmm_34411a"
+    config["instruments"]["meter"]["dmm_34411a"]["model"] = "AGILENT_34411A"
+
+    with pytest.raises(ValueError, match="Unsupported meter model"):
+        iv_plan_from_config(config)
+
+
 def test_decreasing_linear_scan_is_backward():
     config = copy.deepcopy(DEFAULT_CONFIG)
     settings = config["measurements"]["iv"]

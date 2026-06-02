@@ -5,6 +5,7 @@ from kohdalab_iv.api.measurements import run_iv
 from kohdalab_iv.api.scan_plan import iv_plan_from_config
 from kohdalab_iv.api import session as session_module
 from kohdalab_iv.api.session import DeviceSession
+from kohdalab_iv.instruments.meters.agilent_dmm import Keysight34411A, Keysight34465A
 
 
 class FakeSource:
@@ -181,3 +182,12 @@ def test_device_session_releases_gpib_boards_after_disconnect_all(monkeypatch):
     session.disconnect_all()
 
     assert released == ["GPIB0"]
+
+
+def test_device_session_supports_keysight_34465a():
+    assert session_module.METER_CONTROLLERS["KEYSIGHT_34465A"] is Keysight34465A
+
+
+def test_device_session_supports_keysight_34411a():
+    assert session_module.METER_CONTROLLERS["KEYSIGHT_34411A"] is Keysight34411A
+    assert "AGILENT_34411A" not in session_module.METER_CONTROLLERS

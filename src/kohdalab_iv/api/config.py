@@ -119,7 +119,14 @@ DEFAULT_CONFIG: dict[str, Any] = {
                 "auto_range": True,
             },
             "dmm_34411a": {
-                "model": "AGILENT_34411A",
+                "model": "KEYSIGHT_34411A",
+                "transport": "visa",
+                "resource": "USB0::0x0000::0x0000::INSTR",
+                "timeout_ms": 10000,
+                "auto_range": True,
+            },
+            "dmm_34465a": {
+                "model": "KEYSIGHT_34465A",
                 "transport": "visa",
                 "resource": "USB0::0x0000::0x0000::INSTR",
                 "timeout_ms": 10000,

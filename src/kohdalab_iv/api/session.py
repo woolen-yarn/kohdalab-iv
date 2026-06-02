@@ -4,7 +4,7 @@ from threading import RLock
 from typing import Any
 
 from kohdalab_iv.api.config import instrument_config
-from kohdalab_iv.instruments.meters.agilent_dmm import Agilent34401A, Agilent34411A
+from kohdalab_iv.instruments.meters.agilent_dmm import Agilent34401A, Keysight34411A, Keysight34465A
 from kohdalab_iv.instruments.sources.gs210 import YokogawaGS210
 from kohdalab_iv.instruments.visa_base import gpib_board_from_resource, release_gpib_remote
 
@@ -15,7 +15,8 @@ SOURCE_CONTROLLERS = {
 
 METER_CONTROLLERS = {
     "AGILENT_34401A": Agilent34401A,
-    "AGILENT_34411A": Agilent34411A,
+    "KEYSIGHT_34411A": Keysight34411A,
+    "KEYSIGHT_34465A": Keysight34465A,
 }
 
 

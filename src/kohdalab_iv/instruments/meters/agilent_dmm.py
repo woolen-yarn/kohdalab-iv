@@ -41,7 +41,7 @@ class Agilent34401A(AgilentDMM):
     pass
 
 
-class Agilent34411A(AgilentDMM):
+class Keysight34411A(AgilentDMM):
     def local(self) -> None:
         self.gpib_interface_go_to_local(release_ren=True)
         self.gpib_send_go_to_local()
@@ -65,3 +65,7 @@ class Agilent34411A(AgilentDMM):
         elif measure_function == "dc_current":
             self._try_write("SENS:CURR:DC:ZERO:AUTO ON")
         self._try_write("TRIG:SOUR IMM")
+
+
+class Keysight34465A(Keysight34411A):
+    pass

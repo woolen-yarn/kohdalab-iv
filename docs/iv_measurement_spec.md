@@ -16,7 +16,7 @@ Version: 1.0
 - Source VISA resource: `GPIB0::2::INSTR`
 - Meter: Agilent/HP 34401A, `AGILENT_34401A`
 - Meter VISA resource: `GPIB0::26::INSTR`
-- Optional meter model: `AGILENT_34411A`
+- Optional meter model: `KEYSIGHT_34411A`
 
 装置の capability と hard limit は TOML に置きます。
 
@@ -159,7 +159,7 @@ level zero、output off を実行します。
 
 Controls:
 
-- Device: `AGILENT_34401A` or `AGILENT_34411A`
+- Device: `AGILENT_34401A` or `KEYSIGHT_34411A`
 - Resource
 - Refresh
 - NPLC
@@ -386,7 +386,7 @@ Standard setup:
 - Source VISA resource: `GPIB0::2::INSTR`
 - Meter: Agilent/HP 34401A, `AGILENT_34401A`
 - Meter VISA resource: `GPIB0::26::INSTR`
-- Optional meter model: `AGILENT_34411A`
+- Optional meter model: `KEYSIGHT_34411A`
 
 Instrument capability and hard-limit metadata live in TOML files:
 
@@ -531,7 +531,7 @@ level zero, and output off again.
 
 Controls:
 
-- Device: `AGILENT_34401A` or `AGILENT_34411A`
+- Device: `AGILENT_34401A` or `KEYSIGHT_34411A`
 - Resource
 - Refresh
 - NPLC
