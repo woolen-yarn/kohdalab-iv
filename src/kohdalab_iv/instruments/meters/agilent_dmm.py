@@ -43,7 +43,7 @@ class Agilent34401A(AgilentDMM):
 
 class Agilent34411A(AgilentDMM):
     def local(self) -> None:
-        self._try_write("SYST:LOC")
+        self.gpib_send_go_to_local()
         self.gpib_go_to_local()
         self.usb_go_to_local()
         self.gpib_go_to_local(release_ren=True)

@@ -4,11 +4,21 @@ from kohdalab_iv.instruments.meters.agilent_dmm import Agilent34401A, Agilent344
 from kohdalab_iv.instruments.visa_base import VisaDevice
 
 
+class FakeVisaLib:
+    def __init__(self):
+        self.gpib_commands = []
+
+    def gpib_command(self, session, command):
+        self.gpib_commands.append((session, command))
+
+
 class FakeVisaHandle:
     def __init__(self):
         self.commands = []
         self.ren_modes = []
         self.usb_control_outs = []
+        self.session = object()
+        self.visalib = FakeVisaLib()
 
     def write(self, command):
         self.commands.append(command)
@@ -17,6 +27,10 @@ class FakeVisaHandle:
         self.ren_modes.append(mode)
 
     def get_visa_attribute(self, attribute):
+        if attribute == constants.VI_ATTR_GPIB_PRIMARY_ADDR:
+            return 26
+        if attribute == constants.VI_ATTR_USB_INTFC_NUM:
+            return 3
         return 3
 
     def control_out(self, request_type, request_id, request_value, index, data=b""):
@@ -52,7 +66,10 @@ def test_34411a_local_uses_gpib_gtl_with_ren_release():
 
     device.local()
 
-    assert handle.commands == ["SYST:LOC"]
+    assert handle.commands == []
+    assert handle.visalib.gpib_commands == [
+        (handle.session, bytes([0x3F, 0x20 + 26, 0x01])),
+    ]
     assert handle.ren_modes == [
         constants.VI_GPIB_REN_ADDRESS_GTL,
         constants.VI_GPIB_REN_DEASSERT_GTL,

@@ -57,6 +57,23 @@ class VisaDevice:
         except Exception:
             pass
 
+    def gpib_send_go_to_local(self) -> None:
+        try:
+            from pyvisa import constants
+
+            address = int(self.inst.get_visa_attribute(constants.VI_ATTR_GPIB_PRIMARY_ADDR))
+        except Exception:
+            match = re.search(r"GPIB\d*::(\d+)", self.resource, flags=re.IGNORECASE)
+            if match is None:
+                return
+            address = int(match.group(1))
+        if not 0 <= address <= 30:
+            return
+        try:
+            self.inst.visalib.gpib_command(self.inst.session, bytes([0x3F, 0x20 + address, 0x01]))
+        except Exception:
+            pass
+
     def gpib_deassert_ren(self) -> None:
         try:
             from pyvisa import constants
