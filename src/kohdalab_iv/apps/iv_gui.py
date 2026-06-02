@@ -14,6 +14,17 @@ from kohdalab_iv.interfaces.common import list_visa_resources
 
 SOURCE_MODELS = ["YOKOGAWA_GS210", "YOKOGAWA_7651"]
 METER_MODELS = ["AGILENT_34401A", "AGILENT_34411A", "KEYSIGHT_34411A", "KEYSIGHT_34465A", "ADCMT_7461A"]
+SOURCE_MODEL_KEYS = {
+    "YOKOGAWA_GS210": "gs210",
+    "YOKOGAWA_7651": "yokogawa_7651",
+}
+METER_MODEL_KEYS = {
+    "AGILENT_34401A": "dmm_34401a",
+    "AGILENT_34411A": "dmm_agilent_34411a",
+    "KEYSIGHT_34411A": "dmm_34411a",
+    "KEYSIGHT_34465A": "dmm_34465a",
+    "ADCMT_7461A": "dmm_7461a",
+}
 CURRENT_UNITS = ["pA", "nA", "uA", "mA", "A"]
 VOLTAGE_UNITS = ["nV", "uV", "mV", "V"]
 MODE_LABELS = {
@@ -37,6 +48,31 @@ SNAPSHOT_FIELDS = [
     "resistance_Ohm",
     "conductance_S",
 ]
+MODEL_KEY_MAPS = {
+    "source": SOURCE_MODEL_KEYS,
+    "meter": METER_MODEL_KEYS,
+}
+
+
+def _model_config_for_selection(config: dict[str, Any], kind: str, model: str) -> tuple[str | None, dict[str, Any] | None]:
+    model = str(model).strip().upper()
+    devices = config.get("instruments", {}).get(kind, {})
+    if not isinstance(devices, dict):
+        return None, None
+
+    canonical_key = MODEL_KEY_MAPS.get(kind, {}).get(model)
+    if canonical_key in devices and isinstance(devices[canonical_key], dict):
+        return canonical_key, devices[canonical_key]
+
+    for key, cfg in devices.items():
+        if isinstance(cfg, dict) and str(cfg.get("model", "")).strip().upper() == model:
+            return str(key), cfg
+    return None, None
+
+
+def _device_key_for_selection(config: dict[str, Any], kind: str, model: str, current_key: str) -> str:
+    key, _ = _model_config_for_selection(config, kind, model)
+    return key or current_key
 
 
 def _set_quantity(target: dict[str, Any], key: str, value: float, unit: str) -> None:
@@ -141,6 +177,7 @@ def main() -> None:
             self.thread: QtCore.QThread | None = None
             self.worker: MeasurementWorker | None = None
             self.rows: list[dict[str, Any]] = []
+            self._measurement_active = False
             self._build_widgets()
             self._build_layout()
             self._load_fields()
@@ -521,6 +558,38 @@ def main() -> None:
             _, meter_ref = self._active_refs(self.config)
             return meter_ref.split(".", 1)[1]
 
+        def _set_measurement_active(self, active: bool) -> None:
+            self._measurement_active = bool(active)
+            controls_enabled = not self._measurement_active
+            for widget in (
+                self.config_path_edit,
+                self.browse_button,
+                self.load_button,
+                self.save_button,
+                self.connect_all_button,
+                self.disconnect_all_button,
+                self.source_model_combo,
+                self.source_resource_combo,
+                self.source_refresh_button,
+                self.source_connect_button,
+                self.source_disconnect_button,
+                self.meter_model_combo,
+                self.meter_resource_combo,
+                self.meter_refresh_button,
+                self.meter_connect_button,
+                self.meter_disconnect_button,
+                self.output_off_button,
+            ):
+                widget.setEnabled(controls_enabled)
+            self.start_button.setEnabled(controls_enabled)
+            self.stop_button.setEnabled(self._measurement_active)
+
+        def _ensure_measurement_idle(self, action: str) -> bool:
+            if not self._measurement_active:
+                return True
+            self.append_log(f"{action} skipped: measurement is running.")
+            return False
+
         def _active_refs(self, config: dict[str, Any]) -> tuple[str, str]:
             mode = str(config["measurements"]["iv"].get("mode", "dc_iv"))
             role_key = "vi" if mode == "dc_vi" else "iv"
@@ -561,16 +630,14 @@ def main() -> None:
             self._refresh_plot_labels()
 
         def _meter_model_changed(self, model: str) -> None:
-            for key, cfg in self.config.get("instruments", {}).get("meter", {}).items():
-                if str(cfg.get("model", "")).upper() == model:
-                    self.meter_resource_combo.setCurrentText(str(cfg.get("resource", "")))
-                    return
+            _, cfg = _model_config_for_selection(self.config, "meter", model)
+            if cfg is not None:
+                self.meter_resource_combo.setCurrentText(str(cfg.get("resource", "")))
 
         def _source_model_changed(self, model: str) -> None:
-            for key, cfg in self.config.get("instruments", {}).get("source", {}).items():
-                if str(cfg.get("model", "")).upper() == model:
-                    self.source_resource_combo.setCurrentText(str(cfg.get("resource", "")))
-                    return
+            _, cfg = _model_config_for_selection(self.config, "source", model)
+            if cfg is not None:
+                self.source_resource_combo.setCurrentText(str(cfg.get("resource", "")))
 
         def _load_fields(self) -> None:
             settings = self.config["measurements"]["iv"]
@@ -668,19 +735,19 @@ def main() -> None:
 
         def _source_key_for_selected_model(self, config: dict[str, Any]) -> str:
             model = self.source_model_combo.currentText().strip().upper()
-            for key, cfg in config.get("instruments", {}).get("source", {}).items():
-                if str(cfg.get("model", "")).upper() == model:
-                    return key
             current = self._source_key()
+            key = _device_key_for_selection(config, "source", model, current)
+            if key != current:
+                return key
             config["instruments"].setdefault("source", {}).setdefault(current, {})
             return current
 
         def _meter_key_for_selected_model(self, config: dict[str, Any]) -> str:
             model = self.meter_model_combo.currentText().strip().upper()
-            for key, cfg in config.get("instruments", {}).get("meter", {}).items():
-                if str(cfg.get("model", "")).upper() == model:
-                    return key
             current = self._meter_key()
+            key = _device_key_for_selection(config, "meter", model, current)
+            if key != current:
+                return key
             config["instruments"].setdefault("meter", {}).setdefault(current, {})
             return current
 
@@ -696,6 +763,8 @@ def main() -> None:
                     _set_quantity(safety, "compliance", 10.0, "uA")
 
         def browse_config(self) -> None:
+            if not self._ensure_measurement_idle("Browse Config"):
+                return
             path, _ = QtWidgets.QFileDialog.getOpenFileName(self, "Load Config", str(Path.cwd()), "JSON Files (*.json)")
             if path:
                 self.config_path_edit.setText(path)
@@ -710,10 +779,14 @@ def main() -> None:
             self.load_config()
 
         def connect_all(self) -> None:
+            if not self._ensure_measurement_idle("All Connect"):
+                return
             self.connect_source()
             self.connect_meter()
 
         def disconnect_all(self) -> None:
+            if not self._ensure_measurement_idle("All Disconnect"):
+                return
             self._safe_zero_output_off(raise_errors=False)
             self.experiment.disconnect_all()
             self.source_status.setText("local")
@@ -721,6 +794,8 @@ def main() -> None:
             self.append_log("Disconnected all.")
 
         def load_config(self) -> None:
+            if not self._ensure_measurement_idle("Load Config"):
+                return
             try:
                 self.config_path = Path(self.config_path_edit.text())
                 self.config = load_config(self.config_path)
@@ -733,6 +808,8 @@ def main() -> None:
                 self.append_log(f"Config error: {e}")
 
         def save_config(self) -> None:
+            if not self._ensure_measurement_idle("Save Config"):
+                return
             try:
                 self.config = self._config_from_fields()
                 save_config(self.config, self.config_path_edit.text())
@@ -744,6 +821,8 @@ def main() -> None:
                 self.append_log(f"Config error: {e}")
 
         def refresh_resources(self) -> None:
+            if not self._ensure_measurement_idle("Refresh Resources"):
+                return
             try:
                 resources = list(list_visa_resources())
                 for combo in (self.source_resource_combo, self.meter_resource_combo):
@@ -761,6 +840,8 @@ def main() -> None:
             self.experiment.config = self.config
 
         def connect_source(self) -> None:
+            if not self._ensure_measurement_idle("Source Connect"):
+                return
             try:
                 self._apply_config()
                 source_ref, _ = self._active_refs(self.config)
@@ -776,6 +857,8 @@ def main() -> None:
                 self.append_log(f"Source connect error: {e}")
 
         def disconnect_source(self) -> None:
+            if not self._ensure_measurement_idle("Source Disconnect"):
+                return
             source_ref, _ = self._active_refs(self.config)
             self._safe_zero_output_off(raise_errors=False)
             affected = self.experiment.disconnect_device(source_ref)
@@ -783,6 +866,8 @@ def main() -> None:
             self.append_log(f"Disconnected {', '.join(affected or [source_ref])}.")
 
         def connect_meter(self) -> None:
+            if not self._ensure_measurement_idle("Meter Connect"):
+                return
             try:
                 self._apply_config()
                 _, meter_ref = self._active_refs(self.config)
@@ -806,6 +891,8 @@ def main() -> None:
                 return f"status unavailable: {e}"
 
         def disconnect_meter(self) -> None:
+            if not self._ensure_measurement_idle("Meter Disconnect"):
+                return
             _, meter_ref = self._active_refs(self.config)
             affected = self.experiment.disconnect_device(meter_ref)
             self._mark_disconnected(affected or [meter_ref])
@@ -829,6 +916,9 @@ def main() -> None:
                 self.append_log(f"Plan error: {e}")
 
         def start_measurement(self) -> None:
+            if self._measurement_active:
+                self.append_log("Start skipped: measurement is already running.")
+                return
             try:
                 self._apply_config()
                 plan = iv_plan_from_config(self.config)
@@ -851,11 +941,11 @@ def main() -> None:
                 self.worker.finished.connect(self.worker.deleteLater)
                 self.thread.finished.connect(self._thread_finished)
                 self.thread.finished.connect(self.thread.deleteLater)
+                self._set_measurement_active(True)
                 self.thread.start()
-                self.start_button.setEnabled(False)
-                self.stop_button.setEnabled(True)
                 self.append_log(f"Started {plan.summary} -> {out}")
             except Exception as e:
+                self._set_measurement_active(False)
                 QtWidgets.QMessageBox.critical(self, "Start Error", str(e))
                 self.append_log(f"Start error: {e}")
 
@@ -865,6 +955,8 @@ def main() -> None:
                 self.append_log("Stop requested.")
 
         def output_off(self) -> None:
+            if not self._ensure_measurement_idle("Output Off"):
+                return
             try:
                 self._apply_config()
                 source = self._safe_zero_output_off(connect_if_missing=True)
@@ -912,8 +1004,7 @@ def main() -> None:
         def handle_finished(self, rows) -> None:
             self.append_log(f"Finished. {len(rows)} points collected.")
             self.status_label.setText(f"finished {len(rows)} points")
-            self.start_button.setEnabled(True)
-            self.stop_button.setEnabled(False)
+            self._set_measurement_active(False)
             self.append_log("Source returned to zero/output off. Devices remain remote.")
 
         def _thread_finished(self) -> None:
@@ -1037,6 +1128,13 @@ def main() -> None:
     app = QtWidgets.QApplication(sys.argv)
     window = IVGui()
     window.show()
+
+    def show_main_window() -> None:
+        window.showNormal()
+        window.raise_()
+        window.activateWindow()
+
+    QtCore.QTimer.singleShot(0, show_main_window)
     sys.exit(app.exec())
 
 

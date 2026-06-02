@@ -230,6 +230,10 @@ Stop:
 3. output off します。
 4. 装置は connected/remote のまま残します。
 
+sweep 中は GUI の config load/save、source/meter connect/disconnect、resource
+refresh、手動 Output Off を無効化します。装置 session を測定スレッド以外から触らず、
+停止は Stop から順序立てて行います。
+
 Error:
 
 1. output off を優先します。
@@ -625,6 +629,10 @@ Stop:
 2. Ramp source to zero.
 3. Turn output off.
 4. Leave instruments connected and remote.
+
+During an active sweep, GUI config load/save, source/meter connect or
+disconnect, resource refresh, and manual Output Off are disabled. Stop is the
+only measurement-control path that touches the active source session.
 
 Error:
 

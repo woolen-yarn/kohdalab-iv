@@ -21,4 +21,6 @@ Else
   WScript.Quit 1
 End If
 
-shell.Run command, 1, False
+' Use window style 0 to hide launcher plumbing. The Qt app calls showNormal
+' after startup so the main GUI window is still brought to the foreground.
+shell.Run command, 0, False

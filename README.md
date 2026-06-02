@@ -71,6 +71,10 @@ plot は sweep している量を x 軸にします。source target が増える
 2. Source output を off にします。
 3. 装置は connected/remote のまま残し、GUI から次の操作を続けられるようにします。
 
+sweep 中は config load/save、source/meter connect/disconnect、resource refresh、
+手動 Output Off を無効化します。測定を止めるときは Stop を使い、測定スレッド側で
+zero ramp と output off を順番に実行します。
+
 All Disconnect、Source Disconnect、アプリ終了:
 
 1. Source output off と level zero を試します。
@@ -131,6 +135,9 @@ Launch the GUI from the desktop VBS launcher:
 ```text
 desktop\KohdaLab_IV_GUI.vbs
 ```
+
+The VBS launcher hides its command plumbing. The Qt app explicitly restores the
+main window to normal display after startup.
 
 Keep the VBS file in the repository and place a shortcut to it on the Windows
 desktop. The launcher resolves the project root from its repository location.
@@ -198,6 +205,10 @@ Normal finish and Stop:
 1. Ramp the source back to zero.
 2. Turn source output off.
 3. Keep instruments connected and remote so the GUI can continue.
+
+During an active sweep, config load/save, source/meter connect or disconnect,
+resource refresh, and manual Output Off are disabled. Use Stop to end the sweep
+so the measurement thread can ramp to zero and release control in order.
 
 All Disconnect, Source Disconnect, or app close:
 
