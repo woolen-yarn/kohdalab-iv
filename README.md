@@ -1,5 +1,11 @@
 # KohdaLab IV
 
+[![Test](https://github.com/woolen-yarn/kohdalab-iv/actions/workflows/test.yml/badge.svg)](https://github.com/woolen-yarn/kohdalab-iv/actions/workflows/test.yml)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
+![Python](https://img.shields.io/badge/python-3.10%2B-blue)
+
+Roadmap: [ROADMAP.md](ROADMAP.md)
+
 ## 日本語
 
 KohdaLab IV は、Yokogawa GS210 または Yokogawa 7651 を source、Agilent/HP 34401A、Agilent/Keysight 34411A、Keysight 34465A、または ADCMT 7461A を meter として使う DC IV/VI 測定ツールです。GUI、CLI、Jupyter Notebook から同じ測定コアを使えます。
