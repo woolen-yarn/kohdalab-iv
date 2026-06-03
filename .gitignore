@@ -4,4 +4,7 @@ __pycache__/
 .pytest_cache/
 .venv/
 results/
-gui_launcher.log
+*.log
+
+# PC-specific configs should not be overwritten by git pulls.
+config/*.local.json

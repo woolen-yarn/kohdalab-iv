@@ -254,3 +254,21 @@ Key output fields:
 
 See [docs/iv_measurement_spec.md](docs/iv_measurement_spec.md) for the full
 implementation specification.
+
+### Safety
+
+Read [SAFETY.md](SAFETY.md) before operating real instruments. Always confirm
+source mode, limits, compliance, wiring, and a manual way to disable output.
+
+### Windows Setup
+
+Use [docs/windows_setup.md](docs/windows_setup.md) when preparing a Windows
+instrument PC.
+
+### Citation
+
+If you use this software in research, see [CITATION.cff](CITATION.cff).
+
+### License
+
+This project is released under the MIT License. See [LICENSE](LICENSE).
