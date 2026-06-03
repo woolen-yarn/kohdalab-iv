@@ -4,277 +4,48 @@
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 ![Python](https://img.shields.io/badge/python-3.10%2B-blue)
 
-Roadmap: [ROADMAP.md](ROADMAP.md)
+KohdaLab IV is a Python toolkit for DC I-V and V-I measurements from CLI, GUI, and Jupyter Notebook workflows.
 
-## 日本語
+## What It Does
 
-KohdaLab IV は、Yokogawa GS210 または Yokogawa 7651 を source、Agilent/HP 34401A、Agilent/Keysight 34411A、Keysight 34465A、または ADCMT 7461A を meter として使う DC IV/VI 測定ツールです。GUI、CLI、Jupyter Notebook から同じ測定コアを使えます。
+- Controls source and meter instruments for DC sweep measurements.
+- Supports I-V and V-I modes with shared measurement logic.
+- Saves measurement results as CSV for simple analysis and archival.
+- Provides GUI, command-line, and notebook entry points.
 
-現在の標準構成は次の通りです。
+## Quick Start
 
-- Source: `YOKOGAWA_GS210` at `GPIB0::2::INSTR`
-- Optional source: `YOKOGAWA_7651`
-- Meter: `AGILENT_34401A` at `GPIB0::26::INSTR`
-- Optional meter: `AGILENT_34411A`, `KEYSIGHT_34411A`, `KEYSIGHT_34465A`, `ADCMT_7461A`
-- Config: `config/default.json`
+For a new PC, start with the setup guide:
 
-### 起動
+- [Initial setup](docs/initial_setup.md)
 
-GUI は VBS ランチャーから起動できます。
-
-```text
-desktop\KohdaLab_IV_GUI.vbs
-```
-
-プロジェクトディレクトリから直接起動する場合は次を使います。
+After setup:
 
 ```powershell
-& "$env:USERPROFILE\.local\bin\uv.exe" run --extra gui kohdalab-iv-gui
+uv sync --all-extras --group dev --frozen
+uv run kohdalab-iv --config config/default.json check-config
+uv run --extra gui kohdalab-iv-gui
 ```
 
-測定せずに config だけ確認する場合:
+Run tests:
 
 ```powershell
-& "$env:USERPROFILE\.local\bin\uv.exe" run kohdalab-iv --config config/default.json check-config
+uv run pytest -q
 ```
 
-Jupyter を起動する場合:
+## Documentation
 
-```powershell
-.\run_jupyter.ps1
-```
+- [Initial setup](docs/initial_setup.md): install Git, GitHub CLI, uv, clone the repository, and verify the environment.
+- [Usage guide](docs/usage.md): detailed GUI, CLI, notebook, instrument, and safety behavior notes.
+- [Windows setup](docs/windows_setup.md): Windows instrument-PC preparation notes.
+- [Roadmap](ROADMAP.md): planned milestones.
+- [Safety notes](SAFETY.md): safety assumptions and operator responsibilities.
+- [Contributing](CONTRIBUTING.md): development workflow and pull request expectations.
 
-### GUI 構成
+## Project Status
 
-GUI は 3 パネル構成です。
+`v0.1.0` is the repository baseline: licensing, CI, branch protection, dependency maintenance, and documentation structure are in place. Measurement-core hardening and simulated drivers are planned next.
 
-- 左: `Config`, `Source`, `Meter`
-- 中央: `Measurement`, `Output`, `Run`, live plot
-- 右: log と折りたたみ可能な最新行の `Field / Value`
+## License
 
-`Config` は `config/default.json` を読み書きします。最後に開いた config も記憶しますが、このプロジェクトの標準 config は `default.json` です。
-
-`Source` は GS210 または 7651 を選択できます。7651 は GS210 の SCPI ではなく、`F`/`R`/`S`/`O` 系の旧コマンドで制御します。`Meter` では 34401A、34411A、34465A、7461A を選択でき、DMM の積分条件として `NPLC` を設定します。
-ADCMT 7461A は `command_language` で SCPI/ADC を切り替えられます。標準 config は `scpi` です。GPIB では SCPI 設定を送ってから `READ?` で読みます。USB では 7461A を ADC コマンド系として扱い、`F1`/`F5`、`R0`、`ITP<nplc>` で設定してから output data を読みます。
-
-`Measurement` では sweep 形状と各点の測定条件を設定します。
-
-- `Mode`: `I-V` は電流を流して電圧を測定、`V-I` は電圧をかけて電流を測定
-- `Sweep`: `linear`, `round_trip`, `zero_centered`, `custom_list`
-- `Start`, `End`, `Step`: unit 付き
-- `Wait time`
-- `Average count`
-
-config の `timing.start_settle_s` は、start 到達後の最初の読み出し前だけ追加で待つ時間です。標準値は 0.5 s です。
-
-ADCMT 7461A では、`Wait time` 後の最初の 1 reading を捨ててから採用値を読みます。source 変更直後の過渡値を拾いにくくするためです。
-
-plot は sweep している量を x 軸にします。source target が増える点は `forward`、減る点は `backward` として別色で表示します。抵抗は実測の電圧と電流から計算し、`mOhm`, `Ohm`, `kOhm`, `MOhm` などの読みやすい単位で表示します。コンダクタンスも `mS`, `uS`, `nS` などで表示します。
-
-### 安全動作
-
-通常終了と Stop:
-
-1. Source を 0 に ramp します。
-2. Source output を off にします。
-3. 装置は connected/remote のまま残し、GUI から次の操作を続けられるようにします。
-
-sweep 中は config load/save、source/meter connect/disconnect、resource refresh、
-手動 Output Off を無効化します。測定を止めるときは Stop を使い、測定スレッド側で
-zero ramp と output off を順番に実行します。
-
-All Disconnect、Source Disconnect、アプリ終了:
-
-1. Source output off と level zero を試します。
-2. 装置を local に戻します。
-3. VISA resource を close します。
-
-測定エラー時は、まず source output off を優先します。
-
-### Config
-
-標準 config はこれだけです。
-
-```text
-config/default.json
-```
-
-測定値は engineering unit で書けます。
-
-- Voltage: `nV`, `uV`, `mV`, `V`
-- Current: `pA`, `nA`, `uA`, `mA`, `A`
-
-内部の scan plan と CSV は、解析しやすいように SI 単位の値を使います。
-
-### CSV
-
-CSV は測定中に 1 点ずつ書き込まれるので、途中で Stop してもそこまでのデータが残ります。出力先とファイル名は GUI の Output パネル、または `config/default.json` の `measurements.iv.output` で設定します。
-
-主な出力項目:
-
-- timestamp と elapsed time
-- point number と direction
-- target value と unit
-- 読み取った `voltage_V/current_A`
-- `resistance_Ohm/conductance_S`
-
-詳細仕様は [docs/iv_measurement_spec.md](docs/iv_measurement_spec.md) を参照してください。
-
----
-
-## English
-
-KohdaLab IV is a DC IV/VI measurement tool for a lab setup using a Yokogawa
-GS210 or Yokogawa 7651 as the source and an Agilent/HP 34401A,
-Agilent/Keysight 34411A, Keysight 34465A, or ADCMT 7461A as the meter.
-The same measurement core is available from the GUI, CLI, and Jupyter notebooks.
-
-The current standard hardware profile is:
-
-- Source: `YOKOGAWA_GS210` at `GPIB0::2::INSTR`
-- Optional source: `YOKOGAWA_7651`
-- Meter: `AGILENT_34401A` at `GPIB0::26::INSTR`
-- Config: `config/default.json`
-
-### Quick Start
-
-Launch the GUI from the desktop VBS launcher:
-
-```text
-desktop\KohdaLab_IV_GUI.vbs
-```
-
-The VBS launcher follows the TRKR launcher style: it hides the command window,
-runs from the project directory, and writes launcher output to `gui_launcher.log`.
-
-Keep the VBS file in the repository and place a shortcut to it on the Windows
-desktop. The launcher resolves the project root from its repository location.
-
-Or launch it from the project directory:
-
-```powershell
-& "$env:USERPROFILE\.local\bin\uv.exe" run --extra gui kohdalab-iv-gui
-```
-
-Check the active config without running a measurement:
-
-```powershell
-& "$env:USERPROFILE\.local\bin\uv.exe" run kohdalab-iv --config config/default.json check-config
-```
-
-Start Jupyter:
-
-```powershell
-.\run_jupyter.ps1
-```
-
-### GUI Layout
-
-The GUI uses a three-panel layout.
-
-- Left: `Config`, `Source`, `Meter`
-- Center: `Measurement`, `Output`, `Run`, and the live plot
-- Right: log and collapsible latest-row `Field / Value`
-
-`Config` loads and saves `config/default.json`. The app remembers the last
-opened config, but this project keeps one standard config: `default.json`.
-
-`Source` selects GS210 or 7651. `Meter` selects 34401A, 34411A, 34465A, or 7461A and exposes
-the DMM integration setting, `NPLC`.
-The Yokogawa 7651 driver uses the legacy `F`/`R`/`S`/`O` commands rather than
-GS210 SCPI commands.
-The ADCMT 7461A command set is selected with `command_language`. The standard
-config uses `scpi`. Over GPIB, SCPI setup is sent before readings are taken
-with `READ?`. Over USB, the driver treats the 7461A as an ADC-command device:
-it configures with `F1`/`F5`, `R0`, and `ITP<nplc>`, then reads output data.
-
-`Measurement` owns the sweep shape and point timing.
-
-- `Mode`: `I-V` sources current and measures voltage; `V-I` sources voltage and
-  measures current
-- `Sweep`: `linear`, `round_trip`, `zero_centered`, or `custom_list`
-- `Start`, `End`, `Step` with units
-- `Wait time`
-- `Average count`
-
-Config `timing.start_settle_s` is the extra delay after the source reaches the
-start point and before the first read. The standard value is 0.5 s.
-
-For the ADCMT 7461A, the first reading after `Wait time` is discarded before the accepted value is read. This avoids using a transient value after the source target changes.
-
-The plot uses the swept quantity on the x-axis. Points where the source target
-increases are `forward`; points where it decreases are `backward`. They are
-drawn in different colors. Resistance is calculated from the measured
-voltage/current values and displayed with readable units such as `mOhm`, `Ohm`,
-`kOhm`, and `MOhm`. Conductance is also shown above the plot with readable units
-such as `mS`, `uS`, and `nS`.
-
-### Safety Behavior
-
-Normal finish and Stop:
-
-1. Ramp the source back to zero.
-2. Turn source output off.
-3. Keep instruments connected and remote so the GUI can continue.
-
-During an active sweep, config load/save, source/meter connect or disconnect,
-resource refresh, and manual Output Off are disabled. Use Stop to end the sweep
-so the measurement thread can ramp to zero and release control in order.
-
-All Disconnect, Source Disconnect, or app close:
-
-1. Try source output off and level zero.
-2. Return instruments to local.
-3. Close the VISA resources.
-
-On measurement error, source output off is the first priority.
-
-### Config
-
-The single standard config is:
-
-```text
-config/default.json
-```
-
-Measurement values can be written with engineering units.
-
-- Voltage: `nV`, `uV`, `mV`, `V`
-- Current: `pA`, `nA`, `uA`, `mA`, `A`
-
-Internally, scan plans and CSV files use SI values for analysis consistency.
-
-### CSV
-
-Rows are written continuously during measurement, so partial data remains when a
-run is stopped. Output settings are controlled by the GUI Output panel or
-`measurements.iv.output` in `config/default.json`.
-
-Key output fields:
-
-- timestamp and elapsed time
-- point number and direction
-- target value and unit
-- read `voltage_V/current_A`
-- `resistance_Ohm/conductance_S`
-
-See [docs/iv_measurement_spec.md](docs/iv_measurement_spec.md) for the full
-implementation specification.
-
-### Safety
-
-Read [SAFETY.md](SAFETY.md) before operating real instruments. Always confirm
-source mode, limits, compliance, wiring, and a manual way to disable output.
-
-### Windows Setup
-
-Use [docs/windows_setup.md](docs/windows_setup.md) when preparing a Windows
-instrument PC.
-
-### Citation
-
-If you use this software in research, see [CITATION.cff](CITATION.cff).
-
-### License
-
-This project is released under the MIT License. See [LICENSE](LICENSE).
+MIT. See [LICENSE](LICENSE).
