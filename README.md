@@ -58,9 +58,9 @@ safety cleanup, and CSV-writing path as a real measurement.
 
 ## Project Status
 
-The current development version is `0.1.0`. It provides the repository,
-packaging, configuration, CI, and documentation baseline. Measurement-core
-hardening and simulated drivers are planned next.
+The current development version is `0.2.0`. It adds hardware-free simulated
+measurements, configuration preflight validation, provenance-rich CSV output,
+cross-platform CI, and release-artifact verification to the project baseline.
 
 ## License
 
