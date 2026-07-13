@@ -23,15 +23,29 @@ After setup:
 
 ```powershell
 uv sync --all-extras --group dev --frozen
-uv run kohdalab-iv --config config/default.json check-config
+uv run kohdalab-iv check-config
 uv run --extra gui kohdalab-iv-gui
 ```
 
-Run tests:
+The default configuration is installed inside the Python package. To use a
+lab-specific file, pass `--config PATH` or set `KOHDALAB_IV_CONFIG`.
+
+Run checks:
 
 ```powershell
-uv run pytest -q
+uv lock --check
+uv run ruff check .
+uv run pytest --cov --cov-branch
 ```
+
+Run a complete measurement without laboratory hardware:
+
+```powershell
+uv run kohdalab-iv --config src/kohdalab_iv/resources/simulated.json measure
+```
+
+The simulated profile models a 1 kOhm circuit and exercises the same session,
+safety cleanup, and CSV-writing path as a real measurement.
 
 ## Documentation
 
@@ -44,7 +58,9 @@ uv run pytest -q
 
 ## Project Status
 
-`v0.1.0` is the repository baseline: licensing, CI, branch protection, dependency maintenance, and documentation structure are in place. Measurement-core hardening and simulated drivers are planned next.
+The current development version is `0.2.0`. It adds hardware-free simulated
+measurements, configuration preflight validation, provenance-rich CSV output,
+cross-platform CI, and release-artifact verification to the project baseline.
 
 ## License
 

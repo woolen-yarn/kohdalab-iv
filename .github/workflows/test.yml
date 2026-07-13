@@ -3,32 +3,109 @@ name: Test
 on:
   push:
     branches: [main]
+    tags: ["v*"]
   pull_request:
   workflow_dispatch:
 
 permissions:
   contents: read
 
+concurrency:
+  group: test-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ !startsWith(github.ref, 'refs/tags/') }}
+
 jobs:
   test:
-    name: ${{ matrix.os }}
+    name: ${{ matrix.check-name }}
     runs-on: ${{ matrix.os }}
+    timeout-minutes: 30
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, windows-latest]
+        include:
+          - os: ubuntu-latest
+            python-version: "3.13"
+            check-name: ubuntu-latest
+          - os: windows-latest
+            python-version: "3.13"
+            check-name: windows-latest
+          - os: ubuntu-latest
+            python-version: "3.10"
+            check-name: ubuntu-latest / Python 3.10 compatibility
+          - os: windows-latest
+            python-version: "3.10"
+            check-name: windows-latest / Python 3.10 compatibility
 
     steps:
       - name: Check out repository
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
+        with:
+          persist-credentials: false
 
       - name: Set up uv
         uses: astral-sh/setup-uv@v7
         with:
           enable-cache: true
+          python-version: ${{ matrix.python-version }}
 
       - name: Install dependencies
         run: uv sync --all-extras --group dev --frozen
 
-      - name: Run tests
-        run: uv run pytest
+      - name: Verify dependency lock is current
+        run: uv lock --check
+
+      - name: Run lint
+        run: uv run ruff check .
+
+      - name: Run tests with coverage
+        env:
+          QT_QPA_PLATFORM: offscreen
+        run: uv run pytest --cov --cov-report=term-missing
+
+  package:
+    name: Package smoke test
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+
+      - name: Set up uv
+        uses: astral-sh/setup-uv@v7
+        with:
+          enable-cache: true
+          python-version: "3.10"
+
+      - name: Verify dependency lock is current
+        run: uv lock --check
+
+      - name: Install package validation tools
+        run: uv sync --only-group package --frozen
+
+      - name: Verify source release metadata
+        run: uv run --only-group package python scripts/verify_release.py
+
+      - name: Verify tagged release metadata
+        if: startsWith(github.ref, 'refs/tags/')
+        run: uv run --only-group package python scripts/verify_release.py --tag "${{ github.ref_name }}"
+
+      - name: Build wheel and source distribution
+        run: uv build --no-sources --out-dir dist
+
+      - name: Verify artifact manifests
+        run: uv run --only-group package python scripts/verify_distributions.py dist
+
+      - name: Validate distribution metadata and contents
+        run: |
+          uv run --only-group package twine check --strict dist/*
+          uv run --only-group package check-wheel-contents dist/*.whl
+
+      - name: Install and smoke-test wheel
+        run: |
+          uv venv .wheel-venv
+          uv pip install --python .wheel-venv/bin/python dist/*.whl
+          .wheel-venv/bin/python -c 'from importlib.metadata import version; from kohdalab_iv import __version__; from kohdalab_iv.api.config import DEFAULT_CONFIG_PATH, load_config; assert __version__ == version("kohdalab-iv"); assert DEFAULT_CONFIG_PATH.is_file(); assert load_config()["profile"]["name"] == "default"'
+          .wheel-venv/bin/kohdalab-iv --help

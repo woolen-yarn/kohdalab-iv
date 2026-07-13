@@ -8,8 +8,8 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
-PROJECT_ROOT = Path(__file__).resolve().parents[3]
-DEFAULT_CONFIG_PATH = PROJECT_ROOT / "config" / "default.json"
+PACKAGE_ROOT = Path(__file__).resolve().parent.parent
+DEFAULT_CONFIG_PATH = PACKAGE_ROOT / "resources" / "default.json"
 CONFIG_PATH_ENV = "KOHDALAB_IV_CONFIG"
 DEFAULT_CONFIG_PATH_ENV = "KOHDALAB_IV_DEFAULT_CONFIG"
 CONFIG_STATE_DIR_ENV = "KOHDALAB_IV_STATE_DIR"
@@ -221,15 +221,64 @@ def normalize_config(config: dict[str, Any]) -> dict[str, Any]:
     return normalized
 
 
+def validate_config(config: dict[str, Any]) -> dict[str, Any]:
+    if not isinstance(config, dict):
+        raise ValueError("Config root must be a JSON object.")
+    measurements = config.get("measurements")
+    if not isinstance(measurements, dict) or not measurements:
+        raise ValueError("Config must define at least one measurement.")
+    instruments = config.get("instruments")
+    roles = config.get("roles")
+    if not isinstance(instruments, dict) or not isinstance(roles, dict):
+        raise ValueError("Config must define instruments and roles objects.")
+
+    allowed_actions = {"ramp_to_zero_then_off", "output_off"}
+    for name, settings in measurements.items():
+        if not isinstance(settings, dict):
+            raise ValueError(f"measurements.{name} must be an object.")
+        mode = str(settings.get("mode", "dc_iv")).strip().lower()
+        if mode not in {"dc_iv", "dc_vi"}:
+            raise ValueError(f"measurements.{name}.mode must be 'dc_iv' or 'dc_vi'.")
+        role_name = "vi" if mode == "dc_vi" else "iv"
+        role = roles.get(role_name)
+        if not isinstance(role, dict):
+            raise ValueError(f"Missing roles.{role_name} object.")
+        for field in ("source", "measure"):
+            ref = role.get(field)
+            if not isinstance(ref, str) or "." not in ref:
+                raise ValueError(f"Missing roles.{role_name}.{field} instrument ref.")
+            instrument = instrument_config(config, ref)
+            for required in ("model", "resource"):
+                if not str(instrument.get(required, "")).strip():
+                    raise ValueError(f"Instrument {ref} requires {required}.")
+        safety = settings.get("safety", {})
+        for field in ("on_finish", "on_stop"):
+            action = str(safety.get(field, "output_off"))
+            if action not in allowed_actions:
+                raise ValueError(
+                    f"measurements.{name}.safety.{field} must be one of "
+                    f"{sorted(allowed_actions)}."
+                )
+        if str(safety.get("on_error", "output_off")) != "output_off":
+            raise ValueError(
+                f"measurements.{name}.safety.on_error must be 'output_off'."
+            )
+    return config
+
+
 def load_config(path: str | Path = DEFAULT_CONFIG_PATH) -> dict[str, Any]:
     with Path(path).open("r", encoding="utf-8") as f:
-        return normalize_config(json.load(f))
+        loaded = json.load(f)
+    if not isinstance(loaded, dict):
+        raise ValueError("Config root must be a JSON object.")
+    return validate_config(normalize_config(loaded))
 
 
 def save_config(config: dict[str, Any], path: str | Path) -> Path:
     output = Path(path)
     output.parent.mkdir(parents=True, exist_ok=True)
-    output.write_text(json.dumps(normalize_config(config), indent=2), encoding="utf-8")
+    normalized = validate_config(normalize_config(config))
+    output.write_text(json.dumps(normalized, indent=2), encoding="utf-8")
     return output
 
 

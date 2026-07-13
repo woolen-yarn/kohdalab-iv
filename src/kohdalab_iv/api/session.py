@@ -11,12 +11,14 @@ from kohdalab_iv.instruments.meters.keysight_34411a import Keysight34411A
 from kohdalab_iv.instruments.meters.keysight_34465a import Keysight34465A
 from kohdalab_iv.instruments.sources.gs210 import YokogawaGS210
 from kohdalab_iv.instruments.sources.yokogawa_7651 import Yokogawa7651
+from kohdalab_iv.instruments.simulated import SimulatedMeter, SimulatedSource
 from kohdalab_iv.instruments.visa_base import gpib_board_from_resource, release_gpib_remote
 
 
 SOURCE_CONTROLLERS = {
     "YOKOGAWA_GS210": YokogawaGS210,
     "YOKOGAWA_7651": Yokogawa7651,
+    "SIMULATED_SOURCE": SimulatedSource,
 }
 
 METER_CONTROLLERS = {
@@ -25,6 +27,7 @@ METER_CONTROLLERS = {
     "KEYSIGHT_34411A": Keysight34411A,
     "KEYSIGHT_34465A": Keysight34465A,
     "ADCMT_7461A": ADCMT7461A,
+    "SIMULATED_METER": SimulatedMeter,
 }
 
 
@@ -61,6 +64,9 @@ class DeviceSession:
         kwargs: dict[str, Any] = {"timeout_ms": int(cfg.get("timeout_ms", 5000))}
         if model == "ADCMT_7461A":
             kwargs["command_language"] = str(cfg.get("command_language", "scpi"))
+        if model == "SIMULATED_METER":
+            kwargs["resistance_ohm"] = float(cfg.get("resistance_ohm", 1000.0))
+            kwargs["offset"] = float(cfg.get("offset", 0.0))
         return kwargs
 
     def connect_all(self) -> None:

@@ -1,4 +1,13 @@
-from kohdalab_iv.apps.iv_gui import _device_key_for_selection, _model_config_for_selection
+from kohdalab_iv import __version__
+from kohdalab_iv.apps.iv_gui import (
+    _device_key_for_selection,
+    _model_config_for_selection,
+    _window_title,
+)
+
+
+def test_window_title_includes_package_version():
+    assert _window_title() == f"KohdaLab IV v{__version__}"
 
 
 def test_meter_selection_prefers_canonical_34411a_key_over_stale_7461a_entry():

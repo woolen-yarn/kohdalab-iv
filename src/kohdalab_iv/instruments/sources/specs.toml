@@ -133,3 +133,30 @@ name = "100mA"
 command_value = 6
 max_abs_A = 120e-3
 resolution_A = 1e-6
+
+[SIMULATED_SOURCE]
+display_name = "Simulated source"
+roles = ["source"]
+source_modes = ["voltage", "current"]
+max_abs_V = 10.0
+max_abs_A = 1.0
+supports_output = true
+supports_software_ramp = true
+supports_voltage_limit = true
+supports_current_limit = true
+current_limit_min_A = 1e-9
+current_limit_max_A = 1.0
+voltage_limit_min_V = 1e-9
+voltage_limit_max_V = 10.0
+
+[[SIMULATED_SOURCE.voltage_ranges]]
+name = "10V"
+command_value = 10.0
+max_abs_V = 10.0
+resolution_V = 1e-9
+
+[[SIMULATED_SOURCE.current_ranges]]
+name = "1A"
+command_value = 1.0
+max_abs_A = 1.0
+resolution_A = 1e-12

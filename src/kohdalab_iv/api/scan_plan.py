@@ -6,7 +6,7 @@ from typing import Any
 
 from kohdalab_iv.api.config import instrument_config, measurement_settings, role_refs
 from kohdalab_iv.api.specs import spec_for
-from kohdalab_iv.api.units import Quantity, parse_quantity, quantity_float
+from kohdalab_iv.api.units import parse_quantity, quantity_float
 
 
 @dataclass(frozen=True)
