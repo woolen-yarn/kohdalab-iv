@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Added release-metadata and distribution-artifact verification.
+- Added CLI and packaging smoke tests to CI.
 - Moved the default configuration into the installable package.
 - Derived the runtime version from installed package metadata and displayed it in the GUI title.
 - Added package metadata, linting, coverage, and packaging-focused regression tests.

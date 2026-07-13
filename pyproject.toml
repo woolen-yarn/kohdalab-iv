@@ -78,7 +78,13 @@ show_missing = true
 dev = [
     "pytest",
     "pytest-cov",
+    "pyyaml",
     "ruff",
+]
+package = [
+    "check-wheel-contents",
+    "pyyaml",
+    "twine",
 ]
 
 [tool.pytest.ini_options]
