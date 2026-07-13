@@ -44,4 +44,6 @@ def test_missing_explicit_config_returns_error(tmp_path: Path, capsys) -> None:
     missing = tmp_path / "missing.json"
 
     assert cli.main(["--config", str(missing), "check-config"]) == 1
-    assert str(missing) in capsys.readouterr().err
+    error = capsys.readouterr().err
+    assert "No such file or directory" in error
+    assert missing.name in error
