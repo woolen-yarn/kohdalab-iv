@@ -148,9 +148,8 @@ def test_run_iv_writes_rows_and_turns_output_off(tmp_path):
     assert len(rows) == 3
     assert source.output_off_called is True
     assert source.level == 0.0
-    assert (tmp_path / "run.csv").read_text(encoding="utf-8").startswith(
-        "timestamp,elapsed_s,point_index,direction,target_value,target_unit,voltage_V,current_A,resistance_Ohm,conductance_S"
-    )
+    header = (tmp_path / "run.csv").read_text(encoding="utf-8").splitlines()[0]
+    assert header.split(",") == measurements_module.IV_FIELDS
 
 
 def test_run_iv_prepares_meter_after_source_settle_before_read(tmp_path):
@@ -221,6 +220,23 @@ def test_run_iv_stops_after_compliance(tmp_path):
 
     assert len(rows) == 2
     assert rows[-1]["compliance"] is True
+    assert source.output_off_called is True
+
+
+def test_run_iv_turns_output_off_when_meter_raises(tmp_path):
+    config = _small_config()
+    plan = iv_plan_from_config(config)
+    source = FakeSource()
+
+    class FailingMeter(FakeMeter):
+        def read_average(self, count):
+            raise RuntimeError("simulated read failure")
+
+    session = FakeSession(source, FailingMeter([]))
+
+    with pytest.raises(RuntimeError, match="simulated read failure"):
+        run_iv(config, plan=plan, output=tmp_path / "run.csv", session=session)
+
     assert source.output_off_called is True
 
 

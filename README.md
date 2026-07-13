@@ -38,6 +38,15 @@ uv run ruff check .
 uv run pytest --cov --cov-branch
 ```
 
+Run a complete measurement without laboratory hardware:
+
+```powershell
+uv run kohdalab-iv --config src/kohdalab_iv/resources/simulated.json measure
+```
+
+The simulated profile models a 1 kOhm circuit and exercises the same session,
+safety cleanup, and CSV-writing path as a real measurement.
+
 ## Documentation
 
 - [Initial setup](docs/initial_setup.md): install Git, GitHub CLI, uv, clone the repository, and verify the environment.

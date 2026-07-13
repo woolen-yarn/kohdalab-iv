@@ -74,7 +74,7 @@ def test_vi_row_maps_meter_voltage_and_source_current():
     assert row["current_origin"] == "source_readback"
 
 
-def test_output_row_uses_compact_csv_fields():
+def test_output_row_uses_stable_provenance_csv_fields():
     plan = iv_plan_from_config(DEFAULT_CONFIG)
     point = plan.points[0]
     row = iv_row(
@@ -91,9 +91,9 @@ def test_output_row_uses_compact_csv_fields():
 
     assert "source_model" in row
     assert list(output_row(row)) == IV_FIELDS
-    assert "source_model" not in output_row(row)
-    assert "compliance" not in output_row(row)
-    assert "status" not in output_row(row)
+    assert "source_model" in output_row(row)
+    assert "compliance" in output_row(row)
+    assert "status" in output_row(row)
     assert "resistance_Ohm" in output_row(row)
     assert "conductance_S" in output_row(row)
     assert output_row(row)["target_value"] == "-1.000000000000e-01"

@@ -8,19 +8,6 @@ from kohdalab_iv.api.scan_plan import IvPlan, SweepPoint
 
 IV_FIELDS = [
     "timestamp",
-    "elapsed_s",
-    "point_index",
-    "direction",
-    "target_value",
-    "target_unit",
-    "voltage_V",
-    "current_A",
-    "resistance_Ohm",
-    "conductance_S",
-]
-
-ROW_FIELDS = [
-    "timestamp",
     "measurement",
     "elapsed_s",
     "mode",
@@ -176,4 +163,4 @@ def iv_row(
         "nplc": plan.nplc,
         "average_count": plan.average_count,
     }
-    return {key: row.get(key) for key in ROW_FIELDS}
+    return {key: row.get(key) for key in IV_FIELDS}

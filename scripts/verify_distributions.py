@@ -17,6 +17,7 @@ except ModuleNotFoundError:  # pragma: no cover - exercised on Python 3.10 CI
 FORBIDDEN_PARTS = {".DS_Store", "__pycache__", ".git", ".pytest_cache"}
 REQUIRED_RESOURCES = {
     "kohdalab_iv/resources/default.json",
+    "kohdalab_iv/resources/simulated.json",
     "kohdalab_iv/instruments/meters/specs.toml",
     "kohdalab_iv/instruments/sources/specs.toml",
 }

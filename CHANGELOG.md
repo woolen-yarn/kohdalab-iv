@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- Added simulated source and meter drivers for hardware-free measurements.
+- Added config preflight validation and full-provenance CSV output.
+- Added end-to-end measurement and safety-cleanup regression tests.
 - Unified CLI, GUI, and Notebook configuration-path resolution.
 - Added hardware-free CLI and Notebook regression tests.
 - Expanded CI across Python 3.10 and 3.13 on Ubuntu and Windows.
