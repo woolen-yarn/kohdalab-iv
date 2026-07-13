@@ -42,7 +42,7 @@ def _write_project(
 
 
 def test_repository_development_metadata_is_consistent() -> None:
-    assert VERIFY_RELEASE(ROOT).version == "0.1.0"
+    assert VERIFY_RELEASE(ROOT).version == "0.2.0"
 
 
 def test_rejects_citation_version_mismatch(tmp_path: Path) -> None:
