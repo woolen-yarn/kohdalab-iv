@@ -23,14 +23,19 @@ After setup:
 
 ```powershell
 uv sync --all-extras --group dev --frozen
-uv run kohdalab-iv --config config/default.json check-config
+uv run kohdalab-iv check-config
 uv run --extra gui kohdalab-iv-gui
 ```
 
-Run tests:
+The default configuration is installed inside the Python package. To use a
+lab-specific file, pass `--config PATH` or set `KOHDALAB_IV_CONFIG`.
+
+Run checks:
 
 ```powershell
-uv run pytest -q
+uv lock --check
+uv run ruff check .
+uv run pytest --cov --cov-branch
 ```
 
 ## Documentation
