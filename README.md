@@ -49,7 +49,9 @@ uv run pytest --cov --cov-branch
 
 ## Project Status
 
-`v0.1.0` is the repository baseline: licensing, CI, branch protection, dependency maintenance, and documentation structure are in place. Measurement-core hardening and simulated drivers are planned next.
+The current development version is `0.1.0`. It provides the repository,
+packaging, configuration, CI, and documentation baseline. Measurement-core
+hardening and simulated drivers are planned next.
 
 ## License
 
