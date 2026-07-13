@@ -1,0 +1,64 @@
+{
+  "profile": {
+    "name": "simulated",
+    "description": "Hardware-free 1 kOhm circuit for development and CI."
+  },
+  "instruments": {
+    "source": {
+      "simulated_source": {
+        "model": "SIMULATED_SOURCE",
+        "transport": "simulated",
+        "resource": "SIM::IV"
+      }
+    },
+    "meter": {
+      "simulated_meter": {
+        "model": "SIMULATED_METER",
+        "transport": "simulated",
+        "resource": "SIM::IV",
+        "resistance_ohm": 1000.0
+      }
+    }
+  },
+  "roles": {
+    "iv": {"source": "source.simulated_source", "measure": "meter.simulated_meter"},
+    "vi": {"source": "source.simulated_source", "measure": "meter.simulated_meter"}
+  },
+  "measurements": {
+    "iv": {
+      "mode": "dc_iv",
+      "scan": {
+        "pattern": "linear",
+        "start": {"value": -10.0, "unit": "mV"},
+        "stop": {"value": 10.0, "unit": "mV"},
+        "step": {"value": 10.0, "unit": "mV"},
+        "repeat": 1,
+        "custom_points": []
+      },
+      "timing": {
+        "pre_delay_s": 0.0,
+        "start_settle_s": 0.0,
+        "settle_s": 0.0,
+        "post_zero_delay_s": 0.0,
+        "ramp_step_wait_s": 0.0,
+        "nplc": 1.0,
+        "average_count": 1
+      },
+      "safety": {
+        "max_abs_source": {"value": 100.0, "unit": "mV"},
+        "compliance": {"value": 100.0, "unit": "uA"},
+        "stop_on_compliance": true,
+        "ramp_step": {"value": 10.0, "unit": "mV"},
+        "on_finish": "ramp_to_zero_then_off",
+        "on_stop": "ramp_to_zero_then_off",
+        "on_error": "output_off",
+        "output_off_on_finish": true
+      },
+      "output": {
+        "dir": "results",
+        "filename": "simulated_iv",
+        "auto_timestamp_suffix": true
+      }
+    }
+  }
+}

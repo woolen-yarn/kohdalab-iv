@@ -13,11 +13,12 @@ from kohdalab_iv.api.scan_plan import iv_plan_from_config
 from kohdalab_iv.interfaces.common import list_visa_resources
 
 
-SOURCE_MODELS = ["YOKOGAWA_GS210", "YOKOGAWA_7651"]
-METER_MODELS = ["AGILENT_34401A", "AGILENT_34411A", "KEYSIGHT_34411A", "KEYSIGHT_34465A", "ADCMT_7461A"]
+SOURCE_MODELS = ["YOKOGAWA_GS210", "YOKOGAWA_7651", "SIMULATED_SOURCE"]
+METER_MODELS = ["AGILENT_34401A", "AGILENT_34411A", "KEYSIGHT_34411A", "KEYSIGHT_34465A", "ADCMT_7461A", "SIMULATED_METER"]
 SOURCE_MODEL_KEYS = {
     "YOKOGAWA_GS210": "gs210",
     "YOKOGAWA_7651": "yokogawa_7651",
+    "SIMULATED_SOURCE": "simulated_source",
 }
 METER_MODEL_KEYS = {
     "AGILENT_34401A": "dmm_34401a",
@@ -25,6 +26,7 @@ METER_MODEL_KEYS = {
     "KEYSIGHT_34411A": "dmm_34411a",
     "KEYSIGHT_34465A": "dmm_34465a",
     "ADCMT_7461A": "dmm_7461a",
+    "SIMULATED_METER": "simulated_meter",
 }
 CURRENT_UNITS = ["pA", "nA", "uA", "mA", "A"]
 VOLTAGE_UNITS = ["nV", "uV", "mV", "V"]

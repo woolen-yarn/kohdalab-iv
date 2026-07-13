@@ -33,6 +33,13 @@ def test_default_config_is_packaged_and_loadable() -> None:
     assert load_config()["profile"]["name"] == "default"
 
 
+def test_simulated_config_is_packaged_and_loadable() -> None:
+    path = PROJECT_ROOT / "src" / "kohdalab_iv" / "resources" / "simulated.json"
+
+    assert path.is_file()
+    assert load_config(path)["profile"]["name"] == "simulated"
+
+
 def test_repository_config_is_not_a_second_source_of_truth() -> None:
     assert not (PROJECT_ROOT / "config" / "default.json").exists()
 
