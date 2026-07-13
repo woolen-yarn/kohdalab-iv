@@ -3,16 +3,22 @@ name: Test
 on:
   push:
     branches: [main]
+    tags: ["v*"]
   pull_request:
   workflow_dispatch:
 
 permissions:
   contents: read
 
+concurrency:
+  group: test-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ !startsWith(github.ref, 'refs/tags/') }}
+
 jobs:
   test:
     name: ${{ matrix.os }}
     runs-on: ${{ matrix.os }}
+    timeout-minutes: 30
     strategy:
       fail-fast: false
       matrix:
@@ -21,6 +27,8 @@ jobs:
     steps:
       - name: Check out repository
         uses: actions/checkout@v7
+        with:
+          persist-credentials: false
 
       - name: Set up uv
         uses: astral-sh/setup-uv@v7
@@ -30,5 +38,13 @@ jobs:
       - name: Install dependencies
         run: uv sync --all-extras --group dev --frozen
 
-      - name: Run tests
-        run: uv run pytest
+      - name: Verify dependency lock is current
+        run: uv lock --check
+
+      - name: Run lint
+        run: uv run ruff check .
+
+      - name: Run tests with coverage
+        env:
+          QT_QPA_PLATFORM: offscreen
+        run: uv run pytest --cov --cov-report=term-missing

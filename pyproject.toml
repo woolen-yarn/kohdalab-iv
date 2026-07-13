@@ -4,10 +4,27 @@ version = "0.1.0"
 description = "KohdaLab DC IV/VI measurement tools"
 readme = "README.md"
 requires-python = ">=3.10"
+license = "MIT"
+license-files = ["LICENSE"]
+authors = [{ name = "KohdaLab" }]
+keywords = ["instrument-control", "iv-measurement", "laboratory-automation"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Science/Research",
+    "Operating System :: Microsoft :: Windows",
+    "Programming Language :: Python :: 3 :: Only",
+    "Programming Language :: Python :: 3.10",
+    "Topic :: Scientific/Engineering",
+]
 dependencies = [
     "pyvisa>=1.14",
     "tomli>=2; python_version<'3.11'",
 ]
+
+[project.urls]
+Documentation = "https://github.com/woolen-yarn/kohdalab-iv/tree/main/docs"
+Issues = "https://github.com/woolen-yarn/kohdalab-iv/issues"
+Repository = "https://github.com/woolen-yarn/kohdalab-iv"
 
 [project.optional-dependencies]
 gui = [
@@ -34,17 +51,37 @@ build-backend = "setuptools.build_meta"
 
 [tool.setuptools]
 package-dir = {"" = "src"}
+include-package-data = true
 
 [tool.setuptools.packages.find]
 where = ["src"]
 
 [tool.setuptools.package-data]
-kohdalab_iv = ["instruments/sources/*.toml", "instruments/meters/*.toml"]
+kohdalab_iv = [
+    "resources/*.json",
+    "instruments/sources/*.toml",
+    "instruments/meters/*.toml",
+]
+
+[tool.ruff.lint]
+select = ["E4", "E7", "E9", "F", "W"]
+
+[tool.coverage.run]
+branch = true
+relative_files = true
+source = ["kohdalab_iv"]
+
+[tool.coverage.report]
+show_missing = true
 
 [dependency-groups]
 dev = [
     "pytest",
+    "pytest-cov",
+    "ruff",
 ]
 
 [tool.pytest.ini_options]
+addopts = ["--strict-config", "--strict-markers"]
 testpaths = ["tests"]
+xfail_strict = true

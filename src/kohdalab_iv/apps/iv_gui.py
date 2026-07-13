@@ -5,6 +5,7 @@ import sys
 from pathlib import Path
 from typing import Any
 
+from kohdalab_iv import __version__
 from kohdalab_iv.api.config import load_config, output_path, resolve_config_path, save_config, write_last_config_path
 from kohdalab_iv.api.experiment import Experiment
 from kohdalab_iv.api.formatting import format_conductance, format_resistance
@@ -52,6 +53,10 @@ MODEL_KEY_MAPS = {
     "source": SOURCE_MODEL_KEYS,
     "meter": METER_MODEL_KEYS,
 }
+
+
+def _window_title() -> str:
+    return f"KohdaLab IV v{__version__}"
 
 
 def _model_config_for_selection(config: dict[str, Any], kind: str, model: str) -> tuple[str | None, dict[str, Any] | None]:
@@ -166,10 +171,12 @@ def main() -> None:
     class IVGui(QtWidgets.QMainWindow):
         def __init__(self):
             super().__init__()
-            self.setWindowTitle("KohdaLab IV")
+            self.setWindowTitle(_window_title())
             self._apply_dark_theme()
             config_resolution = resolve_config_path()
-            self.config_path = config_resolution.path or Path("config/default.json")
+            self.config_path = config_resolution.path
+            if self.config_path is None:
+                raise FileNotFoundError("The packaged default configuration could not be found.")
             self.config = load_config(self.config_path)
             if config_resolution.path is not None:
                 write_last_config_path(config_resolution.path)

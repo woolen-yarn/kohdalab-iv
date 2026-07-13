@@ -8,8 +8,8 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
-PROJECT_ROOT = Path(__file__).resolve().parents[3]
-DEFAULT_CONFIG_PATH = PROJECT_ROOT / "config" / "default.json"
+PACKAGE_ROOT = Path(__file__).resolve().parent.parent
+DEFAULT_CONFIG_PATH = PACKAGE_ROOT / "resources" / "default.json"
 CONFIG_PATH_ENV = "KOHDALAB_IV_CONFIG"
 DEFAULT_CONFIG_PATH_ENV = "KOHDALAB_IV_DEFAULT_CONFIG"
 CONFIG_STATE_DIR_ENV = "KOHDALAB_IV_STATE_DIR"
