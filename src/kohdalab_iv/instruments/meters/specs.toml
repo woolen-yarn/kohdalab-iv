@@ -43,3 +43,13 @@ max_input_A = 3.0
 auto_range_required = true
 nplc_min = 0.02
 nplc_max = 100.0
+
+[SIMULATED_METER]
+display_name = "Simulated meter"
+roles = ["meter"]
+measure_modes = ["dc_voltage", "dc_current"]
+max_input_V = 10.0
+max_input_A = 1.0
+auto_range_required = false
+nplc_min = 0.001
+nplc_max = 100.0

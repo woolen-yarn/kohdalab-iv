@@ -1,0 +1,8 @@
+include CHANGELOG.md CITATION.cff CONTRIBUTING.md LICENSE README.md ROADMAP.md SAFETY.md SECURITY.md uv.lock
+graft docs
+graft notebook
+graft scripts
+graft tests
+global-exclude .DS_Store *.py[cod]
+prune **/__pycache__
+prune **/.pytest_cache

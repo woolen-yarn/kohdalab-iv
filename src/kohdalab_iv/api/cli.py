@@ -4,7 +4,7 @@ import argparse
 import sys
 from pathlib import Path
 
-from kohdalab_iv.api.config import DEFAULT_CONFIG_PATH, load_config, output_path
+from kohdalab_iv.api.config import load_config, output_path, resolve_config_path
 from kohdalab_iv.api.experiment import Experiment
 from kohdalab_iv.api.notebook import format_point
 from kohdalab_iv.api.scan_plan import iv_plan_from_config
@@ -21,7 +21,11 @@ def _point(point) -> None:
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="Run KohdaLab IV/VI measurements.")
-    parser.add_argument("--config", type=Path, default=DEFAULT_CONFIG_PATH)
+    parser.add_argument(
+        "--config",
+        type=Path,
+        help="Config path. Defaults to environment, last-used, then packaged config.",
+    )
     subparsers = parser.add_subparsers(dest="command", required=True)
     subparsers.add_parser("list-resources", help="List VISA resources.")
     subparsers.add_parser("check-config", help="Load config and print IV plan summary.")
@@ -38,7 +42,10 @@ def main(argv: list[str] | None = None) -> int:
                 print(resource)
             return 0
 
-        config = load_config(args.config)
+        resolution = resolve_config_path(args.config)
+        if resolution.path is None:
+            raise FileNotFoundError("No configuration file could be resolved.")
+        config = load_config(resolution.path)
         if args.command == "check-config":
             plan = iv_plan_from_config(config)
             print(plan.summary)

@@ -68,7 +68,7 @@ cd kohdalab-iv
 For the personal mirror:
 
 ```bash
-gh repo clone woolen-yarn/kohdalab-iv
+gh repo clone Kohdalab/kohdalab-iv
 cd kohdalab-iv
 ```
 
