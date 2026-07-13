@@ -3,12 +3,16 @@ from __future__ import annotations
 import argparse
 import datetime as dt
 import re
-import tomllib
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
 import yaml
+
+try:
+    import tomllib
+except ModuleNotFoundError:  # pragma: no cover - exercised on Python 3.10 CI
+    import tomli as tomllib
 
 
 STABLE_VERSION = re.compile(r"[0-9]+\.[0-9]+\.[0-9]+")
@@ -103,7 +107,7 @@ def verify_release(root: Path, *, tag: str | None = None) -> ReleaseMetadata:
             f"CHANGELOG.md must contain one release heading for version {version}."
         )
     release_date = dt.date.fromisoformat(releases[0]["date"])
-    if release_date > dt.datetime.now(dt.UTC).date():
+    if release_date > dt.datetime.now(dt.timezone.utc).date():
         raise RuntimeError("The CHANGELOG.md release date cannot be in the future.")
     if not _section(changelog, f"[{version}] - {release_date.isoformat()}"):
         raise RuntimeError("The tagged CHANGELOG.md release section must not be empty.")

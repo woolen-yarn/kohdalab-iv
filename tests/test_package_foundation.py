@@ -2,8 +2,12 @@ from __future__ import annotations
 
 import importlib.metadata
 import json
-import tomllib
 from pathlib import Path
+
+try:
+    import tomllib
+except ModuleNotFoundError:
+    import tomli as tomllib
 
 from kohdalab_iv import __version__
 from kohdalab_iv.api.config import DEFAULT_CONFIG_PATH, load_config

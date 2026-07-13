@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- Unified CLI, GUI, and Notebook configuration-path resolution.
+- Added hardware-free CLI and Notebook regression tests.
+- Expanded CI across Python 3.10 and 3.13 on Ubuntu and Windows.
 - Added release-metadata and distribution-artifact verification.
 - Added CLI and packaging smoke tests to CI.
 - Moved the default configuration into the installable package.
