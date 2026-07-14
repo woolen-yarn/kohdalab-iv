@@ -49,6 +49,7 @@ def test_release_workflow_is_tag_only_and_guarded() -> None:
     assert package["permissions"] == {"contents": "write"}
 
     quality_commands = "\n".join(step.get("run", "") for step in quality["steps"])
+    assert "apt-get install --yes libegl1" in quality_commands
     assert "scripts/check_project.py quality" in quality_commands
 
     package_commands = "\n".join(step.get("run", "") for step in package["steps"])
