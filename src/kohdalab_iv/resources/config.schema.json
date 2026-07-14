@@ -1,0 +1,157 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/Kohdalab/kohdalab-iv/blob/main/src/kohdalab_iv/resources/config.schema.json",
+  "title": "KohdaLab IV Configuration",
+  "type": "object",
+  "required": ["config_version", "profile", "instruments", "roles", "measurements"],
+  "properties": {
+    "config_version": {
+      "type": "integer",
+      "const": 1,
+      "description": "Configuration format version understood by this release."
+    },
+    "profile": {
+      "type": "object",
+      "required": ["name"],
+      "properties": {
+        "name": {"type": "string", "minLength": 1},
+        "description": {"type": "string"}
+      },
+      "additionalProperties": true
+    },
+    "instruments": {
+      "type": "object",
+      "required": ["source", "meter"],
+      "properties": {
+        "source": {"$ref": "#/$defs/instrumentMap"},
+        "meter": {"$ref": "#/$defs/instrumentMap"}
+      },
+      "additionalProperties": true
+    },
+    "roles": {
+      "type": "object",
+      "required": ["iv", "vi"],
+      "properties": {
+        "iv": {"$ref": "#/$defs/role"},
+        "vi": {"$ref": "#/$defs/role"}
+      },
+      "additionalProperties": true
+    },
+    "measurements": {
+      "type": "object",
+      "minProperties": 1,
+      "additionalProperties": {"$ref": "#/$defs/measurement"}
+    }
+  },
+  "$defs": {
+    "quantity": {
+      "type": "object",
+      "required": ["value", "unit"],
+      "properties": {
+        "value": {"type": "number"},
+        "unit": {
+          "type": "string",
+          "enum": ["nV", "uV", "mV", "V", "pA", "nA", "uA", "mA", "A", "ms", "s"]
+        }
+      },
+      "additionalProperties": false
+    },
+    "instrument": {
+      "type": "object",
+      "required": ["model", "resource"],
+      "properties": {
+        "model": {"type": "string", "minLength": 1},
+        "transport": {"type": "string"},
+        "resource": {"type": "string", "minLength": 1},
+        "timeout_ms": {"type": "integer", "minimum": 1},
+        "auto_range": {"type": "boolean"},
+        "command_language": {"type": "string", "enum": ["scpi", "adc"]},
+        "resistance_ohm": {"type": "number", "exclusiveMinimum": 0},
+        "offset": {"type": "number"}
+      },
+      "additionalProperties": true
+    },
+    "instrumentMap": {
+      "type": "object",
+      "minProperties": 1,
+      "additionalProperties": {"$ref": "#/$defs/instrument"}
+    },
+    "role": {
+      "type": "object",
+      "required": ["source", "measure"],
+      "properties": {
+        "source": {"type": "string", "pattern": "^source\\.[^.]+$"},
+        "measure": {"type": "string", "pattern": "^meter\\.[^.]+$"}
+      },
+      "additionalProperties": false
+    },
+    "scan": {
+      "type": "object",
+      "required": ["pattern", "start", "stop", "step"],
+      "properties": {
+        "pattern": {"type": "string", "enum": ["linear", "round_trip", "zero_centered", "custom_list"]},
+        "start": {"$ref": "#/$defs/quantity"},
+        "stop": {"$ref": "#/$defs/quantity"},
+        "step": {"$ref": "#/$defs/quantity"},
+        "repeat": {"type": "integer", "minimum": 1},
+        "custom_points": {
+          "type": "array",
+          "items": {"$ref": "#/$defs/quantity"}
+        }
+      },
+      "additionalProperties": true
+    },
+    "timing": {
+      "type": "object",
+      "properties": {
+        "pre_delay_s": {"type": "number", "minimum": 0},
+        "start_settle_s": {"type": "number", "minimum": 0},
+        "settle_s": {"type": "number", "minimum": 0},
+        "post_zero_delay_s": {"type": "number", "minimum": 0},
+        "ramp_step_wait_s": {"type": "number", "minimum": 0},
+        "nplc": {"type": "number", "exclusiveMinimum": 0},
+        "average_count": {"type": "integer", "minimum": 1},
+        "measure_timeout_s": {"type": "number", "exclusiveMinimum": 0},
+        "timing_mode": {"type": "string"}
+      },
+      "additionalProperties": true
+    },
+    "safety": {
+      "type": "object",
+      "required": ["max_abs_source", "compliance", "ramp_step"],
+      "properties": {
+        "max_abs_source": {"$ref": "#/$defs/quantity"},
+        "compliance": {"$ref": "#/$defs/quantity"},
+        "ramp_step": {"$ref": "#/$defs/quantity"},
+        "stop_on_compliance": {"type": "boolean"},
+        "on_finish": {"type": "string", "enum": ["ramp_to_zero_then_off", "output_off"]},
+        "on_stop": {"type": "string", "enum": ["ramp_to_zero_then_off", "output_off"]},
+        "on_error": {"type": "string", "const": "output_off"},
+        "output_off_on_finish": {"type": "boolean"}
+      },
+      "additionalProperties": true
+    },
+    "measurement": {
+      "type": "object",
+      "required": ["mode", "scan", "timing", "safety"],
+      "properties": {
+        "mode": {"type": "string", "enum": ["dc_iv", "dc_vi"]},
+        "scan": {"$ref": "#/$defs/scan"},
+        "timing": {"$ref": "#/$defs/timing"},
+        "safety": {"$ref": "#/$defs/safety"},
+        "measure": {"type": "object"},
+        "output": {
+          "type": "object",
+          "properties": {
+            "dir": {"type": "string"},
+            "filename": {"type": "string"},
+            "auto_timestamp_suffix": {"type": "boolean"}
+          },
+          "additionalProperties": true
+        }
+      },
+      "additionalProperties": true
+    }
+  },
+  "additionalProperties": true
+}

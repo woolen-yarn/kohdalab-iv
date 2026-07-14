@@ -1,0 +1,43 @@
+name: Security
+
+on:
+  push:
+    paths:
+      - pyproject.toml
+      - uv.lock
+      - scripts/check_project.py
+      - .github/workflows/security.yml
+  schedule:
+    - cron: "17 3 * * 1"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: security-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  audit:
+    name: Locked dependency audit
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+
+      - name: Set up uv
+        uses: astral-sh/setup-uv@v7
+        with:
+          enable-cache: true
+          python-version: "3.13"
+
+      - name: Install audit tools
+        run: uv sync --only-group audit --frozen
+
+      - name: Audit locked dependencies
+        run: uv run --only-group audit python scripts/check_project.py audit

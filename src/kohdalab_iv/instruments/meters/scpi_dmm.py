@@ -9,7 +9,9 @@ class ScpiDMM(VisaDevice):
     def local(self) -> None:
         self.gpib_go_to_local()
 
-    def configure_measurement(self, *, measure_function: str, nplc: float, auto_range: bool = True) -> None:
+    def configure_measurement(
+        self, *, measure_function: str, nplc: float, auto_range: bool = True
+    ) -> None:
         if measure_function == "dc_voltage":
             self.write("CONF:VOLT:DC")
             if auto_range:

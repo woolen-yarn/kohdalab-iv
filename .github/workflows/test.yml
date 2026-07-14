@@ -3,7 +3,6 @@ name: Test
 on:
   push:
     branches: [main]
-    tags: ["v*"]
   pull_request:
   workflow_dispatch:
 
@@ -12,7 +11,7 @@ permissions:
 
 concurrency:
   group: test-${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: ${{ !startsWith(github.ref, 'refs/tags/') }}
+  cancel-in-progress: true
 
 jobs:
   test:
@@ -29,12 +28,6 @@ jobs:
           - os: windows-latest
             python-version: "3.13"
             check-name: windows-latest
-          - os: ubuntu-latest
-            python-version: "3.10"
-            check-name: ubuntu-latest / Python 3.10 compatibility
-          - os: windows-latest
-            python-version: "3.10"
-            check-name: windows-latest / Python 3.10 compatibility
 
     steps:
       - name: Check out repository
@@ -51,16 +44,8 @@ jobs:
       - name: Install dependencies
         run: uv sync --all-extras --group dev --frozen
 
-      - name: Verify dependency lock is current
-        run: uv lock --check
-
-      - name: Run lint
-        run: uv run ruff check .
-
-      - name: Run tests with coverage
-        env:
-          QT_QPA_PLATFORM: offscreen
-        run: uv run pytest --cov --cov-report=term-missing
+      - name: Run project quality checks
+        run: uv run python scripts/check_project.py quality
 
   package:
     name: Package smoke test
@@ -77,31 +62,13 @@ jobs:
         uses: astral-sh/setup-uv@v7
         with:
           enable-cache: true
-          python-version: "3.10"
-
-      - name: Verify dependency lock is current
-        run: uv lock --check
+          python-version: "3.13"
 
       - name: Install package validation tools
         run: uv sync --only-group package --frozen
 
-      - name: Verify source release metadata
-        run: uv run --only-group package python scripts/verify_release.py
-
-      - name: Verify tagged release metadata
-        if: startsWith(github.ref, 'refs/tags/')
-        run: uv run --only-group package python scripts/verify_release.py --tag "${{ github.ref_name }}"
-
-      - name: Build wheel and source distribution
-        run: uv build --no-sources --out-dir dist
-
-      - name: Verify artifact manifests
-        run: uv run --only-group package python scripts/verify_distributions.py dist
-
-      - name: Validate distribution metadata and contents
-        run: |
-          uv run --only-group package twine check --strict dist/*
-          uv run --only-group package check-wheel-contents dist/*.whl
+      - name: Build and validate distributions
+        run: uv run --only-group package python scripts/check_project.py package --dist-dir dist
 
       - name: Install and smoke-test wheel
         run: |

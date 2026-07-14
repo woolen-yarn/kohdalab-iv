@@ -1,7 +1,8 @@
 {
+  "config_version": 1,
   "profile": {
     "name": "default",
-    "description": "Default KohdaLab DC VI setup: GS210 current source and 34401A voltage measurement."
+    "description": "Default KohdaLab DC I-V setup: GS210 voltage source and 34401A current measurement."
   },
   "instruments": {
     "source": {

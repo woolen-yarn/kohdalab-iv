@@ -89,8 +89,6 @@ def _decimal_range(start: Decimal, stop: Decimal, step: Decimal) -> list[Decimal
         while current >= stop - tolerance:
             points.append(current)
             current += step
-    if not points:
-        raise ValueError("No scan points generated.")
     return points
 
 
@@ -127,7 +125,9 @@ def _directions_from_points(points: list[Decimal]) -> list[str]:
     return directions
 
 
-def _target_decimals(scan: dict[str, Any], source_dimension: str) -> tuple[list[Decimal], list[str], str]:
+def _target_decimals(
+    scan: dict[str, Any], source_dimension: str
+) -> tuple[list[Decimal], list[str], str]:
     pattern = str(scan.get("pattern", "linear")).strip().lower()
     repeat = int(scan.get("repeat", 1))
     if repeat < 1:
@@ -137,7 +137,10 @@ def _target_decimals(scan: dict[str, Any], source_dimension: str) -> tuple[list[
         raw_points = scan.get("custom_points", [])
         if not raw_points:
             raise ValueError("custom_list requires custom_points.")
-        points = [parse_quantity(item, dimension=source_dimension).si_value for item in raw_points]
+        points = [
+            parse_quantity(item, dimension=source_dimension).si_value
+            for item in raw_points
+        ]
     else:
         start = parse_quantity(scan["start"], dimension=source_dimension).si_value
         stop = parse_quantity(scan["stop"], dimension=source_dimension).si_value
@@ -158,7 +161,9 @@ def _target_decimals(scan: dict[str, Any], source_dimension: str) -> tuple[list[
             p3 = _forward_points(-max_abs, Decimal("0"), step_abs)
             points = []
             for segment in (p1, p2, p3):
-                start_index = 1 if points and segment and points[-1] == segment[0] else 0
+                start_index = (
+                    1 if points and segment and points[-1] == segment[0] else 0
+                )
                 points.extend(segment[start_index:])
         else:
             raise ValueError(f"Unsupported sweep pattern: {pattern}")
@@ -170,13 +175,19 @@ def _target_decimals(scan: dict[str, Any], source_dimension: str) -> tuple[list[
 
 
 def _range_entries(spec: dict[str, Any], source_function: str) -> list[dict[str, Any]]:
-    return list(spec["voltage_ranges" if source_function == "voltage" else "current_ranges"])
+    return list(
+        spec["voltage_ranges" if source_function == "voltage" else "current_ranges"]
+    )
 
 
-def _select_source_range(spec: dict[str, Any], source_function: str, max_abs_target: float) -> SourceRange:
+def _select_source_range(
+    spec: dict[str, Any], source_function: str, max_abs_target: float
+) -> SourceRange:
     key = "max_abs_V" if source_function == "voltage" else "max_abs_A"
     resolution_key = "resolution_V" if source_function == "voltage" else "resolution_A"
-    for entry in sorted(_range_entries(spec, source_function), key=lambda item: float(item[key])):
+    for entry in sorted(
+        _range_entries(spec, source_function), key=lambda item: float(item[key])
+    ):
         if max_abs_target <= float(entry[key]) + 1e-18:
             return SourceRange(
                 name=str(entry["name"]),
@@ -184,7 +195,9 @@ def _select_source_range(spec: dict[str, Any], source_function: str, max_abs_tar
                 max_abs=float(entry[key]),
                 resolution=float(entry[resolution_key]),
             )
-    raise ValueError(f"Source targets exceed {spec.get('display_name', 'source')} range.")
+    raise ValueError(
+        f"Source targets exceed {spec.get('display_name', 'source')} range."
+    )
 
 
 def _validate_resolution(values: list[Decimal], resolution: float, label: str) -> None:
@@ -194,10 +207,14 @@ def _validate_resolution(values: list[Decimal], resolution: float, label: str) -
             continue
         ratio = value / res
         if ratio != ratio.to_integral_value():
-            raise ValueError(f"{label} {value} is smaller than or not aligned to source resolution {res}.")
+            raise ValueError(
+                f"{label} {value} is smaller than or not aligned to source resolution {res}."
+            )
 
 
-def _hardware_compliance(spec: dict[str, Any], source_function: str, requested: float) -> float:
+def _hardware_compliance(
+    spec: dict[str, Any], source_function: str, requested: float
+) -> float:
     if source_function == "voltage":
         min_value = float(spec.get("current_limit_min_A", requested))
         max_value = float(spec.get("current_limit_max_A", requested))
@@ -208,7 +225,9 @@ def _hardware_compliance(spec: dict[str, Any], source_function: str, requested: 
 
 
 def _nplc_supported(meter_spec: dict[str, Any], nplc: float) -> bool:
-    if any(abs(float(value) - nplc) < 1e-12 for value in meter_spec.get("nplc_values", [])):
+    if any(
+        abs(float(value) - nplc) < 1e-12 for value in meter_spec.get("nplc_values", [])
+    ):
         return True
     if "nplc_min" in meter_spec and "nplc_max" in meter_spec:
         return float(meter_spec["nplc_min"]) <= nplc <= float(meter_spec["nplc_max"])
@@ -249,10 +268,14 @@ def iv_plan_from_config(config: dict[str, Any], measurement_name: str = "iv") ->
 
     safety = settings.get("safety", {})
     safety_limit = quantity_float(safety["max_abs_source"], dimension=source_dimension)
-    hard_limit = float(source_spec["max_abs_V" if source_function == "voltage" else "max_abs_A"])
+    hard_limit = float(
+        source_spec["max_abs_V" if source_function == "voltage" else "max_abs_A"]
+    )
     effective_limit = min(safety_limit, hard_limit)
     if max_abs_target > effective_limit:
-        raise ValueError(f"Source target {max_abs_target:g} exceeds effective limit {effective_limit:g}.")
+        raise ValueError(
+            f"Source target {max_abs_target:g} exceeds effective limit {effective_limit:g}."
+        )
 
     compliance = quantity_float(safety["compliance"], dimension=compliance_dimension)
     hardware_compliance = _hardware_compliance(source_spec, source_function, compliance)
