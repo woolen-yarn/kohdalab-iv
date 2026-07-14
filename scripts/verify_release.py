@@ -3,16 +3,12 @@ from __future__ import annotations
 import argparse
 import datetime as dt
 import re
+import tomllib
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
 import yaml
-
-try:
-    import tomllib
-except ModuleNotFoundError:  # pragma: no cover - exercised on Python 3.10 CI
-    import tomli as tomllib
 
 
 STABLE_VERSION = re.compile(r"[0-9]+\.[0-9]+\.[0-9]+")

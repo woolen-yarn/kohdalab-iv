@@ -67,8 +67,7 @@ def test_notebook_value_and_point_formatting() -> None:
     )
 
     assert format_point(point) == (
-        "[2/5] target=0.001 A voltage=1 V current=0.001 A "
-        "R=1 kOhm status=ok"
+        "[2/5] target=0.001 A voltage=1 V current=0.001 A R=1 kOhm status=ok"
     )
 
 
@@ -112,3 +111,7 @@ def test_live_update_skips_missing_values_then_updates_display(monkeypatch) -> N
     assert axis.get_ylabel() == "Current"
     assert axis.get_title() == "Simulated I-V"
     plt.close(figure)
+
+    make_iv_live_update()
+    assert plt.gcf().axes[0].get_title() == ""
+    plt.close(plt.gcf())

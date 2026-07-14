@@ -109,7 +109,9 @@ class FakeVisaHandle:
         return 3
 
     def control_out(self, request_type, request_id, request_value, index, data=b""):
-        self.usb_control_outs.append((request_type, request_id, request_value, index, data))
+        self.usb_control_outs.append(
+            (request_type, request_id, request_value, index, data)
+        )
 
     def read(self):
         return self.read_responses.pop(0)
@@ -173,7 +175,9 @@ def test_adcmt_7461a_configures_dc_voltage_and_reads_with_gpib_scpi_read():
     handle.query_responses = ["0,No error"] * 4 + ["+1.234500E+00"]
     device = ADCMT7461A("GPIB0::27::INSTR", handle=handle)
 
-    device.configure_measurement(measure_function="dc_voltage", nplc=1.234, auto_range=True)
+    device.configure_measurement(
+        measure_function="dc_voltage", nplc=1.234, auto_range=True
+    )
     value = device.read_once()
 
     assert handle.commands == [
@@ -195,7 +199,9 @@ def test_adcmt_7461a_usb_uses_adc_commands_even_when_configured_for_scpi():
     device = ADCMT7461A("USB0::1::INSTR", handle=handle)
     device.READ_DELAY_S = 0
 
-    device.configure_measurement(measure_function="dc_voltage", nplc=1.234, auto_range=True)
+    device.configure_measurement(
+        measure_function="dc_voltage", nplc=1.234, auto_range=True
+    )
     value = device.read_once()
 
     assert handle.commands == [
@@ -214,7 +220,9 @@ def test_adcmt_7461a_usb_uses_adc_current_commands():
     device = ADCMT7461A("USB0::1::INSTR", handle=handle)
     device.READ_DELAY_S = 0
 
-    device.configure_measurement(measure_function="dc_current", nplc=1.0, auto_range=True)
+    device.configure_measurement(
+        measure_function="dc_current", nplc=1.0, auto_range=True
+    )
     value = device.read_once()
 
     assert handle.commands == [
@@ -231,7 +239,9 @@ def test_adcmt_7461a_configures_dc_current_without_auto_range_with_gpib_scpi():
     handle = FakeVisaHandle()
     device = ADCMT7461A("GPIB0::27::INSTR", handle=handle)
 
-    device.configure_measurement(measure_function="dc_current", nplc=1.0, auto_range=False)
+    device.configure_measurement(
+        measure_function="dc_current", nplc=1.0, auto_range=False
+    )
 
     assert handle.commands == [
         ":SYSTem:ERRor?",
@@ -250,7 +260,9 @@ def test_adcmt_7461a_can_use_adc_command_language_when_configured():
     device = ADCMT7461A("GPIB0::27::INSTR", handle=handle, command_language="adc")
     device.READ_DELAY_S = 0
 
-    device.configure_measurement(measure_function="dc_voltage", nplc=1.234, auto_range=True)
+    device.configure_measurement(
+        measure_function="dc_voltage", nplc=1.234, auto_range=True
+    )
     value = device.read_once()
 
     assert handle.commands == [
@@ -354,7 +366,9 @@ def test_adcmt_7461a_scpi_syncs_after_setting_commands():
     handle.query_responses = ["0,No error"] * 4
     device = ADCMT7461A("GPIB0::27::INSTR", handle=handle)
 
-    device.configure_measurement(measure_function="dc_voltage", nplc=0.2, auto_range=True)
+    device.configure_measurement(
+        measure_function="dc_voltage", nplc=0.2, auto_range=True
+    )
 
     assert handle.commands == [
         ":SYSTem:ERRor?",
@@ -386,7 +400,9 @@ def test_yokogawa_7651_configures_voltage_source_with_current_limit():
     handle = FakeVisaHandle()
     device = Yokogawa7651("GPIB0::1::INSTR", handle=handle)
 
-    device.configure_source(source_function="voltage", source_range=4, hardware_compliance=0.01)
+    device.configure_source(
+        source_function="voltage", source_range=4, hardware_compliance=0.01
+    )
 
     assert handle.commands == ["H0;E", "F1;E", "R4;E", "LA10;E", "S0;E"]
 
@@ -395,7 +411,9 @@ def test_yokogawa_7651_configures_current_source_with_voltage_limit():
     handle = FakeVisaHandle()
     device = Yokogawa7651("GPIB0::1::INSTR", handle=handle)
 
-    device.configure_source(source_function="current", source_range=5, hardware_compliance=3.0)
+    device.configure_source(
+        source_function="current", source_range=5, hardware_compliance=3.0
+    )
 
     assert handle.commands == ["H0;E", "F5;E", "R5;E", "LV3;E", "S0;E"]
 

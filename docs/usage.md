@@ -12,7 +12,7 @@ KohdaLab IV は、Yokogawa GS210 または Yokogawa 7651 を source、Agilent/HP
 - Optional source: `YOKOGAWA_7651`
 - Meter: `AGILENT_34401A` at `GPIB0::26::INSTR`
 - Optional meter: `AGILENT_34411A`, `KEYSIGHT_34411A`, `KEYSIGHT_34465A`, `ADCMT_7461A`
-- Config: `config/default.json`
+- Config: packaged default or an explicit local JSON file
 
 ### 起動
 
@@ -28,16 +28,34 @@ desktop\KohdaLab_IV_GUI.vbs
 & "$env:USERPROFILE\.local\bin\uv.exe" run --extra gui kohdalab-iv-gui
 ```
 
-測定せずに config だけ確認する場合:
+測定せずに packaged default config だけ確認する場合:
 
 ```powershell
-& "$env:USERPROFILE\.local\bin\uv.exe" run kohdalab-iv --config config/default.json check-config
+& "$env:USERPROFILE\.local\bin\uv.exe" run kohdalab-iv check-config
 ```
+
+実機PC用の編集可能なconfigを作る場合:
+
+```powershell
+& "$env:USERPROFILE\.local\bin\uv.exe" run kohdalab-iv init-config config\local.json
+```
+
+既存ファイルは上書きしません。意図的に置き換える場合だけ末尾に
+`--force` を指定します。
+
+version、採用されたconfig、scan plan、VISA resourceをまとめて診断する場合:
+
+```powershell
+& "$env:USERPROFILE\.local\bin\uv.exe" run kohdalab-iv --config config\local.json doctor
+```
+
+測定やsource outputは行いません。サポート用に保存する場合は末尾へ
+`--json` を指定します。
 
 Jupyter を起動する場合:
 
 ```powershell
-.\run_jupyter.ps1
+uv run --extra notebook jupyter lab
 ```
 
 ### GUI 構成
@@ -48,7 +66,7 @@ GUI は 3 パネル構成です。
 - 中央: `Measurement`, `Output`, `Run`, live plot
 - 右: log と折りたたみ可能な最新行の `Field / Value`
 
-`Config` は `config/default.json` を読み書きします。最後に開いた config も記憶しますが、このプロジェクトの標準 config は `default.json` です。
+`Config` は選択したローカルJSONを読み書きします。最後に開いたconfigを記憶し、未指定時はパッケージ内defaultを読みます。インストール済みパッケージ内のJSONを直接編集せず、ローカルパスへコピーして使ってください。
 
 `Source` は GS210 または 7651 を選択できます。7651 は GS210 の SCPI ではなく、`F`/`R`/`S`/`O` 系の旧コマンドで制御します。`Meter` では 34401A、34411A、34465A、7461A を選択でき、DMM の積分条件として `NPLC` を設定します。
 ADCMT 7461A は `command_language` で SCPI/ADC を切り替えられます。標準 config は `scpi` です。GPIB では SCPI 設定を送ってから `READ?` で読みます。USB では 7461A を ADC コマンド系として扱い、`F1`/`F5`、`R0`、`ITP<nplc>` で設定してから output data を読みます。
@@ -89,13 +107,15 @@ All Disconnect、Source Disconnect、アプリ終了:
 
 ### Config
 
-標準 config はこれだけです。
+リポジトリ開発時の標準configは次です。
 
 ```text
-config/default.json
+src/kohdalab_iv/resources/default.json
 ```
 
-測定値は engineering unit で書けます。
+config formatは `"config_version": 1` で管理します。fieldがない旧configはversion 1へ自動補完され、未対応の将来versionは装置接続前に拒否されます。JSON Schemaは `src/kohdalab_iv/resources/config.schema.json` にあります。
+
+実機PC固有のresourceと安全値は `init-config` で作ったローカルJSONへ設定します。測定値はengineering unitで書けます。
 
 - Voltage: `nV`, `uV`, `mV`, `V`
 - Current: `pA`, `nA`, `uA`, `mA`, `A`
@@ -104,7 +124,7 @@ config/default.json
 
 ### CSV
 
-CSV は測定中に 1 点ずつ書き込まれるので、途中で Stop してもそこまでのデータが残ります。出力先とファイル名は GUI の Output パネル、または `config/default.json` の `measurements.iv.output` で設定します。
+CSV は測定中に 1 点ずつ書き込まれるので、途中で Stop してもそこまでのデータが残ります。出力先とファイル名は GUI の Output パネル、またはactive configの `measurements.iv.output` で設定します。
 
 主な出力項目:
 
@@ -130,7 +150,7 @@ The current standard hardware profile is:
 - Source: `YOKOGAWA_GS210` at `GPIB0::2::INSTR`
 - Optional source: `YOKOGAWA_7651`
 - Meter: `AGILENT_34401A` at `GPIB0::26::INSTR`
-- Config: `config/default.json`
+- Config: packaged default or an explicit local JSON file
 
 ### Quick Start
 
@@ -152,16 +172,37 @@ Or launch it from the project directory:
 & "$env:USERPROFILE\.local\bin\uv.exe" run --extra gui kohdalab-iv-gui
 ```
 
-Check the active config without running a measurement:
+Check the packaged default without running a measurement:
 
 ```powershell
-& "$env:USERPROFILE\.local\bin\uv.exe" run kohdalab-iv --config config/default.json check-config
+& "$env:USERPROFILE\.local\bin\uv.exe" run kohdalab-iv check-config
+```
+
+Create an editable config for the instrument PC:
+
+```powershell
+& "$env:USERPROFILE\.local\bin\uv.exe" run kohdalab-iv init-config config\local.json
+```
+
+The command refuses to replace an existing file. Add `--force` only when the
+existing destination should intentionally be replaced.
+
+Report the installed version:
+
+```powershell
+& "$env:USERPROFILE\.local\bin\uv.exe" run kohdalab-iv --version
+```
+
+Collect config, scan-plan, runtime, and VISA diagnostics without measuring:
+
+```powershell
+& "$env:USERPROFILE\.local\bin\uv.exe" run kohdalab-iv --config config\local.json doctor --json
 ```
 
 Start Jupyter:
 
 ```powershell
-.\run_jupyter.ps1
+uv run --extra notebook jupyter lab
 ```
 
 ### GUI Layout
@@ -172,8 +213,9 @@ The GUI uses a three-panel layout.
 - Center: `Measurement`, `Output`, `Run`, and the live plot
 - Right: log and collapsible latest-row `Field / Value`
 
-`Config` loads and saves `config/default.json`. The app remembers the last
-opened config, but this project keeps one standard config: `default.json`.
+`Config` loads and saves the selected local JSON file. The app remembers the
+last opened config and falls back to the packaged default when none is selected.
+Copy the packaged JSON to a local path instead of editing an installed package.
 
 `Source` selects GS210 or 7651. `Meter` selects 34401A, 34411A, 34465A, or 7461A and exposes
 the DMM integration setting, `NPLC`.
@@ -227,12 +269,15 @@ On measurement error, source output off is the first priority.
 
 ### Config
 
-The single standard config is:
+The repository-development copy of the packaged default is:
 
 ```text
-config/default.json
+src/kohdalab_iv/resources/default.json
 ```
 
+The format is versioned with `"config_version": 1`. Legacy configs without the field are normalized to version 1, while unsupported future versions fail before hardware access. The JSON Schema is `src/kohdalab_iv/resources/config.schema.json`.
+
+Use `init-config` to create a local copy for machine-specific resources and safety values.
 Measurement values can be written with engineering units.
 
 - Voltage: `nV`, `uV`, `mV`, `V`
@@ -244,7 +289,7 @@ Internally, scan plans and CSV files use SI values for analysis consistency.
 
 Rows are written continuously during measurement, so partial data remains when a
 run is stopped. Output settings are controlled by the GUI Output panel or
-`measurements.iv.output` in `config/default.json`.
+`measurements.iv.output` in the active config.
 
 Key output fields:
 

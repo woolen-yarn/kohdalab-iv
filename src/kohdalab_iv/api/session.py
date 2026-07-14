@@ -12,7 +12,10 @@ from kohdalab_iv.instruments.meters.keysight_34465a import Keysight34465A
 from kohdalab_iv.instruments.sources.gs210 import YokogawaGS210
 from kohdalab_iv.instruments.sources.yokogawa_7651 import Yokogawa7651
 from kohdalab_iv.instruments.simulated import SimulatedMeter, SimulatedSource
-from kohdalab_iv.instruments.visa_base import gpib_board_from_resource, release_gpib_remote
+from kohdalab_iv.instruments.visa_base import (
+    gpib_board_from_resource,
+    release_gpib_remote,
+)
 
 
 SOURCE_CONTROLLERS = {
@@ -95,7 +98,8 @@ class DeviceSession:
             board
             for kind in ("source", "meter")
             for device in self._devices_snapshot(kind)
-            if (board := gpib_board_from_resource(getattr(device, "resource", ""))) is not None
+            if (board := gpib_board_from_resource(getattr(device, "resource", "")))
+            is not None
         }
         for kind in ("source", "meter"):
             for key in self._connected_keys(kind):

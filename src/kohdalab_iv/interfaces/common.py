@@ -1,11 +1,13 @@
 from __future__ import annotations
 
+from typing import Any
 
-def open_visa(resource: str, timeout_ms: int = 5000):
+
+def open_visa(resource: str, timeout_ms: int = 5000) -> Any:
     import pyvisa
 
     rm = pyvisa.ResourceManager()
-    inst = rm.open_resource(resource)
+    inst: Any = rm.open_resource(resource)
     inst.timeout = int(timeout_ms)
     inst.write_termination = "\n"
     inst.read_termination = "\n"

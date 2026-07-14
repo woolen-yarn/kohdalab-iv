@@ -296,7 +296,9 @@ def test_device_session_keeps_gpib_board_asserted_after_single_disconnect(monkey
     assert released == []
 
 
-def test_device_session_single_disconnect_leaves_other_gpib_devices_connected(monkeypatch):
+def test_device_session_single_disconnect_leaves_other_gpib_devices_connected(
+    monkeypatch,
+):
     released = []
     session = DeviceSession(copy.deepcopy(DEFAULT_CONFIG), auto_connect=False)
     source = FakeDeviceForSession()
@@ -356,7 +358,9 @@ def test_device_session_rejects_stale_device_when_auto_connect_is_disabled():
 
 def test_device_session_reuses_existing_open_device(monkeypatch):
     FakeConnectDevice.instances = []
-    monkeypatch.setitem(session_module.SOURCE_CONTROLLERS, "YOKOGAWA_GS210", FakeConnectDevice)
+    monkeypatch.setitem(
+        session_module.SOURCE_CONTROLLERS, "YOKOGAWA_GS210", FakeConnectDevice
+    )
     session = DeviceSession(copy.deepcopy(DEFAULT_CONFIG), auto_connect=False)
 
     first = session.connect_device("source.gs210")
@@ -368,7 +372,9 @@ def test_device_session_reuses_existing_open_device(monkeypatch):
 
 def test_device_session_replaces_stale_device_on_reconnect(monkeypatch):
     FakeConnectDevice.instances = []
-    monkeypatch.setitem(session_module.SOURCE_CONTROLLERS, "YOKOGAWA_GS210", FakeConnectDevice)
+    monkeypatch.setitem(
+        session_module.SOURCE_CONTROLLERS, "YOKOGAWA_GS210", FakeConnectDevice
+    )
     session = DeviceSession(copy.deepcopy(DEFAULT_CONFIG), auto_connect=False)
     first = session.connect_device("source.gs210")
     first.connected = False
@@ -402,7 +408,9 @@ def test_device_session_supports_yokogawa_7651():
 
 def test_device_session_passes_adcmt_command_language(monkeypatch):
     FakeADCMTConnectDevice.instances = []
-    monkeypatch.setitem(session_module.METER_CONTROLLERS, "ADCMT_7461A", FakeADCMTConnectDevice)
+    monkeypatch.setitem(
+        session_module.METER_CONTROLLERS, "ADCMT_7461A", FakeADCMTConnectDevice
+    )
     config = copy.deepcopy(DEFAULT_CONFIG)
     config["roles"]["iv"]["measure"] = "meter.dmm_7461a"
     config["roles"]["vi"]["measure"] = "meter.dmm_7461a"

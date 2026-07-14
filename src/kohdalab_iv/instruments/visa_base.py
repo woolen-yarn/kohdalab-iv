@@ -29,7 +29,7 @@ def _release_gpib_remote_pyvisa(board: str) -> None:
         resource_manager = pyvisa.ResourceManager()
     except Exception:
         return
-    interface = None
+    interface: Any = None
     try:
         interface = resource_manager.open_resource(f"{board}::INTFC")
         try:
@@ -53,13 +53,10 @@ def _release_gpib_remote_pyvisa(board: str) -> None:
 
 
 def _ni4882_set_ren(board: str, asserted: bool, *, loader: Any | None = None) -> bool:
-    try:
-        import ctypes
+    import ctypes
 
-        win_dll = loader or getattr(ctypes, "WinDLL", None)
-        if win_dll is None:
-            return False
-    except Exception:
+    win_dll = loader or getattr(ctypes, "WinDLL", None)
+    if win_dll is None:
         return False
 
     library = None
@@ -106,10 +103,16 @@ def _ni4882_set_ren(board: str, asserted: bool, *, loader: Any | None = None) ->
 
 
 class VisaDevice:
-    def __init__(self, resource: str, *, timeout_ms: int = 5000, handle: Any | None = None):
+    def __init__(
+        self, resource: str, *, timeout_ms: int = 5000, handle: Any | None = None
+    ):
         self.resource = resource
         self.timeout_ms = int(timeout_ms)
-        self.inst = handle if handle is not None else open_visa(resource, timeout_ms=self.timeout_ms)
+        self.inst: Any = (
+            handle
+            if handle is not None
+            else open_visa(resource, timeout_ms=self.timeout_ms)
+        )
 
     def write(self, command: str) -> None:
         self.inst.write(command)
@@ -125,7 +128,9 @@ class VisaDevice:
         response = self.query(command, delay_s=delay_s)
         match = _FLOAT_RE.search(response)
         if not match:
-            raise RuntimeError(f"Unexpected numeric response for {command}: {response!r}")
+            raise RuntimeError(
+                f"Unexpected numeric response for {command}: {response!r}"
+            )
         return float(match.group(0))
 
     def identify(self) -> str:
@@ -157,7 +162,11 @@ class VisaDevice:
         try:
             from pyvisa import constants
 
-            mode = constants.VI_GPIB_REN_DEASSERT_GTL if release_ren else constants.VI_GPIB_REN_ADDRESS_GTL
+            mode = (
+                constants.VI_GPIB_REN_DEASSERT_GTL
+                if release_ren
+                else constants.VI_GPIB_REN_ADDRESS_GTL
+            )
             self.inst.control_ren(mode)
         except Exception:
             pass
@@ -167,7 +176,9 @@ class VisaDevice:
         if address is None:
             return
         try:
-            self.inst.visalib.gpib_command(self.inst.session, self._gpib_gtl_command(address))
+            self.inst.visalib.gpib_command(
+                self.inst.session, self._gpib_gtl_command(address)
+            )
         except Exception:
             pass
 
@@ -186,7 +197,7 @@ class VisaDevice:
                 created_resource_manager = True
             except Exception:
                 return
-        interface = None
+        interface: Any = None
         try:
             interface = resource_manager.open_resource(f"{board}::INTFC")
             interface.send_command(self._gpib_gtl_command(address))
@@ -222,7 +233,9 @@ class VisaDevice:
         try:
             from pyvisa import constants
 
-            address = int(self.inst.get_visa_attribute(constants.VI_ATTR_GPIB_PRIMARY_ADDR))
+            address = int(
+                self.inst.get_visa_attribute(constants.VI_ATTR_GPIB_PRIMARY_ADDR)
+            )
         except Exception:
             match = re.search(r"GPIB\d*::(\d+)", self.resource, flags=re.IGNORECASE)
             if match is None:
@@ -255,11 +268,15 @@ class VisaDevice:
         try:
             from pyvisa import constants
 
-            interface = int(self.inst.get_visa_attribute(constants.VI_ATTR_USB_INTFC_NUM))
+            interface = int(
+                self.inst.get_visa_attribute(constants.VI_ATTR_USB_INTFC_NUM)
+            )
         except Exception:
             interface = 0
         try:
-            self.inst.control_out(0x21, int(request_id), int(request_value), interface, b"")
+            self.inst.control_out(
+                0x21, int(request_id), int(request_value), interface, b""
+            )
         except Exception:
             pass
 

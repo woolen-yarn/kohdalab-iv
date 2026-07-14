@@ -34,7 +34,9 @@ def _trim_fixed(value: float, decimals: int) -> str:
     return "0" if text in {"", "-0"} else text
 
 
-def _format_scaled(value: Any, scales: list[tuple[float, str]], *, zero_unit: str, decimals: int = 3) -> str:
+def _format_scaled(
+    value: Any, scales: list[tuple[float, str]], *, zero_unit: str, decimals: int = 3
+) -> str:
     if value is None:
         return "-"
     try:

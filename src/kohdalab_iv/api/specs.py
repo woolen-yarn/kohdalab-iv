@@ -1,18 +1,18 @@
 from __future__ import annotations
 
-import sys
+import tomllib
 from functools import lru_cache
 from importlib.resources import files
 from typing import Any
 
-if sys.version_info >= (3, 11):
-    import tomllib
-else:
-    import tomli as tomllib  # type: ignore[import-not-found]
-
 
 def _load_toml_resource(kind: str) -> dict[str, Any]:
-    path = files("kohdalab_iv").joinpath("instruments", kind, "specs.toml")
+    path = (
+        files("kohdalab_iv")
+        .joinpath("instruments")
+        .joinpath(kind)
+        .joinpath("specs.toml")
+    )
     with path.open("rb") as f:
         return tomllib.load(f)
 
@@ -27,7 +27,7 @@ def meter_specs() -> dict[str, Any]:
     return _load_toml_resource("meters")
 
 
-MODEL_ALIASES = {
+MODEL_ALIASES: dict[str, dict[str, str]] = {
     "source": {},
     "meter": {},
 }

@@ -1,0 +1,38 @@
+default_install_hook_types: [pre-commit, pre-push]
+
+repos:
+  - repo: local
+    hooks:
+      - id: ruff-check
+        name: Ruff lint
+        entry: uv run ruff check
+        language: system
+        types: [python]
+
+      - id: ruff-format
+        name: Ruff format
+        entry: uv run ruff format --check
+        language: system
+        types: [python]
+
+      - id: mypy
+        name: Mypy source types
+        entry: uv run mypy
+        language: system
+        pass_filenames: false
+        types: [python]
+
+      - id: release-metadata
+        name: Release metadata
+        entry: uv run python scripts/verify_release.py
+        language: system
+        pass_filenames: false
+        files: ^(pyproject\.toml|CITATION\.cff|README\.md|ROADMAP\.md|CHANGELOG\.md)$
+
+      - id: project-quality
+        name: Full project quality gate
+        entry: uv run python scripts/check_project.py quality
+        language: system
+        pass_filenames: false
+        always_run: true
+        stages: [pre-push]

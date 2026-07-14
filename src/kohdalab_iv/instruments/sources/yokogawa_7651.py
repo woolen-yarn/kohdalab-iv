@@ -64,5 +64,7 @@ class Yokogawa7651(VisaDevice):
     def _range_code(self, source_range: float) -> int:
         code = int(float(source_range))
         if float(source_range) != code:
-            raise ValueError(f"7651 source range must be a range code, got {source_range!r}")
+            raise ValueError(
+                f"7651 source range must be a range code, got {source_range!r}"
+            )
         return code

@@ -4,7 +4,12 @@ from pathlib import Path
 from typing import Any
 
 from kohdalab_iv.api.config import load_config, normalize_config
-from kohdalab_iv.api.measurements import ContinueCallback, PointCallback, StatusCallback, run_iv
+from kohdalab_iv.api.measurements import (
+    ContinueCallback,
+    PointCallback,
+    StatusCallback,
+    run_iv,
+)
 from kohdalab_iv.api.scan_plan import IvPlan
 from kohdalab_iv.api.session import DeviceSession
 
@@ -15,7 +20,9 @@ class Experiment:
         self.session = DeviceSession(self._config, auto_connect=auto_connect)
 
     @classmethod
-    def from_config(cls, path: str | Path, *, auto_connect: bool = True) -> "Experiment":
+    def from_config(
+        cls, path: str | Path, *, auto_connect: bool = True
+    ) -> "Experiment":
         return cls(load_config(path), auto_connect=auto_connect)
 
     @property

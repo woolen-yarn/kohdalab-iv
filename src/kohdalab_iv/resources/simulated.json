@@ -1,4 +1,5 @@
 {
+  "config_version": 1,
   "profile": {
     "name": "simulated",
     "description": "Hardware-free 1 kOhm circuit for development and CI."

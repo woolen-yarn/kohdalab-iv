@@ -81,7 +81,9 @@ def test_model_selection_falls_back_to_matching_noncanonical_entry():
 
 
 def test_model_selection_handles_invalid_or_missing_device_maps():
-    assert _model_config_for_selection({"instruments": {"meter": []}}, "meter", "ADCMT_7461A") == (None, None)
+    assert _model_config_for_selection(
+        {"instruments": {"meter": []}}, "meter", "ADCMT_7461A"
+    ) == (None, None)
     assert _model_config_for_selection({}, "meter", "ADCMT_7461A") == (None, None)
     assert _device_key_for_selection({}, "meter", "ADCMT_7461A", "current") == "current"
 
@@ -119,9 +121,12 @@ def test_resistance_estimate_uses_linear_regression_slope():
 def test_resistance_estimate_rejects_insufficient_or_constant_current():
     assert _resistance_from_rows([]) is None
     assert _resistance_from_rows([{"measured_A": 1.0, "measured_V": 2.0}]) is None
-    assert _resistance_from_rows(
-        [
-            {"measured_A": 1.0, "measured_V": 2.0},
-            {"measured_A": 1.0, "measured_V": 3.0},
-        ]
-    ) is None
+    assert (
+        _resistance_from_rows(
+            [
+                {"measured_A": 1.0, "measured_V": 2.0},
+                {"measured_A": 1.0, "measured_V": 3.0},
+            ]
+        )
+        is None
+    )

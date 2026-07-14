@@ -6,15 +6,29 @@ from pathlib import Path
 from typing import Any
 
 from kohdalab_iv import __version__
-from kohdalab_iv.api.config import load_config, output_path, resolve_config_path, save_config, write_last_config_path
+from kohdalab_iv.api.config import (
+    load_config,
+    output_path,
+    resolve_config_path,
+    save_config,
+    write_last_config_path,
+)
 from kohdalab_iv.api.experiment import Experiment
 from kohdalab_iv.api.formatting import format_conductance, format_resistance
 from kohdalab_iv.api.scan_plan import iv_plan_from_config
+from kohdalab_iv.apps.gui_state import MeasurementRunState
 from kohdalab_iv.interfaces.common import list_visa_resources
 
 
 SOURCE_MODELS = ["YOKOGAWA_GS210", "YOKOGAWA_7651", "SIMULATED_SOURCE"]
-METER_MODELS = ["AGILENT_34401A", "AGILENT_34411A", "KEYSIGHT_34411A", "KEYSIGHT_34465A", "ADCMT_7461A", "SIMULATED_METER"]
+METER_MODELS = [
+    "AGILENT_34401A",
+    "AGILENT_34411A",
+    "KEYSIGHT_34411A",
+    "KEYSIGHT_34465A",
+    "ADCMT_7461A",
+    "SIMULATED_METER",
+]
 SOURCE_MODEL_KEYS = {
     "YOKOGAWA_GS210": "gs210",
     "YOKOGAWA_7651": "yokogawa_7651",
@@ -61,7 +75,9 @@ def _window_title() -> str:
     return f"KohdaLab IV v{__version__}"
 
 
-def _model_config_for_selection(config: dict[str, Any], kind: str, model: str) -> tuple[str | None, dict[str, Any] | None]:
+def _model_config_for_selection(
+    config: dict[str, Any], kind: str, model: str
+) -> tuple[str | None, dict[str, Any] | None]:
     model = str(model).strip().upper()
     devices = config.get("instruments", {}).get(kind, {})
     if not isinstance(devices, dict):
@@ -77,7 +93,9 @@ def _model_config_for_selection(config: dict[str, Any], kind: str, model: str) -
     return None, None
 
 
-def _device_key_for_selection(config: dict[str, Any], kind: str, model: str, current_key: str) -> str:
+def _device_key_for_selection(
+    config: dict[str, Any], kind: str, model: str, current_key: str
+) -> str:
     key, _ = _model_config_for_selection(config, kind, model)
     return key or current_key
 
@@ -86,10 +104,14 @@ def _set_quantity(target: dict[str, Any], key: str, value: float, unit: str) -> 
     target[key] = {"value": float(value), "unit": unit}
 
 
-def _quantity_value(data: dict[str, Any], key: str, default_value: float, default_unit: str) -> tuple[float, str]:
+def _quantity_value(
+    data: dict[str, Any], key: str, default_value: float, default_unit: str
+) -> tuple[float, str]:
     value = data.get(key, {})
     if isinstance(value, dict):
-        return float(value.get("value", default_value)), str(value.get("unit", default_unit))
+        return float(value.get("value", default_value)), str(
+            value.get("unit", default_unit)
+        )
     return float(value), default_unit
 
 
@@ -140,7 +162,13 @@ def main() -> None:
         error_occurred = QtCore.Signal(str)
         finished = QtCore.Signal(object)
 
-        def __init__(self, *, experiment: Experiment, config: dict[str, Any], output: str | None = None):
+        def __init__(
+            self,
+            *,
+            experiment: Experiment,
+            config: dict[str, Any],
+            output: str | None = None,
+        ):
             super().__init__()
             self.experiment = experiment
             self.config = config
@@ -178,15 +206,16 @@ def main() -> None:
             config_resolution = resolve_config_path()
             self.config_path = config_resolution.path
             if self.config_path is None:
-                raise FileNotFoundError("The packaged default configuration could not be found.")
+                raise FileNotFoundError(
+                    "The packaged default configuration could not be found."
+                )
             self.config = load_config(self.config_path)
-            if config_resolution.path is not None:
-                write_last_config_path(config_resolution.path)
+            write_last_config_path(self.config_path)
             self.experiment = Experiment(self.config, auto_connect=False)
-            self.thread: QtCore.QThread | None = None
+            self.worker_thread: QtCore.QThread | None = None
             self.worker: MeasurementWorker | None = None
             self.rows: list[dict[str, Any]] = []
-            self._measurement_active = False
+            self.measurement_state = MeasurementRunState()
             self._build_widgets()
             self._build_layout()
             self._load_fields()
@@ -207,7 +236,9 @@ def main() -> None:
 
             self.source_model_combo = QtWidgets.QComboBox()
             self.source_model_combo.addItems(SOURCE_MODELS)
-            self.source_model_combo.currentTextChanged.connect(self._source_model_changed)
+            self.source_model_combo.currentTextChanged.connect(
+                self._source_model_changed
+            )
             self.source_resource_combo = QtWidgets.QComboBox()
             self.source_resource_combo.setEditable(True)
             self.source_refresh_button = QtWidgets.QPushButton("Refresh")
@@ -239,7 +270,9 @@ def main() -> None:
                 self.mode_combo.addItem(label, mode)
             self.mode_combo.currentIndexChanged.connect(self._mode_changed)
             self.sweep_combo = QtWidgets.QComboBox()
-            self.sweep_combo.addItems(["linear", "round_trip", "zero_centered", "custom_list"])
+            self.sweep_combo.addItems(
+                ["linear", "round_trip", "zero_centered", "custom_list"]
+            )
             self.start_spin = self._spin(-1e12, 1e12, 6, 0.0)
             self.end_spin = self._spin(-1e12, 1e12, 6, 0.0)
             self.step_spin = self._spin(-1e12, 1e12, 6, 1.0)
@@ -250,7 +283,9 @@ def main() -> None:
             self.average_count_spin = QtWidgets.QSpinBox()
             self.average_count_spin.setRange(1, 1000)
             self.average_count_spin.setValue(1)
-            self.average_count_spin.setButtonSymbols(QtWidgets.QAbstractSpinBox.NoButtons)
+            self.average_count_spin.setButtonSymbols(
+                QtWidgets.QAbstractSpinBox.ButtonSymbols.NoButtons
+            )
             self.check_button = QtWidgets.QPushButton("Check")
             self.start_button = QtWidgets.QPushButton("Start")
             self.stop_button = QtWidgets.QPushButton("Stop")
@@ -313,25 +348,38 @@ def main() -> None:
             self.snapshot_toggle.setText("Field / Value")
             self.snapshot_toggle.setCheckable(True)
             self.snapshot_toggle.setChecked(True)
-            self.snapshot_toggle.setToolButtonStyle(QtCore.Qt.ToolButtonTextBesideIcon)
+            self.snapshot_toggle.setToolButtonStyle(
+                QtCore.Qt.ToolButtonStyle.ToolButtonTextBesideIcon
+            )
             self.snapshot_toggle.clicked.connect(self._toggle_snapshot)
             self.snapshot_table = QtWidgets.QTableWidget(0, 2)
             self.snapshot_table.setHorizontalHeaderLabels(["Field", "Value"])
             self.snapshot_table.verticalHeader().setVisible(False)
             self.snapshot_table.horizontalHeader().setStretchLastSection(True)
-            self.snapshot_table.setEditTriggers(QtWidgets.QAbstractItemView.NoEditTriggers)
-            self.snapshot_table.setSelectionMode(QtWidgets.QAbstractItemView.NoSelection)
+            self.snapshot_table.setEditTriggers(
+                QtWidgets.QAbstractItemView.EditTrigger.NoEditTriggers
+            )
+            self.snapshot_table.setSelectionMode(
+                QtWidgets.QAbstractItemView.SelectionMode.NoSelection
+            )
 
-            self.left_panel_toggle = self._side_panel_toggle("<", self._toggle_left_panel)
-            self.right_panel_toggle = self._side_panel_toggle(">", self._toggle_right_panel)
+            self.left_panel_toggle = self._side_panel_toggle(
+                "<", self._toggle_left_panel
+            )
+            self.right_panel_toggle = self._side_panel_toggle(
+                ">", self._toggle_right_panel
+            )
 
         def _side_panel_toggle(self, text: str, slot) -> QtWidgets.QToolButton:
             button = QtWidgets.QToolButton()
             button.setText(text)
             button.setCheckable(True)
-            button.setToolButtonStyle(QtCore.Qt.ToolButtonTextOnly)
+            button.setToolButtonStyle(QtCore.Qt.ToolButtonStyle.ToolButtonTextOnly)
             button.setFixedWidth(24)
-            button.setSizePolicy(QtWidgets.QSizePolicy.Fixed, QtWidgets.QSizePolicy.Expanding)
+            button.setSizePolicy(
+                QtWidgets.QSizePolicy.Policy.Fixed,
+                QtWidgets.QSizePolicy.Policy.Expanding,
+            )
             button.clicked.connect(slot)
             return button
 
@@ -404,7 +452,9 @@ def main() -> None:
             left.addStretch(1)
             self.left_content = QtWidgets.QScrollArea()
             self.left_content.setWidgetResizable(True)
-            self.left_content.setHorizontalScrollBarPolicy(QtCore.Qt.ScrollBarAlwaysOff)
+            self.left_content.setHorizontalScrollBarPolicy(
+                QtCore.Qt.ScrollBarPolicy.ScrollBarAlwaysOff
+            )
             self.left_content.setWidget(left_widget)
             self.left_content.setMinimumWidth(260)
             self.left_content.setMaximumWidth(290)
@@ -462,7 +512,12 @@ def main() -> None:
             group = QtWidgets.QGroupBox("Source")
             form = QtWidgets.QFormLayout(group)
             form.addRow("Device", self.source_model_combo)
-            form.addRow("Resource", self._resource_row(self.source_resource_combo, self.source_refresh_button))
+            form.addRow(
+                "Resource",
+                self._resource_row(
+                    self.source_resource_combo, self.source_refresh_button
+                ),
+            )
             buttons = QtWidgets.QHBoxLayout()
             for button in (self.source_connect_button, self.source_disconnect_button):
                 buttons.addWidget(button)
@@ -473,7 +528,12 @@ def main() -> None:
             group = QtWidgets.QGroupBox("Meter")
             form = QtWidgets.QFormLayout(group)
             form.addRow("Device", self.meter_model_combo)
-            form.addRow("Resource", self._resource_row(self.meter_resource_combo, self.meter_refresh_button))
+            form.addRow(
+                "Resource",
+                self._resource_row(
+                    self.meter_resource_combo, self.meter_refresh_button
+                ),
+            )
             form.addRow("NPLC", self.nplc_spin)
             buttons = QtWidgets.QHBoxLayout()
             for button in (self.meter_connect_button, self.meter_disconnect_button):
@@ -487,9 +547,13 @@ def main() -> None:
             left = QtWidgets.QFormLayout()
             left.addRow("Mode", self.mode_combo)
             left.addRow("Sweep", self.sweep_combo)
-            left.addRow("Start", self._quantity_row(self.start_spin, self.start_unit_combo))
+            left.addRow(
+                "Start", self._quantity_row(self.start_spin, self.start_unit_combo)
+            )
             left.addRow("End", self._quantity_row(self.end_spin, self.end_unit_combo))
-            left.addRow("Step", self._quantity_row(self.step_spin, self.step_unit_combo))
+            left.addRow(
+                "Step", self._quantity_row(self.step_spin, self.step_unit_combo)
+            )
             left.addRow("Wait time (s)", self.wait_spin)
             left.addRow("Average count", self.average_count_spin)
 
@@ -507,8 +571,14 @@ def main() -> None:
         def _output_group(self):
             group = QtWidgets.QGroupBox("Output")
             form = QtWidgets.QFormLayout(group)
-            form.addRow("Directory", self._resource_row(self.output_dir_edit, self.output_browse_button))
-            form.addRow("File", self._resource_row(self.output_name_edit, self.auto_suffix_check))
+            form.addRow(
+                "Directory",
+                self._resource_row(self.output_dir_edit, self.output_browse_button),
+            )
+            form.addRow(
+                "File",
+                self._resource_row(self.output_name_edit, self.auto_suffix_check),
+            )
             return group
 
         def _run_group(self):
@@ -556,7 +626,7 @@ def main() -> None:
             spin.setDecimals(3)
             spin.setValue(value)
             spin.setKeyboardTracking(False)
-            spin.setButtonSymbols(QtWidgets.QAbstractSpinBox.NoButtons)
+            spin.setButtonSymbols(QtWidgets.QAbstractSpinBox.ButtonSymbols.NoButtons)
             return spin
 
         def _source_key(self) -> str:
@@ -567,9 +637,8 @@ def main() -> None:
             _, meter_ref = self._active_refs(self.config)
             return meter_ref.split(".", 1)[1]
 
-        def _set_measurement_active(self, active: bool) -> None:
-            self._measurement_active = bool(active)
-            controls_enabled = not self._measurement_active
+        def _sync_measurement_controls(self) -> None:
+            controls_enabled = self.measurement_state.controls_enabled
             for widget in (
                 self.config_path_edit,
                 self.browse_button,
@@ -591,10 +660,10 @@ def main() -> None:
             ):
                 widget.setEnabled(controls_enabled)
             self.start_button.setEnabled(controls_enabled)
-            self.stop_button.setEnabled(self._measurement_active)
+            self.stop_button.setEnabled(self.measurement_state.can_stop)
 
         def _ensure_measurement_idle(self, action: str) -> bool:
-            if not self._measurement_active:
+            if not self.measurement_state.active:
                 return True
             self.append_log(f"{action} skipped: measurement is running.")
             return False
@@ -620,7 +689,9 @@ def main() -> None:
         def _default_unit(self, mode: str) -> str:
             return "mA" if mode == "dc_vi" else "mV"
 
-        def _replace_units(self, combo, units: list[str], preferred: str | None = None) -> None:
+        def _replace_units(
+            self, combo, units: list[str], preferred: str | None = None
+        ) -> None:
             current = preferred or combo.currentText()
             combo.blockSignals(True)
             combo.clear()
@@ -633,8 +704,16 @@ def main() -> None:
             mode = self._mode()
             units = self._mode_units(mode)
             default_unit = self._default_unit(mode)
-            for combo in (self.start_unit_combo, self.end_unit_combo, self.step_unit_combo):
-                preferred = combo.currentText() if combo.currentText() in units else default_unit
+            for combo in (
+                self.start_unit_combo,
+                self.end_unit_combo,
+                self.step_unit_combo,
+            ):
+                preferred = (
+                    combo.currentText()
+                    if combo.currentText() in units
+                    else default_unit
+                )
                 self._replace_units(combo, units, preferred)
             self._refresh_plot_labels()
 
@@ -658,9 +737,13 @@ def main() -> None:
             meter_key = self._meter_key()
             source = self.config["instruments"]["source"][source_key]
             meter = self.config["instruments"]["meter"][meter_key]
-            self.source_model_combo.setCurrentText(str(source.get("model", SOURCE_MODELS[0])).upper())
+            self.source_model_combo.setCurrentText(
+                str(source.get("model", SOURCE_MODELS[0])).upper()
+            )
             self.source_resource_combo.setCurrentText(str(source.get("resource", "")))
-            self.meter_model_combo.setCurrentText(str(meter.get("model", METER_MODELS[0])).upper())
+            self.meter_model_combo.setCurrentText(
+                str(meter.get("model", METER_MODELS[0])).upper()
+            )
             self.meter_resource_combo.setCurrentText(str(meter.get("resource", "")))
 
             scan = settings["scan"]
@@ -682,21 +765,32 @@ def main() -> None:
             output = settings.get("output", {})
             self.output_dir_edit.setText(str(output.get("dir", "results")))
             self.output_name_edit.setText(str(output.get("filename", "iv_run")))
-            self.auto_suffix_check.setChecked(bool(output.get("auto_timestamp_suffix", True)))
+            self.auto_suffix_check.setChecked(
+                bool(output.get("auto_timestamp_suffix", True))
+            )
             self._refresh_plot_labels()
 
         def _config_from_fields(self) -> dict[str, Any]:
             config = copy.deepcopy(self.config)
             source_key = self._source_key_for_selected_model(config)
             meter_key = self._meter_key_for_selected_model(config)
-            source_model = self.source_model_combo.currentText().strip().upper() or "YOKOGAWA_GS210"
+            source_model = (
+                self.source_model_combo.currentText().strip().upper()
+                or "YOKOGAWA_GS210"
+            )
             meter_model = self.meter_model_combo.currentText().strip().upper()
             config["instruments"]["source"][source_key]["model"] = source_model
-            config["instruments"]["source"][source_key]["resource"] = self.source_resource_combo.currentText().strip()
+            config["instruments"]["source"][source_key]["resource"] = (
+                self.source_resource_combo.currentText().strip()
+            )
             config["instruments"]["meter"][meter_key]["model"] = meter_model
-            config["instruments"]["meter"][meter_key]["resource"] = self.meter_resource_combo.currentText().strip()
+            config["instruments"]["meter"][meter_key]["resource"] = (
+                self.meter_resource_combo.currentText().strip()
+            )
             if meter_model == "ADCMT_7461A":
-                config["instruments"]["meter"][meter_key].setdefault("command_language", "scpi")
+                config["instruments"]["meter"][meter_key].setdefault(
+                    "command_language", "scpi"
+                )
             for role_key in ("iv", "vi"):
                 config["roles"].setdefault(role_key, {})
                 config["roles"][role_key]["source"] = f"source.{source_key}"
@@ -707,9 +801,18 @@ def main() -> None:
             settings["mode"] = mode
             scan = settings.setdefault("scan", {})
             scan["pattern"] = self.sweep_combo.currentText()
-            _set_quantity(scan, "start", self.start_spin.value(), self.start_unit_combo.currentText())
-            _set_quantity(scan, "stop", self.end_spin.value(), self.end_unit_combo.currentText())
-            _set_quantity(scan, "step", self.step_spin.value(), self.step_unit_combo.currentText())
+            _set_quantity(
+                scan,
+                "start",
+                self.start_spin.value(),
+                self.start_unit_combo.currentText(),
+            )
+            _set_quantity(
+                scan, "stop", self.end_spin.value(), self.end_unit_combo.currentText()
+            )
+            _set_quantity(
+                scan, "step", self.step_spin.value(), self.step_unit_combo.currentText()
+            )
             scan.setdefault("repeat", 1)
             scan.setdefault("custom_points", [])
 
@@ -732,9 +835,16 @@ def main() -> None:
 
             safety = settings.setdefault("safety", {})
             source_unit = self.start_unit_combo.currentText()
-            source_limit_value = max(abs(self.start_spin.value()), abs(self.end_spin.value()))
+            source_limit_value = max(
+                abs(self.start_spin.value()), abs(self.end_spin.value())
+            )
             _set_quantity(safety, "max_abs_source", source_limit_value, source_unit)
-            _set_quantity(safety, "ramp_step", abs(self.step_spin.value()), self.step_unit_combo.currentText())
+            _set_quantity(
+                safety,
+                "ramp_step",
+                abs(self.step_spin.value()),
+                self.step_unit_combo.currentText(),
+            )
             self._ensure_compliance_quantity(safety, mode)
             safety["stop_on_compliance"] = True
             safety["on_finish"] = "ramp_to_zero_then_off"
@@ -761,7 +871,9 @@ def main() -> None:
             config["instruments"].setdefault("meter", {}).setdefault(current, {})
             return current
 
-        def _ensure_compliance_quantity(self, safety: dict[str, Any], mode: str) -> None:
+        def _ensure_compliance_quantity(
+            self, safety: dict[str, Any], mode: str
+        ) -> None:
             compliance = safety.get("compliance", {})
             unit = compliance.get("unit") if isinstance(compliance, dict) else None
             family = _unit_family(str(unit or ""))
@@ -775,12 +887,16 @@ def main() -> None:
         def browse_config(self) -> None:
             if not self._ensure_measurement_idle("Browse Config"):
                 return
-            path, _ = QtWidgets.QFileDialog.getOpenFileName(self, "Load Config", str(Path.cwd()), "JSON Files (*.json)")
+            path, _ = QtWidgets.QFileDialog.getOpenFileName(
+                self, "Load Config", str(Path.cwd()), "JSON Files (*.json)"
+            )
             if path:
                 self.config_path_edit.setText(path)
 
         def browse_output_dir(self) -> None:
-            path = QtWidgets.QFileDialog.getExistingDirectory(self, "Output Directory", self.output_dir_edit.text() or str(Path.cwd()))
+            path = QtWidgets.QFileDialog.getExistingDirectory(
+                self, "Output Directory", self.output_dir_edit.text() or str(Path.cwd())
+            )
             if path:
                 self.output_dir_edit.setText(path)
 
@@ -860,7 +976,9 @@ def main() -> None:
                 source.output_off()
                 source.set_level(0.0)
                 source.output_off()
-                self.source_status.setText(f"{idn}\noutput={source.output_state()} level={_short(source.read_level())}")
+                self.source_status.setText(
+                    f"{idn}\noutput={source.output_state()} level={_short(source.read_level())}"
+                )
                 self.append_log(f"Connected {source_ref}: {idn}")
             except Exception as e:
                 QtWidgets.QMessageBox.critical(self, "Connect Error", str(e))
@@ -926,7 +1044,7 @@ def main() -> None:
                 self.append_log(f"Plan error: {e}")
 
         def start_measurement(self) -> None:
-            if self._measurement_active:
+            if self.measurement_state.active:
                 self.append_log("Start skipped: measurement is already running.")
                 return
             try:
@@ -939,29 +1057,34 @@ def main() -> None:
                 out = output_path(self.config, "iv")
                 self.rows.clear()
                 self._update_plot()
-                self.thread = QtCore.QThread()
-                self.worker = MeasurementWorker(experiment=self.experiment, config=self.config, output=str(out))
-                self.worker.moveToThread(self.thread)
-                self.thread.started.connect(self.worker.run)
+                self.worker_thread = QtCore.QThread()
+                self.worker = MeasurementWorker(
+                    experiment=self.experiment, config=self.config, output=str(out)
+                )
+                self.worker.moveToThread(self.worker_thread)
+                self.worker_thread.started.connect(self.worker.run)
                 self.worker.status_changed.connect(self.handle_status)
                 self.worker.point_ready.connect(self.handle_point)
                 self.worker.error_occurred.connect(self.handle_error)
                 self.worker.finished.connect(self.handle_finished)
-                self.worker.finished.connect(self.thread.quit)
+                self.worker.finished.connect(self.worker_thread.quit)
                 self.worker.finished.connect(self.worker.deleteLater)
-                self.thread.finished.connect(self._thread_finished)
-                self.thread.finished.connect(self.thread.deleteLater)
-                self._set_measurement_active(True)
-                self.thread.start()
+                self.worker_thread.finished.connect(self._thread_finished)
+                self.worker_thread.finished.connect(self.worker_thread.deleteLater)
+                self.measurement_state.begin()
+                self._sync_measurement_controls()
+                self.worker_thread.start()
                 self.append_log(f"Started {plan.summary} -> {out}")
             except Exception as e:
-                self._set_measurement_active(False)
+                self.measurement_state.reset()
+                self._sync_measurement_controls()
                 QtWidgets.QMessageBox.critical(self, "Start Error", str(e))
                 self.append_log(f"Start error: {e}")
 
         def stop_measurement(self) -> None:
-            if self.worker is not None:
+            if self.worker is not None and self.measurement_state.request_stop():
                 self.worker.stop()
+                self._sync_measurement_controls()
                 self.append_log("Stop requested.")
 
         def output_off(self) -> None:
@@ -972,13 +1095,17 @@ def main() -> None:
                 source = self._safe_zero_output_off(connect_if_missing=True)
                 if source is None:
                     raise RuntimeError("Source is not available.")
-                self.source_status.setText(f"output=False level={_short(source.read_level())}")
+                self.source_status.setText(
+                    f"output=False level={_short(source.read_level())}"
+                )
                 self.append_log("Source output off and level set to zero.")
             except Exception as e:
                 QtWidgets.QMessageBox.critical(self, "Output Off Error", str(e))
                 self.append_log(f"Output off error: {e}")
 
-        def _safe_zero_output_off(self, *, connect_if_missing: bool = False, raise_errors: bool = True):
+        def _safe_zero_output_off(
+            self, *, connect_if_missing: bool = False, raise_errors: bool = True
+        ):
             try:
                 source_ref, _ = self._active_refs(self.config)
                 try:
@@ -1002,6 +1129,7 @@ def main() -> None:
             self.append_log(status)
 
         def handle_error(self, message: str) -> None:
+            self.measurement_state.record_error(message)
             self.append_log(f"Error: {message}")
             QtWidgets.QMessageBox.critical(self, "Measurement Error", message)
 
@@ -1012,13 +1140,16 @@ def main() -> None:
             self._update_snapshot(row)
 
         def handle_finished(self, rows) -> None:
+            self.measurement_state.finish(len(rows))
             self.append_log(f"Finished. {len(rows)} points collected.")
             self.status_label.setText(f"finished {len(rows)} points")
-            self._set_measurement_active(False)
-            self.append_log("Source returned to zero/output off. Devices remain remote.")
+            self._sync_measurement_controls()
+            self.append_log(
+                "Source returned to zero/output off. Devices remain remote."
+            )
 
         def _thread_finished(self) -> None:
-            self.thread = None
+            self.worker_thread = None
             self.worker = None
 
         def _refresh_plot_labels(self) -> None:
@@ -1046,7 +1177,9 @@ def main() -> None:
             return points
 
         def _plot_groups(self) -> dict[str, list[tuple[float, float]]]:
-            groups = {key: [] for key in self.plot_curves}
+            groups: dict[str, list[tuple[float, float]]] = {
+                key: [] for key in self.plot_curves
+            }
             last_point: tuple[float, float] | None = None
             last_direction: str | None = None
             for x, y, direction in self._plot_points():
@@ -1076,7 +1209,11 @@ def main() -> None:
                 self.plot.autoRange()
             resistance = _resistance_from_rows(self.rows)
             conductance = None if resistance in (None, 0) else 1.0 / resistance
-            point_text = f"{count}/{self.rows[-1].get('total_points', '-')}" if self.rows else "-"
+            point_text = (
+                f"{count}/{self.rows[-1].get('total_points', '-')}"
+                if self.rows
+                else "-"
+            )
             resistance_text = format_resistance(resistance)
             conductance_text = format_conductance(conductance)
             self.step_label.setText(point_text)
@@ -1096,7 +1233,9 @@ def main() -> None:
             keys = [key for key in SNAPSHOT_FIELDS if key in row]
             self.snapshot_table.setRowCount(len(keys))
             for index, key in enumerate(keys):
-                self.snapshot_table.setItem(index, 0, QtWidgets.QTableWidgetItem(str(key)))
+                self.snapshot_table.setItem(
+                    index, 0, QtWidgets.QTableWidgetItem(str(key))
+                )
                 value = row.get(key)
                 text = "" if value is None else _short(value)
                 self.snapshot_table.setItem(index, 1, QtWidgets.QTableWidgetItem(text))
@@ -1118,15 +1257,19 @@ def main() -> None:
 
         def append_log(self, text: str) -> None:
             self.log.appendPlainText(str(text))
-            self.log.verticalScrollBar().setValue(self.log.verticalScrollBar().maximum())
+            self.log.verticalScrollBar().setValue(
+                self.log.verticalScrollBar().maximum()
+            )
 
         def closeEvent(self, event) -> None:
             if self.worker is not None:
                 self.worker.stop()
-            if self.thread is not None and self.thread.isRunning():
-                self.thread.quit()
-                if not self.thread.wait(15000):
-                    self.append_log("Close delayed: measurement thread is still stopping.")
+            if self.worker_thread is not None and self.worker_thread.isRunning():
+                self.worker_thread.quit()
+                if not self.worker_thread.wait(15000):
+                    self.append_log(
+                        "Close delayed: measurement thread is still stopping."
+                    )
                     event.ignore()
                     return
             try:
@@ -1141,5 +1284,5 @@ def main() -> None:
     sys.exit(app.exec())
 
 
-if __name__ == "__main__":
+if __name__ == "__main__":  # pragma: no cover - GUI script calls main
     main()
