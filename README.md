@@ -107,7 +107,7 @@ Real hardware operation requires the checks in [Safety notes](SAFETY.md) and the
 
 ## Project Status
 
-The current development version is `0.2.0`. It includes simulated end-to-end measurements, configuration preflight validation, provenance-rich CSV output, GUI run-state protection, cross-platform Python 3.13 CI, release-artifact verification, and 100% statement and branch coverage.
+The current development version is `0.2.1`. It includes simulated end-to-end measurements, configuration preflight validation, provenance-rich CSV output, GUI run-state protection, cross-platform Python 3.13 CI, release-artifact verification, and 100% statement and branch coverage.
 
 ## License
 

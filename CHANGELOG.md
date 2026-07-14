@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+## [0.2.1] - 2026-07-14
+
 ### Added
 
 - Added public Python API examples and a conservative real-hardware smoke-test guide.
