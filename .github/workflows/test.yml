@@ -41,6 +41,12 @@ jobs:
           enable-cache: true
           python-version: ${{ matrix.python-version }}
 
+      - name: Install Linux GUI runtime
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install --yes libegl1
+
       - name: Install dependencies
         run: uv sync --all-extras --group dev --frozen
 

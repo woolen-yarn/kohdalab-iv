@@ -1,7 +1,8 @@
 from __future__ import annotations
 
-import sys
+import ctypes
 import importlib
+import sys
 from types import SimpleNamespace
 
 import pytest
@@ -234,7 +235,10 @@ def test_release_remote_control_calls_all_available_paths(monkeypatch) -> None:
     ]
 
 
-def test_ni4882_returns_false_when_libraries_or_board_are_unavailable() -> None:
+def test_ni4882_returns_false_when_libraries_or_board_are_unavailable(
+    monkeypatch,
+) -> None:
+    monkeypatch.setattr(ctypes, "WinDLL", None, raising=False)
     assert not _ni4882_set_ren("GPIB0", False)
     assert not _ni4882_set_ren(
         "GPIB0", False, loader=lambda name: (_ for _ in ()).throw(OSError(name))
