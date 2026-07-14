@@ -78,6 +78,7 @@ Install all runtime, GUI, notebook, and development dependencies:
 
 ```bash
 uv sync --all-extras --group dev --frozen
+uv run pre-commit install --install-hooks
 ```
 
 ## 5. Verify the Environment
@@ -85,9 +86,18 @@ uv sync --all-extras --group dev --frozen
 Run the hardware-free checks first:
 
 ```bash
-uv run pytest -q
-uv run kohdalab-iv --config config/default.json check-config
+uv run python scripts/check_project.py quality
+uv run kohdalab-iv check-config
 ```
+
+Create a machine-local editable config before entering real VISA resource strings:
+
+```bash
+uv run kohdalab-iv init-config config/local.json
+```
+
+The command refuses to replace an existing file unless `--force` is explicitly
+provided.
 
 ## 6. Run the Tools
 
@@ -100,13 +110,13 @@ uv run --extra gui kohdalab-iv-gui
 CLI config check:
 
 ```bash
-uv run kohdalab-iv --config config/default.json check-config
+uv run kohdalab-iv check-config
 ```
 
 Jupyter:
 
-```powershell
-.\run_jupyter.ps1
+```bash
+uv run --extra notebook jupyter lab
 ```
 
 ## 7. Recommended Git Workflow

@@ -10,6 +10,8 @@ from typing import Any
 
 PACKAGE_ROOT = Path(__file__).resolve().parent.parent
 DEFAULT_CONFIG_PATH = PACKAGE_ROOT / "resources" / "default.json"
+CONFIG_SCHEMA_PATH = PACKAGE_ROOT / "resources" / "config.schema.json"
+CONFIG_SCHEMA_VERSION = 1
 CONFIG_PATH_ENV = "KOHDALAB_IV_CONFIG"
 DEFAULT_CONFIG_PATH_ENV = "KOHDALAB_IV_DEFAULT_CONFIG"
 CONFIG_STATE_DIR_ENV = "KOHDALAB_IV_STATE_DIR"
@@ -51,15 +53,23 @@ def read_last_config_path(path: str | Path | None = None) -> Path | None:
     return Path(str(value))
 
 
-def write_last_config_path(config_path: str | Path, path: str | Path | None = None) -> Path:
+def write_last_config_path(
+    config_path: str | Path, path: str | Path | None = None
+) -> Path:
     state_path = Path(path) if path is not None else last_config_state_path()
     state_path.parent.mkdir(parents=True, exist_ok=True)
-    state_path.write_text(json.dumps({"path": str(Path(config_path))}, indent=2), encoding="utf-8")
+    state_path.write_text(
+        json.dumps({"path": str(Path(config_path))}, indent=2), encoding="utf-8"
+    )
     return state_path
 
 
-def _record_candidate(candidates: list[dict[str, str]], source: str, path: Path) -> None:
-    candidates.append({"source": source, "path": str(path), "exists": str(path.exists())})
+def _record_candidate(
+    candidates: list[dict[str, str]], source: str, path: Path
+) -> None:
+    candidates.append(
+        {"source": source, "path": str(path), "exists": str(path.exists())}
+    )
 
 
 def resolve_config_path(
@@ -85,122 +95,34 @@ def resolve_config_path(
     if last_path is not None:
         _record_candidate(candidates, "last", last_path)
         if last_path.exists():
-            return ConfigPathResolution(path=last_path, source="last", candidates=candidates)
+            return ConfigPathResolution(
+                path=last_path, source="last", candidates=candidates
+            )
 
     default_from_env = os.environ.get(DEFAULT_CONFIG_PATH_ENV)
-    default_path = Path(default_from_env) if default_from_env else Path(lab_default_path or DEFAULT_CONFIG_PATH)
+    default_path = (
+        Path(default_from_env)
+        if default_from_env
+        else Path(lab_default_path or DEFAULT_CONFIG_PATH)
+    )
     _record_candidate(candidates, "lab_default", default_path)
     if default_path.exists():
-        return ConfigPathResolution(path=default_path, source="lab_default", candidates=candidates)
+        return ConfigPathResolution(
+            path=default_path, source="lab_default", candidates=candidates
+        )
 
     return ConfigPathResolution(path=None, source="none", candidates=candidates)
 
 
-DEFAULT_CONFIG: dict[str, Any] = {
-    "profile": {
-        "name": "default",
-        "description": "Default KohdaLab DC VI setup: GS210 current source and 34401A voltage measurement.",
-    },
-    "instruments": {
-        "source": {
-            "gs210": {
-                "model": "YOKOGAWA_GS210",
-                "transport": "visa",
-                "resource": "GPIB0::2::INSTR",
-                "timeout_ms": 5000,
-            },
-            "yokogawa_7651": {
-                "model": "YOKOGAWA_7651",
-                "transport": "visa",
-                "resource": "GPIB0::1::INSTR",
-                "timeout_ms": 5000,
-            },
-        },
-        "meter": {
-            "dmm_34401a": {
-                "model": "AGILENT_34401A",
-                "transport": "visa",
-                "resource": "GPIB0::26::INSTR",
-                "timeout_ms": 10000,
-                "auto_range": True,
-            },
-            "dmm_agilent_34411a": {
-                "model": "AGILENT_34411A",
-                "transport": "visa",
-                "resource": "USB0::0x0000::0x0000::INSTR",
-                "timeout_ms": 10000,
-                "auto_range": True,
-            },
-            "dmm_34411a": {
-                "model": "KEYSIGHT_34411A",
-                "transport": "visa",
-                "resource": "USB0::0x0000::0x0000::INSTR",
-                "timeout_ms": 10000,
-                "auto_range": True,
-            },
-            "dmm_34465a": {
-                "model": "KEYSIGHT_34465A",
-                "transport": "visa",
-                "resource": "USB0::0x0000::0x0000::INSTR",
-                "timeout_ms": 10000,
-                "auto_range": True,
-            },
-            "dmm_7461a": {
-                "model": "ADCMT_7461A",
-                "transport": "visa",
-                "resource": "GPIB0::27::INSTR",
-                "timeout_ms": 10000,
-                "auto_range": True,
-                "command_language": "scpi",
-            }
-        },
-    },
-    "roles": {
-        "iv": {"source": "source.gs210", "measure": "meter.dmm_34401a"},
-        "vi": {"source": "source.gs210", "measure": "meter.dmm_34401a"},
-    },
-    "measurements": {
-        "iv": {
-            "mode": "dc_vi",
-            "signal": {"kind": "dc", "ac_enabled": False},
-            "scan": {
-                "pattern": "linear",
-                "start": {"value": -100.0, "unit": "mA"},
-                "stop": {"value": 100.0, "unit": "mA"},
-                "step": {"value": 10.0, "unit": "mA"},
-                "repeat": 1,
-                "custom_points": [],
-            },
-            "timing": {
-                "pre_delay_s": 0.1,
-                "start_settle_s": 0.5,
-                "settle_s": 0.2,
-                "post_zero_delay_s": 0.1,
-                "ramp_step_wait_s": 0.02,
-                "nplc": 1.0,
-                "average_count": 1,
-                "measure_timeout_s": 10.0,
-                "timing_mode": "software",
-            },
-            "measure": {"auto_range": True},
-            "safety": {
-                "max_abs_source": {"value": 100.0, "unit": "mA"},
-                "compliance": {"value": 1.0, "unit": "V"},
-                "stop_on_compliance": True,
-                "ramp_step": {"value": 10.0, "unit": "mA"},
-                "on_finish": "ramp_to_zero_then_off",
-                "on_stop": "ramp_to_zero_then_off",
-                "on_error": "output_off",
-                "output_off_on_finish": True,
-            },
-            "output": {
-                "dir": "results",
-                "filename": "iv_run",
-                "auto_timestamp_suffix": True,
-            },
-        }
-    },
-}
+def _load_packaged_default() -> dict[str, Any]:
+    with DEFAULT_CONFIG_PATH.open("r", encoding="utf-8") as f:
+        config = json.load(f)
+    if not isinstance(config, dict):
+        raise RuntimeError("Packaged default config must be a JSON object.")
+    return config
+
+
+DEFAULT_CONFIG: dict[str, Any] = _load_packaged_default()
 
 
 def _deep_defaults(value: dict[str, Any], defaults: dict[str, Any]) -> dict[str, Any]:
@@ -214,16 +136,22 @@ def _deep_defaults(value: dict[str, Any], defaults: dict[str, Any]) -> dict[str,
 
 
 def normalize_config(config: dict[str, Any]) -> dict[str, Any]:
-    normalized = _deep_defaults(config, DEFAULT_CONFIG)
-    normalized.setdefault("measurements", {})
-    if "iv" not in normalized["measurements"]:
-        normalized["measurements"]["iv"] = deepcopy(DEFAULT_CONFIG["measurements"]["iv"])
-    return normalized
+    return _deep_defaults(config, DEFAULT_CONFIG)
 
 
 def validate_config(config: dict[str, Any]) -> dict[str, Any]:
     if not isinstance(config, dict):
         raise ValueError("Config root must be a JSON object.")
+    config_version = config.get("config_version")
+    if type(config_version) is not int:
+        raise ValueError("config_version must be an integer.")
+    if config_version > CONFIG_SCHEMA_VERSION:
+        raise ValueError(
+            f"Config version {config_version} is newer than supported version "
+            f"{CONFIG_SCHEMA_VERSION}."
+        )
+    if config_version < 1:
+        raise ValueError("config_version must be >= 1.")
     measurements = config.get("measurements")
     if not isinstance(measurements, dict) or not measurements:
         raise ValueError("Config must define at least one measurement.")
@@ -266,12 +194,38 @@ def validate_config(config: dict[str, Any]) -> dict[str, Any]:
     return config
 
 
+def load_config_schema() -> dict[str, Any]:
+    with CONFIG_SCHEMA_PATH.open("r", encoding="utf-8") as f:
+        schema = json.load(f)
+    if not isinstance(schema, dict):
+        raise RuntimeError("Packaged config schema must be a JSON object.")
+    return schema
+
+
 def load_config(path: str | Path = DEFAULT_CONFIG_PATH) -> dict[str, Any]:
     with Path(path).open("r", encoding="utf-8") as f:
         loaded = json.load(f)
     if not isinstance(loaded, dict):
         raise ValueError("Config root must be a JSON object.")
     return validate_config(normalize_config(loaded))
+
+
+def initialize_config(path: str | Path, *, overwrite: bool = False) -> Path:
+    """Copy the validated packaged default to an editable local path."""
+    load_config(DEFAULT_CONFIG_PATH)
+    output = Path(path)
+    if output.is_symlink():
+        raise ValueError(f"Refusing to initialize config through a symlink: {output}")
+    output.parent.mkdir(parents=True, exist_ok=True)
+    mode = "w" if overwrite else "x"
+    try:
+        with output.open(mode, encoding="utf-8", newline="") as destination:
+            destination.write(DEFAULT_CONFIG_PATH.read_text(encoding="utf-8"))
+    except FileExistsError as error:
+        raise FileExistsError(
+            f"Config already exists: {output}. Use --force to replace it."
+        ) from error
+    return output
 
 
 def save_config(config: dict[str, Any], path: str | Path) -> Path:
@@ -299,7 +253,11 @@ def instrument_config(config: dict[str, Any], ref: str) -> dict[str, Any]:
 
 def role_refs(config: dict[str, Any], measurement_name: str = "iv") -> tuple[str, str]:
     roles = config.get("roles", {})
-    key = "vi" if measurement_settings(config, measurement_name).get("mode") == "dc_vi" else "iv"
+    key = (
+        "vi"
+        if measurement_settings(config, measurement_name).get("mode") == "dc_vi"
+        else "iv"
+    )
     try:
         role = roles[key]
         return str(role["source"]), str(role["measure"])

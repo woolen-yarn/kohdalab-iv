@@ -96,7 +96,9 @@ def iv_row(
         meter_unit = "A"
         measured_v = source_readback if source_readback is not None else source_set
         measured_a = meter_value
-        voltage_origin = "source_readback" if source_readback is not None else "source_setpoint"
+        voltage_origin = (
+            "source_readback" if source_readback is not None else "source_setpoint"
+        )
         current_origin = "meter"
         target_v = point.target
         target_a = None
@@ -109,7 +111,9 @@ def iv_row(
         measured_v = meter_value
         measured_a = source_readback if source_readback is not None else source_set
         voltage_origin = "meter"
-        current_origin = "source_readback" if source_readback is not None else "source_setpoint"
+        current_origin = (
+            "source_readback" if source_readback is not None else "source_setpoint"
+        )
         target_v = None
         target_a = point.target
 

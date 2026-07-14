@@ -22,7 +22,6 @@ class ADCMT7461A(VisaDevice):
         (0.02, "FAST"),
         (0.2, "MED"),
         (1.0, "SLOW"),
-        (float("inf"), "SSLOW"),
     )
     USB_QUERY_DELAY_S = 0.02
     READ_DELAY_S = 0.02
@@ -59,13 +58,21 @@ class ADCMT7461A(VisaDevice):
             self._try_write("H0")
         self._try_scpi_setting("*CLS") if self._uses_scpi else self._try_write("*CLS")
 
-    def configure_measurement(self, *, measure_function: str, nplc: float, auto_range: bool = True) -> None:
+    def configure_measurement(
+        self, *, measure_function: str, nplc: float, auto_range: bool = True
+    ) -> None:
         if self._uses_scpi:
-            self._configure_measurement_scpi(measure_function=measure_function, nplc=nplc, auto_range=auto_range)
+            self._configure_measurement_scpi(
+                measure_function=measure_function, nplc=nplc, auto_range=auto_range
+            )
             return
-        self._configure_measurement_adc(measure_function=measure_function, nplc=nplc, auto_range=auto_range)
+        self._configure_measurement_adc(
+            measure_function=measure_function, nplc=nplc, auto_range=auto_range
+        )
 
-    def _configure_measurement_scpi(self, *, measure_function: str, nplc: float, auto_range: bool) -> None:
+    def _configure_measurement_scpi(
+        self, *, measure_function: str, nplc: float, auto_range: bool
+    ) -> None:
         function = self.SCPI_FUNCTION_COMMANDS.get(measure_function)
         if function is None:
             raise ValueError(f"Unsupported DMM measure function: {measure_function}")
@@ -75,7 +82,9 @@ class ADCMT7461A(VisaDevice):
         self._write_scpi_setting(f":SENSE:FUNCTION '{function}'")
         self._write_scpi_setting(f":SENSE:{function}:SRATE {self._sampling_rate(nplc)}")
 
-    def _configure_measurement_adc(self, *, measure_function: str, nplc: float, auto_range: bool) -> None:
+    def _configure_measurement_adc(
+        self, *, measure_function: str, nplc: float, auto_range: bool
+    ) -> None:
         function = self.ADC_FUNCTION_COMMANDS.get(measure_function)
         if function is None:
             raise ValueError(f"Unsupported DMM measure function: {measure_function}")
@@ -94,7 +103,9 @@ class ADCMT7461A(VisaDevice):
         response = str(self.inst.read()).strip()
         match = _FLOAT_RE.search(response)
         if not match:
-            raise RuntimeError(f"Unexpected ADCMT 7461A measurement response: {response!r}")
+            raise RuntimeError(
+                f"Unexpected ADCMT 7461A measurement response: {response!r}"
+            )
         return float(match.group(0))
 
     def prepare_for_reading(self) -> None:
@@ -118,8 +129,6 @@ class ADCMT7461A(VisaDevice):
 
     def connect_status(self) -> str:
         self.clear_status()
-        if self._uses_scpi and self._uses_usb:
-            return "status cleared"
         if self._uses_scpi:
             return self._drain_scpi_errors()
         return self.error_status()
@@ -170,7 +179,11 @@ class ADCMT7461A(VisaDevice):
 
     def _is_undefined_header(self, status: str) -> bool:
         normalized = str(status).strip().lower()
-        return "undefined header" in normalized or "err-113" in normalized or "-113" in normalized
+        return (
+            "undefined header" in normalized
+            or "err-113" in normalized
+            or "-113" in normalized
+        )
 
     def _sampling_rate(self, nplc: float) -> str:
         value = float(nplc)

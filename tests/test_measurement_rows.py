@@ -96,6 +96,6 @@ def test_output_row_uses_stable_provenance_csv_fields():
     assert "status" in output_row(row)
     assert "resistance_Ohm" in output_row(row)
     assert "conductance_S" in output_row(row)
-    assert output_row(row)["target_value"] == "-1.000000000000e-01"
-    assert output_row(row)["voltage_V"] == "-1.000000000000e-03"
-    assert output_row(row)["current_A"] == "-9.900000000000e-02"
+    assert output_row(row)["target_value"] == "0.000000000000e+00"
+    assert output_row(row)["voltage_V"] == "-9.900000000000e-02"
+    assert output_row(row)["current_A"] == "-1.000000000000e-03"

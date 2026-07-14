@@ -1,6 +1,10 @@
 from pathlib import Path
 
-from kohdalab_iv.api.config import read_last_config_path, resolve_config_path, write_last_config_path
+from kohdalab_iv.api.config import (
+    read_last_config_path,
+    resolve_config_path,
+    write_last_config_path,
+)
 
 
 def test_write_and_read_last_config_path(tmp_path):
@@ -20,7 +24,9 @@ def test_resolve_config_path_uses_last_existing_path(tmp_path):
     default_path.write_text("{}", encoding="utf-8")
     write_last_config_path(config_path, path=state_path)
 
-    resolution = resolve_config_path(last_state_path=state_path, lab_default_path=default_path)
+    resolution = resolve_config_path(
+        last_state_path=state_path, lab_default_path=default_path
+    )
 
     assert resolution.path == Path(config_path)
     assert resolution.source == "last"

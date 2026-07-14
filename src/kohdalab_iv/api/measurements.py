@@ -38,7 +38,9 @@ def _continue(should_continue: ContinueCallback | None) -> bool:
     return True if should_continue is None else bool(should_continue())
 
 
-def _sleep_interruptible(duration_s: float, should_continue: ContinueCallback | None) -> bool:
+def _sleep_interruptible(
+    duration_s: float, should_continue: ContinueCallback | None
+) -> bool:
     deadline = time.monotonic() + max(0.0, float(duration_s))
     while time.monotonic() < deadline:
         if not _continue(should_continue):
@@ -80,9 +82,13 @@ def _ramp_to(
     return value
 
 
-def _is_compliance(plan: IvPlan, measured_v: float | None, measured_a: float | None) -> bool:
+def _is_compliance(
+    plan: IvPlan, measured_v: float | None, measured_a: float | None
+) -> bool:
     if plan.mode == "dc_iv":
-        return measured_a is not None and abs(measured_a) >= abs(plan.software_compliance)
+        return measured_a is not None and abs(measured_a) >= abs(
+            plan.software_compliance
+        )
     return measured_v is not None and abs(measured_v) >= abs(plan.software_compliance)
 
 
@@ -122,7 +128,11 @@ def run_iv(
     plan = plan or iv_plan_from_config(config)
     owns_session = session is None
     session = session or DeviceSession(config)
-    out = Path(output) if output is not None else output_path(config, plan.measurement_name)
+    out = (
+        Path(output)
+        if output is not None
+        else output_path(config, plan.measurement_name)
+    )
     out.parent.mkdir(parents=True, exist_ok=True)
     rows: list[dict[str, Any]] = []
     source = None
@@ -199,7 +209,11 @@ def run_iv(
                 f.flush()
                 rows.append(row)
                 if on_point is not None:
-                    on_point(MeasurementPoint(index=index, total_points=plan.total_points, row=row))
+                    on_point(
+                        MeasurementPoint(
+                            index=index, total_points=plan.total_points, row=row
+                        )
+                    )
                 if compliance and plan.stop_on_compliance:
                     cleanup_action = plan.on_stop
                     _emit(on_status, STATUS_COMPLIANCE)
