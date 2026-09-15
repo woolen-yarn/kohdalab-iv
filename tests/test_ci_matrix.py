@@ -63,11 +63,11 @@ def test_release_workflow_is_tag_only_and_guarded() -> None:
     assert "--clobber" in package_commands
 
     actions = {step.get("uses") for step in package["steps"]}
-    assert "actions/upload-artifact@v4" in actions
+    assert "actions/upload-artifact@v7" in actions
     upload = next(
         step
         for step in package["steps"]
-        if step.get("uses") == "actions/upload-artifact@v4"
+        if step.get("uses") == "actions/upload-artifact@v7"
     )
     assert upload["with"]["if-no-files-found"] == "error"
     assert upload["with"]["retention-days"] == 30
