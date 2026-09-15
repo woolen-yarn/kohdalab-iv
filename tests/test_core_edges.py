@@ -39,7 +39,7 @@ def test_config_state_paths_and_plain_text_compatibility(monkeypatch, tmp_path) 
     explicit_state = tmp_path / "explicit.json"
     monkeypatch.setenv(config_module.CONFIG_STATE_DIR_ENV, str(state_dir))
     assert config_module.config_state_dir() == state_dir
-    assert config_module.last_config_state_path() == state_dir / "last_config.json"
+    assert config_module.last_config_state_path() == state_dir / "last_iv_config.json"
 
     monkeypatch.setenv(config_module.LAST_CONFIG_STATE_PATH_ENV, str(explicit_state))
     assert config_module.last_config_state_path() == explicit_state

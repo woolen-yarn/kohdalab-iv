@@ -112,8 +112,8 @@
           "unit": "mV"
         },
         "compliance": {
-          "value": 10.0,
-          "unit": "uA"
+          "value": 1.0,
+          "unit": "mA"
         },
         "stop_on_compliance": true,
         "ramp_step": {
