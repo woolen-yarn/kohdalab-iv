@@ -15,6 +15,7 @@
 - Store the editable GUI default at `~/.kohdalab/config/iv.json`, alongside TRKR configs with a separate filename.
 - Remember the selected config in `~/.kohdalab/last_iv_config.json`, retain legacy-path fallback, and support shared `KOHDALAB_STATE_DIR` and home-directory expansion.
 - Document averaged-reading software stop behavior and the distinction from instrument hardware protection.
+- Update locked cryptography, JupyterLab, pip, and Tornado dependencies to address the release-time vulnerability audit.
 
 ## [0.2.1] - 2026-07-14
 
