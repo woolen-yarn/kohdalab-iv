@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+### Changed
+
+- Consolidate pending dependency updates: IPython 9.15.0, Matplotlib 3.11.1, pre-commit 4.6.1, Ruff 0.16.0, Twine 7.0.0, setuptools >=83.0.0, and actions/upload-artifact v7.
+
 ## [0.2.2] - 2026-09-15
 
 ### Added
