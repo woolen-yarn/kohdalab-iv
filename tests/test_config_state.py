@@ -88,6 +88,7 @@ def test_path_inputs_expand_home(monkeypatch, tmp_path):
     home = tmp_path / "home"
     target = home / "config.json"
     monkeypatch.setenv("HOME", str(home))
+    monkeypatch.setenv("USERPROFILE", str(home))
     write_last_config_path("~/config.json", "~/state.json")
 
     assert read_last_config_path("~/state.json") == target
