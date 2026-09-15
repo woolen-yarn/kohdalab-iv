@@ -68,7 +68,7 @@ GUI は 3 パネル構成です。
 
 `Config` は選択したローカルJSONを読み書きします。GUIの初回起動時は、編集可能な `~/.kohdalab/config/iv.json` を作成します（Windows: `%USERPROFILE%\.kohdalab\config\iv.json`）。TRKRと同じフォルダーを使い、ファイル名を分けています。最後に開いたパスは `~/.kohdalab/last_iv_config.json` に記憶します。既存の `~/.kohdalab-iv/last_config.json` も、新しい履歴がない場合に読み込みます。`KOHDALAB_IV_STATE_DIR`、または共通の `KOHDALAB_STATE_DIR` で保存先のルートを変更できます。
 
-`Measurement` の `V source: stop |I| ≥` は電圧印加時の電流停止しきい値（初期値 **1 mA**）、`I source: stop |V| ≥` は電流印加時の電圧停止しきい値（初期値 **1 V**）です。両方の値と単位を入力して `Config` の `Save` を押すと保存され、モードを切り替えても保持されます。既存ファイルの `compliance` 値は引き継ぎます。
+`Measurement` の `Step` 下にある `Timing / Compliance…` を押すと、`Wait time`、`Average count`、`Compliance`（コンプライアンス）をまとめて編集できます。`OK` で適用し、`Cancel` または閉じるボタンで変更を取り消します。`Current limit (V source)` は電圧印加時の電流停止しきい値（初期値 **1 mA**）、`Voltage limit (I source)` は電流印加時の電圧停止しきい値（初期値 **1 V**）です。両方の値と単位を入力して `Config` の `Save` を押すと保存され、モードを切り替えても保持されます。既存ファイルの `compliance` 値は引き継ぎます。
 
 各測定点の平均値について、絶対値がしきい値以上なら測定を停止し、出力をゼロへ戻してOFFにします。連続的なハードウェア遮断ではありません。機器への保護設定は機器仕様の範囲へ補正されるため、例えば7651の電流停止しきい値を1 mAにしても、機器の電流保護設定は5 mAになります。
 
@@ -226,8 +226,8 @@ with a separate filename. The last path is stored in `~/.kohdalab/last_iv_config
 the old `~/.kohdalab-iv/last_config.json` remains a fallback. Override the state
 root with `KOHDALAB_IV_STATE_DIR` or the shared `KOHDALAB_STATE_DIR`.
 
-Set `V source: stop |I| ≥` (default **1 mA**) and `I source: stop |V| ≥`
-(default **1 V**) in Measurement, then click Config **Save**. Both values and
+Click **Timing / Compliance…** below **Step** in Measurement to edit Wait time, Average count, and Compliance. **OK** applies changes; **Cancel** or closing the popup discards them. Set `Current limit (V source)` (default **1 mA**)
+and `Voltage limit (I source)` (default **1 V**), then click Config **Save**. Both values and
 units survive mode changes and reloads; existing legacy `compliance` values
 are preserved. They are saved as `measurements.iv.safety.current_compliance`
 and `voltage_compliance`, with the active value also written to `compliance`.
