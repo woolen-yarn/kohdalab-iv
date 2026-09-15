@@ -421,3 +421,37 @@ def test_device_session_passes_adcmt_command_language(monkeypatch):
 
     assert device.command_language == "adc"
     assert FakeADCMTConnectDevice.instances == [device]
+
+
+@pytest.mark.parametrize("mode,limit", [("dc_iv", 0.001), ("dc_vi", 1.0)])
+@pytest.mark.parametrize("sign", [-1, 1])
+def test_mode_specific_compliance_stops_at_boundary(tmp_path, mode, limit, sign):
+    config = _small_config()
+    settings = config["measurements"]["iv"]
+    settings["mode"] = mode
+    settings["safety"]["current_compliance"] = {"value": 1, "unit": "mA"}
+    settings["safety"]["voltage_compliance"] = {"value": 1, "unit": "V"}
+    if mode == "dc_vi":
+        for key in ("start", "stop", "step"):
+            settings["scan"][key]["unit"] = "uA"
+        settings["safety"]["max_abs_source"]["unit"] = "uA"
+        settings["safety"]["ramp_step"]["unit"] = "uA"
+    settings["timing"]["start_settle_s"] = 0
+    settings["timing"]["pre_delay_s"] = 0
+    settings["timing"]["post_zero_delay_s"] = 0
+    plan = iv_plan_from_config(config)
+    source = FakeSource()
+    meter = FakeMeter([sign * limit * 0.9, sign * limit, sign * limit * 2])
+    rows = run_iv(
+        config,
+        plan=plan,
+        output=tmp_path / "limit.csv",
+        session=FakeSession(source, meter),
+    )
+    assert len(rows) == 2
+    assert not rows[0]["compliance"]
+    assert rows[1]["compliance"]
+    assert meter.values == [sign * limit * 2]
+    assert source.output_off_called
+    assert plan.software_compliance == limit
+    assert source.commands[0][1]["hardware_compliance"] == limit

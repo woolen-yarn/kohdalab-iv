@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import math
 from dataclasses import dataclass
 from decimal import Decimal
 from typing import Any
@@ -277,7 +278,12 @@ def iv_plan_from_config(config: dict[str, Any], measurement_name: str = "iv") ->
             f"Source target {max_abs_target:g} exceeds effective limit {effective_limit:g}."
         )
 
-    compliance = quantity_float(safety["compliance"], dimension=compliance_dimension)
+    compliance_key = f"{compliance_dimension}_compliance"
+    compliance = quantity_float(
+        safety.get(compliance_key, safety["compliance"]), dimension=compliance_dimension
+    )
+    if not math.isfinite(compliance) or compliance <= 0:
+        raise ValueError("compliance must be finite and positive.")
     hardware_compliance = _hardware_compliance(source_spec, source_function, compliance)
     ramp_step_q = parse_quantity(safety["ramp_step"], dimension=source_dimension)
     ramp_step = abs(ramp_step_q.si_float)

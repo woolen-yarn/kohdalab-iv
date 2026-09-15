@@ -179,3 +179,14 @@ def test_zero_centered_uses_forward_backward_directions():
         "forward",
         "forward",
     ]
+
+
+@pytest.mark.parametrize("value", [0, -1, float("nan"), float("inf")])
+def test_reject_invalid_compliance(value):
+    config = copy.deepcopy(DEFAULT_CONFIG)
+    config["measurements"]["iv"]["safety"]["current_compliance"] = {
+        "value": value,
+        "unit": "mA",
+    }
+    with pytest.raises(ValueError, match="finite and positive"):
+        iv_plan_from_config(config)

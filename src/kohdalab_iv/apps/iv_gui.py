@@ -1,13 +1,16 @@
 from __future__ import annotations
 
 import copy
+import math
 import sys
 from pathlib import Path
 from typing import Any
 
 from kohdalab_iv import __version__
 from kohdalab_iv.api.config import (
+    DEFAULT_CONFIG_PATH,
     load_config,
+    managed_default_config_path,
     output_path,
     resolve_config_path,
     save_config,
@@ -16,6 +19,7 @@ from kohdalab_iv.api.config import (
 from kohdalab_iv.api.experiment import Experiment
 from kohdalab_iv.api.formatting import format_conductance, format_resistance
 from kohdalab_iv.api.scan_plan import iv_plan_from_config
+from kohdalab_iv.api.units import normalize_unit, parse_quantity
 from kohdalab_iv.apps.gui_state import MeasurementRunState
 from kohdalab_iv.interfaces.common import list_visa_resources
 
@@ -125,10 +129,10 @@ def _short(value: Any, unit: str = "") -> str:
 
 
 def _unit_family(unit: str) -> str | None:
-    key = str(unit).strip()
-    if key in CURRENT_UNITS:
+    key = normalize_unit(unit)
+    if key in {normalize_unit(item) for item in CURRENT_UNITS} | {"microa"}:
         return "current"
-    if key in VOLTAGE_UNITS:
+    if key in {normalize_unit(item) for item in VOLTAGE_UNITS} | {"microv"}:
         return "voltage"
     return None
 
@@ -155,6 +159,10 @@ def main() -> None:
 
     pg.setConfigOption("background", "#050505")
     pg.setConfigOption("foreground", "#e8e8e8")
+
+    class ComplianceSpinBox(QtWidgets.QDoubleSpinBox):
+        def textFromValue(self, value: float) -> str:
+            return f"{value:.12f}".rstrip("0").rstrip(".")
 
     class MeasurementWorker(QtCore.QObject):
         point_ready = QtCore.Signal(object)
@@ -209,6 +217,8 @@ def main() -> None:
                 raise FileNotFoundError(
                     "The packaged default configuration could not be found."
                 )
+            if self.config_path.resolve() == DEFAULT_CONFIG_PATH.resolve():
+                self.config_path = managed_default_config_path()
             self.config = load_config(self.config_path)
             write_last_config_path(self.config_path)
             self.experiment = Experiment(self.config, auto_connect=False)
@@ -280,6 +290,28 @@ def main() -> None:
             self.end_unit_combo = QtWidgets.QComboBox()
             self.step_unit_combo = QtWidgets.QComboBox()
             self.wait_spin = self._spin(0.0, 3600.0, 3, 0.2)
+            self.current_compliance_spin = ComplianceSpinBox()
+            self.current_compliance_unit = QtWidgets.QComboBox()
+            self.current_compliance_unit.addItems(CURRENT_UNITS)
+            self.current_compliance_unit.setCurrentText("mA")
+            self.voltage_compliance_spin = ComplianceSpinBox()
+            self.voltage_compliance_unit = QtWidgets.QComboBox()
+            self.voltage_compliance_unit.addItems(VOLTAGE_UNITS)
+            self.voltage_compliance_unit.setCurrentText("V")
+            for spin in (self.current_compliance_spin, self.voltage_compliance_spin):
+                spin.setDecimals(12)
+                spin.setRange(1e-12, 1e12)
+                spin.setValue(1.0)
+                spin.setKeyboardTracking(False)
+                spin.setButtonSymbols(
+                    QtWidgets.QAbstractSpinBox.ButtonSymbols.NoButtons
+                )
+            self.current_compliance_spin.setToolTip(
+                "V source: stop after a reading with |I| at or above this limit."
+            )
+            self.voltage_compliance_spin.setToolTip(
+                "I source: stop after a reading with |V| at or above this limit."
+            )
             self.average_count_spin = QtWidgets.QSpinBox()
             self.average_count_spin.setRange(1, 1000)
             self.average_count_spin.setValue(1)
@@ -556,6 +588,23 @@ def main() -> None:
             )
             left.addRow("Wait time (s)", self.wait_spin)
             left.addRow("Average count", self.average_count_spin)
+            left.addRow(
+                "V source: stop |I| ≥",
+                self._quantity_row(
+                    self.current_compliance_spin, self.current_compliance_unit
+                ),
+            )
+            left.addRow(
+                "I source: stop |V| ≥",
+                self._quantity_row(
+                    self.voltage_compliance_spin, self.voltage_compliance_unit
+                ),
+            )
+            limit_note = QtWidgets.QLabel(
+                "Checked after each averaged reading. Hardware protection may differ."
+            )
+            limit_note.setWordWrap(True)
+            left.addRow(limit_note)
 
             right_widget = QtWidgets.QWidget()
             right = QtWidgets.QVBoxLayout(right_widget)
@@ -657,6 +706,10 @@ def main() -> None:
                 self.meter_connect_button,
                 self.meter_disconnect_button,
                 self.output_off_button,
+                self.current_compliance_spin,
+                self.current_compliance_unit,
+                self.voltage_compliance_spin,
+                self.voltage_compliance_unit,
             ):
                 widget.setEnabled(controls_enabled)
             self.start_button.setEnabled(controls_enabled)
@@ -733,6 +786,45 @@ def main() -> None:
             self._set_mode(mode)
             self._mode_changed()
 
+            safety = settings.get("safety", {})
+            for key, family, spin, combo, default_unit in (
+                (
+                    "current_compliance",
+                    "current",
+                    self.current_compliance_spin,
+                    self.current_compliance_unit,
+                    "mA",
+                ),
+                (
+                    "voltage_compliance",
+                    "voltage",
+                    self.voltage_compliance_spin,
+                    self.voltage_compliance_unit,
+                    "V",
+                ),
+            ):
+                value, unit = _quantity_value(safety, key, 1.0, default_unit)
+                legacy = safety.get("compliance", {})
+                if key not in safety and isinstance(legacy, dict):
+                    if _unit_family(str(legacy.get("unit", ""))) == family:
+                        value, unit = _quantity_value(
+                            safety, "compliance", 1.0, default_unit
+                        )
+                quantity = parse_quantity(
+                    {"value": value, "unit": unit}, dimension=family
+                )
+                if combo.findText(unit) < 0:
+                    value, unit = quantity.si_float, quantity.si_unit
+                if (
+                    not math.isfinite(value)
+                    or not spin.minimum() <= value <= spin.maximum()
+                ):
+                    raise ValueError(
+                        f"{key} is outside the GUI's positive input range."
+                    )
+                spin.setValue(value)
+                combo.setCurrentText(unit)
+
             source_key = self._source_key()
             meter_key = self._meter_key()
             source = self.config["instruments"]["source"][source_key]
@@ -749,14 +841,14 @@ def main() -> None:
             scan = settings["scan"]
             self.sweep_combo.setCurrentText(str(scan.get("pattern", "linear")))
             default_unit = self._default_unit(mode)
-            for key, spin, unit in (
+            for key, spin, scan_unit in (
                 ("start", self.start_spin, self.start_unit_combo),
                 ("stop", self.end_spin, self.end_unit_combo),
                 ("step", self.step_spin, self.step_unit_combo),
             ):
                 value, unit_text = _quantity_value(scan, key, 0.0, default_unit)
                 spin.setValue(value)
-                self._replace_units(unit, self._mode_units(mode), unit_text)
+                self._replace_units(scan_unit, self._mode_units(mode), unit_text)
 
             timing = settings.get("timing", {})
             self.wait_spin.setValue(float(timing.get("settle_s", 0.2)))
@@ -845,7 +937,22 @@ def main() -> None:
                 abs(self.step_spin.value()),
                 self.step_unit_combo.currentText(),
             )
-            self._ensure_compliance_quantity(safety, mode)
+            _set_quantity(
+                safety,
+                "current_compliance",
+                self.current_compliance_spin.value(),
+                self.current_compliance_unit.currentText(),
+            )
+            _set_quantity(
+                safety,
+                "voltage_compliance",
+                self.voltage_compliance_spin.value(),
+                self.voltage_compliance_unit.currentText(),
+            )
+            active_limit = (
+                "voltage_compliance" if mode == "dc_vi" else "current_compliance"
+            )
+            safety["compliance"] = copy.deepcopy(safety[active_limit])
             safety["stop_on_compliance"] = True
             safety["on_finish"] = "ramp_to_zero_then_off"
             safety["on_stop"] = "ramp_to_zero_then_off"
@@ -870,19 +977,6 @@ def main() -> None:
                 return key
             config["instruments"].setdefault("meter", {}).setdefault(current, {})
             return current
-
-        def _ensure_compliance_quantity(
-            self, safety: dict[str, Any], mode: str
-        ) -> None:
-            compliance = safety.get("compliance", {})
-            unit = compliance.get("unit") if isinstance(compliance, dict) else None
-            family = _unit_family(str(unit or ""))
-            if mode == "dc_vi":
-                if family != "voltage":
-                    _set_quantity(safety, "compliance", 1.0, "V")
-            else:
-                if family != "current":
-                    _set_quantity(safety, "compliance", 10.0, "uA")
 
         def browse_config(self) -> None:
             if not self._ensure_measurement_idle("Browse Config"):
@@ -923,7 +1017,7 @@ def main() -> None:
             if not self._ensure_measurement_idle("Load Config"):
                 return
             try:
-                self.config_path = Path(self.config_path_edit.text())
+                self.config_path = Path(self.config_path_edit.text()).expanduser()
                 self.config = load_config(self.config_path)
                 self.experiment.config = self.config
                 self._load_fields()
@@ -938,7 +1032,10 @@ def main() -> None:
                 return
             try:
                 self.config = self._config_from_fields()
-                save_config(self.config, self.config_path_edit.text())
+                self.config_path = save_config(
+                    self.config, self.config_path_edit.text()
+                )
+                self.config_path_edit.setText(str(self.config_path))
                 self.experiment.config = self.config
                 write_last_config_path(self.config_path_edit.text())
                 self.append_log(f"Saved config: {self.config_path_edit.text()}")

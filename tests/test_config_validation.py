@@ -100,3 +100,14 @@ def test_validation_rejects_unsafe_cleanup_action() -> None:
 
     with pytest.raises(ValueError, match="safety.on_error"):
         validate_config(config)
+
+
+@pytest.mark.parametrize(
+    "key,unit", [("current_compliance", "mA"), ("voltage_compliance", "V")]
+)
+@pytest.mark.parametrize("value", [0, -1, float("nan"), float("inf")])
+def test_config_rejects_invalid_mode_specific_limit(key, unit, value):
+    config = copy.deepcopy(DEFAULT_CONFIG)
+    config["measurements"]["iv"]["safety"][key] = {"value": value, "unit": unit}
+    with pytest.raises(ValueError, match="finite and positive"):
+        validate_config(config)

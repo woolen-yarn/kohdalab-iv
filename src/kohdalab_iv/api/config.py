@@ -1,12 +1,15 @@
 from __future__ import annotations
 
 import json
+import math
 import os
 from copy import deepcopy
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
 from typing import Any
+
+from kohdalab_iv.api.units import quantity_float
 
 PACKAGE_ROOT = Path(__file__).resolve().parent.parent
 DEFAULT_CONFIG_PATH = PACKAGE_ROOT / "resources" / "default.json"
@@ -16,6 +19,9 @@ CONFIG_PATH_ENV = "KOHDALAB_IV_CONFIG"
 DEFAULT_CONFIG_PATH_ENV = "KOHDALAB_IV_DEFAULT_CONFIG"
 CONFIG_STATE_DIR_ENV = "KOHDALAB_IV_STATE_DIR"
 LAST_CONFIG_STATE_PATH_ENV = "KOHDALAB_IV_LAST_CONFIG_STATE_PATH"
+SHARED_CONFIG_STATE_DIR_ENV = "KOHDALAB_STATE_DIR"
+IV_MANAGED_DEFAULT_CONFIG_NAME = "iv.json"
+IV_LAST_CONFIG_STATE_NAME = "last_iv_config.json"
 
 
 @dataclass(frozen=True)
@@ -28,19 +34,52 @@ class ConfigPathResolution:
 def config_state_dir() -> Path:
     configured = os.environ.get(CONFIG_STATE_DIR_ENV)
     if configured:
-        return Path(configured)
-    return Path.home() / ".kohdalab-iv"
+        return Path(configured).expanduser()
+    shared = os.environ.get(SHARED_CONFIG_STATE_DIR_ENV)
+    if shared:
+        return Path(shared).expanduser()
+    return Path.home() / ".kohdalab"
+
+
+def user_config_dir() -> Path:
+    return config_state_dir() / "config"
+
+
+def managed_default_config_path() -> Path:
+    """Return the editable managed IV default, creating it on first use."""
+    output = user_config_dir() / IV_MANAGED_DEFAULT_CONFIG_NAME
+    if not output.exists():
+        output.parent.mkdir(parents=True, exist_ok=True)
+        output.write_text(
+            DEFAULT_CONFIG_PATH.read_text(encoding="utf-8"), encoding="utf-8"
+        )
+    return output
 
 
 def last_config_state_path() -> Path:
     configured = os.environ.get(LAST_CONFIG_STATE_PATH_ENV)
     if configured:
-        return Path(configured)
-    return config_state_dir() / "last_config.json"
+        return Path(configured).expanduser()
+    return config_state_dir() / IV_LAST_CONFIG_STATE_NAME
+
+
+def _legacy_last_config_state_path() -> Path:
+    return Path.home() / ".kohdalab-iv" / "last_config.json"
+
+
+def _uses_default_state_location(last_state_path: str | Path | None) -> bool:
+    return (
+        last_state_path is None
+        and not os.environ.get(LAST_CONFIG_STATE_PATH_ENV)
+        and not os.environ.get(CONFIG_STATE_DIR_ENV)
+        and not os.environ.get(SHARED_CONFIG_STATE_DIR_ENV)
+    )
 
 
 def read_last_config_path(path: str | Path | None = None) -> Path | None:
-    state_path = Path(path) if path is not None else last_config_state_path()
+    state_path = (
+        Path(path).expanduser() if path is not None else last_config_state_path()
+    )
     if not state_path.exists():
         return None
     try:
@@ -50,16 +89,19 @@ def read_last_config_path(path: str | Path | None = None) -> Path | None:
         value = state_path.read_text(encoding="utf-8").strip()
     if not value:
         return None
-    return Path(str(value))
+    return Path(str(value)).expanduser()
 
 
 def write_last_config_path(
     config_path: str | Path, path: str | Path | None = None
 ) -> Path:
-    state_path = Path(path) if path is not None else last_config_state_path()
+    state_path = (
+        Path(path).expanduser() if path is not None else last_config_state_path()
+    )
     state_path.parent.mkdir(parents=True, exist_ok=True)
     state_path.write_text(
-        json.dumps({"path": str(Path(config_path))}, indent=2), encoding="utf-8"
+        json.dumps({"path": str(Path(config_path).expanduser())}, indent=2),
+        encoding="utf-8",
     )
     return state_path
 
@@ -81,13 +123,13 @@ def resolve_config_path(
 ) -> ConfigPathResolution:
     candidates: list[dict[str, str]] = []
     if explicit_path:
-        path = Path(explicit_path)
+        path = Path(explicit_path).expanduser()
         _record_candidate(candidates, "explicit", path)
         return ConfigPathResolution(path=path, source="explicit", candidates=candidates)
 
     env_path = os.environ.get(env_var)
     if env_path:
-        path = Path(env_path)
+        path = Path(env_path).expanduser()
         _record_candidate(candidates, env_var, path)
         return ConfigPathResolution(path=path, source=env_var, candidates=candidates)
 
@@ -99,11 +141,22 @@ def resolve_config_path(
                 path=last_path, source="last", candidates=candidates
             )
 
+    if last_path is None and _uses_default_state_location(last_state_path):
+        legacy_last_path = read_last_config_path(_legacy_last_config_state_path())
+        if legacy_last_path is not None:
+            _record_candidate(candidates, "legacy_last", legacy_last_path)
+            if legacy_last_path.exists():
+                return ConfigPathResolution(
+                    path=legacy_last_path,
+                    source="legacy_last",
+                    candidates=candidates,
+                )
+
     default_from_env = os.environ.get(DEFAULT_CONFIG_PATH_ENV)
     default_path = (
-        Path(default_from_env)
+        Path(default_from_env).expanduser()
         if default_from_env
-        else Path(lab_default_path or DEFAULT_CONFIG_PATH)
+        else Path(lab_default_path or DEFAULT_CONFIG_PATH).expanduser()
     )
     _record_candidate(candidates, "lab_default", default_path)
     if default_path.exists():
@@ -180,6 +233,12 @@ def validate_config(config: dict[str, Any]) -> dict[str, Any]:
                 if not str(instrument.get(required, "")).strip():
                     raise ValueError(f"Instrument {ref} requires {required}.")
         safety = settings.get("safety", {})
+        for dimension in ("current", "voltage"):
+            key = f"{dimension}_compliance"
+            if key in safety:
+                value = quantity_float(safety[key], dimension=dimension)
+                if not math.isfinite(value) or value <= 0:
+                    raise ValueError(f"{key} must be finite and positive.")
         for field in ("on_finish", "on_stop"):
             action = str(safety.get(field, "output_off"))
             if action not in allowed_actions:
@@ -203,7 +262,7 @@ def load_config_schema() -> dict[str, Any]:
 
 
 def load_config(path: str | Path = DEFAULT_CONFIG_PATH) -> dict[str, Any]:
-    with Path(path).open("r", encoding="utf-8") as f:
+    with Path(path).expanduser().open("r", encoding="utf-8") as f:
         loaded = json.load(f)
     if not isinstance(loaded, dict):
         raise ValueError("Config root must be a JSON object.")
@@ -213,7 +272,7 @@ def load_config(path: str | Path = DEFAULT_CONFIG_PATH) -> dict[str, Any]:
 def initialize_config(path: str | Path, *, overwrite: bool = False) -> Path:
     """Copy the validated packaged default to an editable local path."""
     load_config(DEFAULT_CONFIG_PATH)
-    output = Path(path)
+    output = Path(path).expanduser()
     if output.is_symlink():
         raise ValueError(f"Refusing to initialize config through a symlink: {output}")
     output.parent.mkdir(parents=True, exist_ok=True)
@@ -229,7 +288,7 @@ def initialize_config(path: str | Path, *, overwrite: bool = False) -> Path:
 
 
 def save_config(config: dict[str, Any], path: str | Path) -> Path:
-    output = Path(path)
+    output = Path(path).expanduser()
     output.parent.mkdir(parents=True, exist_ok=True)
     normalized = validate_config(normalize_config(config))
     output.write_text(json.dumps(normalized, indent=2), encoding="utf-8")

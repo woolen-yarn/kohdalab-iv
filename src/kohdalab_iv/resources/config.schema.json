@@ -122,6 +122,8 @@
       "properties": {
         "max_abs_source": {"$ref": "#/$defs/quantity"},
         "compliance": {"$ref": "#/$defs/quantity"},
+        "current_compliance": {"$ref": "#/$defs/quantity"},
+        "voltage_compliance": {"$ref": "#/$defs/quantity"},
         "ramp_step": {"$ref": "#/$defs/quantity"},
         "stop_on_compliance": {"type": "boolean"},
         "on_finish": {"type": "string", "enum": ["ramp_to_zero_then_off", "output_off"]},

@@ -9,25 +9,32 @@ from kohdalab_iv.apps import iv_gui
 
 
 @pytest.fixture
-def gui_window(monkeypatch, tmp_path):
+def gui_window(monkeypatch, tmp_path, request):
     qt_widgets = pytest.importorskip("PySide6.QtWidgets")
     pytest.importorskip("pyqtgraph")
 
     app = qt_widgets.QApplication.instance() or qt_widgets.QApplication([])
     captured = {}
     messages = []
+    selected_path = DEFAULT_CONFIG_PATH
+    if getattr(request, "param", None) == "local":
+        selected_path = tmp_path / "existing.json"
+        selected_path.write_bytes(DEFAULT_CONFIG_PATH.read_bytes())
 
     monkeypatch.setattr(
         iv_gui,
         "resolve_config_path",
         lambda: ConfigPathResolution(
-            path=DEFAULT_CONFIG_PATH,
+            path=selected_path,
             source="test",
             candidates=[],
         ),
     )
     monkeypatch.setattr(
         iv_gui, "write_last_config_path", lambda path: tmp_path / "last_config.json"
+    )
+    monkeypatch.setattr(
+        iv_gui, "managed_default_config_path", lambda: DEFAULT_CONFIG_PATH
     )
     monkeypatch.setattr(iv_gui.sys, "exit", lambda code: None)
     monkeypatch.setattr(app, "exec", lambda: 0)
@@ -107,7 +114,7 @@ def test_gui_fields_build_valid_mode_specific_config(gui_window) -> None:
     assert settings["scan"]["stop"] == {"value": 20.0, "unit": "mV"}
     assert settings["output"]["dir"] == "results"
     assert settings["output"]["filename"] == "iv_run"
-    assert settings["safety"]["compliance"] == {"value": 10.0, "unit": "uA"}
+    assert settings["safety"]["compliance"] == {"value": 1.0, "unit": "mA"}
     assert settings["safety"]["max_abs_source"] == {"value": 20.0, "unit": "mV"}
 
 
@@ -447,13 +454,6 @@ def test_gui_model_changes_select_canonical_configs_and_compliance_units(
     assert config["roles"]["iv"]["source"] == "source.yokogawa_7651"
     assert config["roles"]["iv"]["measure"] == "meter.dmm_7461a"
     assert config["instruments"]["meter"]["dmm_7461a"]["command_language"]
-
-    safety = {"compliance": {"value": 2, "unit": "mA"}}
-    window._ensure_compliance_quantity(safety, "dc_vi")
-    assert safety["compliance"] == {"value": 1.0, "unit": "V"}
-    safety = {"compliance": {"value": 2, "unit": "V"}}
-    window._ensure_compliance_quantity(safety, "dc_iv")
-    assert safety["compliance"] == {"value": 10.0, "unit": "uA"}
 
 
 def test_gui_cancelled_browsing_and_preset_loading(gui_window, monkeypatch) -> None:
@@ -800,10 +800,6 @@ def test_gui_measurement_active_guards_and_normal_close(
     window._set_mode("missing-mode")
     window._meter_model_changed("UNKNOWN")
     window._source_model_changed("UNKNOWN")
-    safety = {"compliance": {"value": 1, "unit": "V"}}
-    window._ensure_compliance_quantity(safety, "dc_vi")
-    assert safety["compliance"] == {"value": 1, "unit": "V"}
-
     window.measurement_state.begin()
     window.load_config()
     window.save_config()
@@ -869,3 +865,76 @@ def test_gui_reports_missing_packaged_configuration(monkeypatch) -> None:
 
     with pytest.raises(FileNotFoundError, match="packaged default configuration"):
         iv_gui.main()
+
+
+def test_gui_compliance_save_reload_and_mode_switch(gui_window):
+    from kohdalab_iv.api.scan_plan import iv_plan_from_config
+
+    window = gui_window
+    window.current_compliance_spin.setValue(0.75)
+    window.current_compliance_unit.setCurrentText("mA")
+    window.voltage_compliance_spin.setValue(2.0)
+    window.voltage_compliance_unit.setCurrentText("V")
+    window._set_mode("dc_vi")
+    assert window._config_from_fields()["measurements"]["iv"]["safety"][
+        "compliance"
+    ] == {"value": 2.0, "unit": "V"}
+    window._set_mode("dc_iv")
+    path = window._test_tmp_path / "iv.json"
+    window.config_path_edit.setText(str(path))
+    window.save_config()
+    assert not window._test_messages
+    assert window.config_path == path
+    window.current_compliance_spin.setValue(9)
+    window.voltage_compliance_spin.setValue(9)
+    window.load_config()
+    assert window.current_compliance_spin.value() == 0.75
+    assert window.voltage_compliance_spin.value() == 2.0
+    assert (
+        iv_plan_from_config(window._config_from_fields()).software_compliance == 0.00075
+    )
+    window._set_mode("dc_vi")
+    assert (
+        window._config_from_fields()["measurements"]["iv"]["safety"]["compliance"][
+            "value"
+        ]
+        == 2.0
+    )
+    window.measurement_state.begin()
+    window._sync_measurement_controls()
+    assert not window.current_compliance_spin.isEnabled()
+    assert not window.voltage_compliance_spin.isEnabled()
+
+
+def test_gui_load_legacy_compliance_preserves_small_value(gui_window):
+    window = gui_window
+    window.config["measurements"]["iv"]["safety"]["compliance"] = {
+        "value": 0.00001,
+        "unit": "A",
+    }
+    window._load_fields()
+    assert window.current_compliance_spin.value() == 0.00001
+    assert window.current_compliance_unit.currentText() == "A"
+    assert window.voltage_compliance_spin.value() == 1
+
+
+@pytest.mark.parametrize("gui_window", ["local"], indirect=True)
+def test_gui_startup_keeps_selected_local_config(gui_window):
+    assert gui_window.config_path.name == "existing.json"
+    assert gui_window.config_path_edit.text() == str(gui_window.config_path)
+
+
+def test_gui_compliance_alias_and_invalid_values(gui_window):
+    window = gui_window
+    safety = window.config["measurements"]["iv"]["safety"]
+    safety["compliance"] = {"value": 10, "unit": "µA"}
+    window._load_fields()
+    config = window._config_from_fields()
+    assert config["measurements"]["iv"]["safety"]["current_compliance"] == {
+        "value": 0.00001,
+        "unit": "A",
+    }
+    for value in (0, -1, float("nan"), float("inf")):
+        safety["compliance"] = {"value": value, "unit": "mA"}
+        with pytest.raises(ValueError, match="positive input range"):
+            window._load_fields()
