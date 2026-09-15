@@ -29,6 +29,12 @@ This roadmap tracks practical milestones for making KohdaLab IV easier to run, t
 - Align the config directory with TRKR while keeping IV settings and path history separate.
 - Preserve legacy settings and validate stop behavior at both positive and negative limits.
 
+## v0.2.3 - Measurement Settings Popup
+
+- Group timing and compliance settings in a popup below Step.
+- Support applying or cancelling edits and preserve config-file persistence.
+- Integrate validated dependency and release-tool updates.
+
 ## v0.3.0 - Instrument Coverage
 
 - Expand source and meter driver coverage from shared instrument capability interfaces.

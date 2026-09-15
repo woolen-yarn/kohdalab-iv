@@ -938,3 +938,45 @@ def test_gui_compliance_alias_and_invalid_values(gui_window):
         safety["compliance"] = {"value": value, "unit": "mA"}
         with pytest.raises(ValueError, match="positive input range"):
             window._load_fields()
+
+
+@pytest.mark.parametrize("accept", [True, False])
+def test_measurement_settings_popup_apply_cancel_and_save(gui_window, accept):
+    from PySide6 import QtCore
+
+    window = gui_window
+    original = window._config_from_fields()["measurements"]["iv"]
+
+    def edit_and_close():
+        window.wait_spin.setValue(0.75)
+        window.average_count_spin.setValue(5)
+        window.current_compliance_spin.setValue(250)
+        window.current_compliance_unit.setCurrentText("uA")
+        window.voltage_compliance_spin.setValue(500)
+        window.voltage_compliance_unit.setCurrentText("mV")
+        if accept:
+            window.measurement_settings_dialog.accept()
+        else:
+            window.measurement_settings_dialog.reject()
+
+    QtCore.QTimer.singleShot(0, edit_and_close)
+    window.measurement_settings_button.click()
+    settings = window._config_from_fields()["measurements"]["iv"]
+    if accept:
+        assert settings["timing"]["settle_s"] == 0.75
+        assert settings["timing"]["average_count"] == 5
+        assert settings["safety"]["current_compliance"] == {"value": 250, "unit": "uA"}
+        assert settings["safety"]["voltage_compliance"] == {"value": 500, "unit": "mV"}
+    else:
+        assert settings == original
+    window.config_path_edit.setText(str(window._test_tmp_path / "popup.json"))
+    window.save_config()
+    window.load_config()
+    assert not window._test_messages
+    assert window._config_from_fields()["measurements"]["iv"] == settings
+    window.measurement_state.begin()
+    window._sync_measurement_controls()
+    assert not window.measurement_settings_button.isEnabled()
+    window.open_measurement_settings()
+    assert not window.measurement_settings_dialog.isVisible()
+    assert "Measurement Settings skipped" in window.log.toPlainText()

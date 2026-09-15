@@ -227,6 +227,7 @@ def main() -> None:
             self.rows: list[dict[str, Any]] = []
             self.measurement_state = MeasurementRunState()
             self._build_widgets()
+            self._build_measurement_settings_dialog()
             self._build_layout()
             self._load_fields()
             self.append_log("Ready.")
@@ -317,6 +318,12 @@ def main() -> None:
             self.average_count_spin.setValue(1)
             self.average_count_spin.setButtonSymbols(
                 QtWidgets.QAbstractSpinBox.ButtonSymbols.NoButtons
+            )
+            self.measurement_settings_button = QtWidgets.QPushButton(
+                "Timing / Compliance…"
+            )
+            self.measurement_settings_button.clicked.connect(
+                self.open_measurement_settings
             )
             self.check_button = QtWidgets.QPushButton("Check")
             self.start_button = QtWidgets.QPushButton("Start")
@@ -556,6 +563,79 @@ def main() -> None:
             form.addRow("", buttons)
             return group
 
+        def _compliance_group(self):
+            group = QtWidgets.QGroupBox("Compliance")
+            form = QtWidgets.QFormLayout(group)
+            form.setVerticalSpacing(8)
+            form.addRow(QtWidgets.QLabel("Current limit (V source)"))
+            form.addRow(
+                self._quantity_row(
+                    self.current_compliance_spin, self.current_compliance_unit
+                )
+            )
+            form.addRow(QtWidgets.QLabel("Voltage limit (I source)"))
+            form.addRow(
+                self._quantity_row(
+                    self.voltage_compliance_spin, self.voltage_compliance_unit
+                )
+            )
+            note = QtWidgets.QLabel(
+                "Stop when |measured value| ≥ limit.\n"
+                "Applied after each averaged reading."
+            )
+            note.setToolTip(
+                "Hardware protection is limited to the instrument's supported range."
+            )
+            note.setWordWrap(True)
+            form.addRow(note)
+            return group
+
+        def _build_measurement_settings_dialog(self) -> None:
+            self.measurement_settings_dialog = QtWidgets.QDialog(self)
+            self.measurement_settings_dialog.setWindowTitle("Timing / Compliance")
+            layout = QtWidgets.QVBoxLayout(self.measurement_settings_dialog)
+            timing = QtWidgets.QGroupBox("Timing")
+            form = QtWidgets.QFormLayout(timing)
+            form.addRow("Wait time (s)", self.wait_spin)
+            form.addRow("Average count", self.average_count_spin)
+            layout.addWidget(timing)
+            layout.addWidget(self._compliance_group())
+            note = QtWidgets.QLabel(
+                "Use Config → Save to save these settings to the file."
+            )
+            note.setWordWrap(True)
+            layout.addWidget(note)
+            buttons = QtWidgets.QDialogButtonBox(
+                QtWidgets.QDialogButtonBox.StandardButton.Ok
+                | QtWidgets.QDialogButtonBox.StandardButton.Cancel
+            )
+            buttons.accepted.connect(self.measurement_settings_dialog.accept)
+            buttons.rejected.connect(self.measurement_settings_dialog.reject)
+            layout.addWidget(buttons)
+            self.measurement_settings_dialog.setMinimumWidth(360)
+
+        def open_measurement_settings(self) -> None:
+            if not self._ensure_measurement_idle("Measurement Settings"):
+                return
+            spins = (
+                self.wait_spin,
+                self.current_compliance_spin,
+                self.voltage_compliance_spin,
+            )
+            average_count = self.average_count_spin.value()
+            units = (self.current_compliance_unit, self.voltage_compliance_unit)
+            values = [spin.value() for spin in spins]
+            unit_texts = [combo.currentText() for combo in units]
+            if (
+                self.measurement_settings_dialog.exec()
+                != QtWidgets.QDialog.DialogCode.Accepted
+            ):
+                self.average_count_spin.setValue(average_count)
+                for spin, value in zip(spins, values):
+                    spin.setValue(value)
+                for combo, text in zip(units, unit_texts):
+                    combo.setCurrentText(text)
+
         def _meter_group(self):
             group = QtWidgets.QGroupBox("Meter")
             form = QtWidgets.QFormLayout(group)
@@ -586,25 +666,7 @@ def main() -> None:
             left.addRow(
                 "Step", self._quantity_row(self.step_spin, self.step_unit_combo)
             )
-            left.addRow("Wait time (s)", self.wait_spin)
-            left.addRow("Average count", self.average_count_spin)
-            left.addRow(
-                "V source: stop |I| ≥",
-                self._quantity_row(
-                    self.current_compliance_spin, self.current_compliance_unit
-                ),
-            )
-            left.addRow(
-                "I source: stop |V| ≥",
-                self._quantity_row(
-                    self.voltage_compliance_spin, self.voltage_compliance_unit
-                ),
-            )
-            limit_note = QtWidgets.QLabel(
-                "Checked after each averaged reading. Hardware protection may differ."
-            )
-            limit_note.setWordWrap(True)
-            left.addRow(limit_note)
+            left.addRow("", self.measurement_settings_button)
 
             right_widget = QtWidgets.QWidget()
             right = QtWidgets.QVBoxLayout(right_widget)
@@ -706,6 +768,7 @@ def main() -> None:
                 self.meter_connect_button,
                 self.meter_disconnect_button,
                 self.output_off_button,
+                self.measurement_settings_button,
                 self.current_compliance_spin,
                 self.current_compliance_unit,
                 self.voltage_compliance_spin,

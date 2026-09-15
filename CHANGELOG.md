@@ -2,8 +2,12 @@
 
 ## Unreleased
 
+## [0.2.3] - 2026-09-15
+
 ### Changed
 
+- Move Wait time, Average count, and both Compliance limits into a popup opened by the Timing / Compliance button below Step, retaining the original dark theme.
+- Apply popup edits with OK, restore values with Cancel or close, and prevent editing during measurements. Config Save persists the applied settings.
 - Consolidate pending dependency updates: IPython 9.15.0, Matplotlib 3.11.1, pre-commit 4.6.1, Ruff 0.16.0, Twine 7.0.0, setuptools >=83.0.0, and actions/upload-artifact v7.
 
 ## [0.2.2] - 2026-09-15
