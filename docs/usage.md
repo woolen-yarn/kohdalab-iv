@@ -66,7 +66,13 @@ GUI は 3 パネル構成です。
 - 中央: `Measurement`, `Output`, `Run`, live plot
 - 右: log と折りたたみ可能な最新行の `Field / Value`
 
-`Config` は選択したローカルJSONを読み書きします。最後に開いたconfigを記憶し、未指定時はパッケージ内defaultを読みます。インストール済みパッケージ内のJSONを直接編集せず、ローカルパスへコピーして使ってください。
+`Config` は選択したローカルJSONを読み書きします。GUIの初回起動時は、編集可能な `~/.kohdalab/config/iv.json` を作成します（Windows: `%USERPROFILE%\.kohdalab\config\iv.json`）。TRKRと同じフォルダーを使い、ファイル名を分けています。最後に開いたパスは `~/.kohdalab/last_iv_config.json` に記憶します。既存の `~/.kohdalab-iv/last_config.json` も、新しい履歴がない場合に読み込みます。`KOHDALAB_IV_STATE_DIR`、または共通の `KOHDALAB_STATE_DIR` で保存先のルートを変更できます。
+
+`Measurement` の `V source: stop |I| ≥` は電圧印加時の電流停止しきい値（初期値 **1 mA**）、`I source: stop |V| ≥` は電流印加時の電圧停止しきい値（初期値 **1 V**）です。両方の値と単位を入力して `Config` の `Save` を押すと保存され、モードを切り替えても保持されます。既存ファイルの `compliance` 値は引き継ぎます。
+
+各測定点の平均値について、絶対値がしきい値以上なら測定を停止し、出力をゼロへ戻してOFFにします。連続的なハードウェア遮断ではありません。機器への保護設定は機器仕様の範囲へ補正されるため、例えば7651の電流停止しきい値を1 mAにしても、機器の電流保護設定は5 mAになります。
+
+保存先は `measurements.iv.safety.current_compliance` と `voltage_compliance` です。`compliance` にも保存時のモードの値を記録します。APIはモードに対応する専用フィールドを優先し、ない場合に従来の `compliance` を使います。
 
 `Source` は GS210 または 7651 を選択できます。7651 は GS210 の SCPI ではなく、`F`/`R`/`S`/`O` 系の旧コマンドで制御します。`Meter` では 34401A、34411A、34465A、7461A を選択でき、DMM の積分条件として `NPLC` を設定します。
 ADCMT 7461A は `command_language` で SCPI/ADC を切り替えられます。標準 config は `scpi` です。GPIB では SCPI 設定を送ってから `READ?` で読みます。USB では 7461A を ADC コマンド系として扱い、`F1`/`F5`、`R0`、`ITP<nplc>` で設定してから output data を読みます。
@@ -213,9 +219,25 @@ The GUI uses a three-panel layout.
 - Center: `Measurement`, `Output`, `Run`, and the live plot
 - Right: log and collapsible latest-row `Field / Value`
 
-`Config` loads and saves the selected local JSON file. The app remembers the
-last opened config and falls back to the packaged default when none is selected.
-Copy the packaged JSON to a local path instead of editing an installed package.
+`Config` loads and saves the selected local JSON file. On first GUI launch,
+an editable default is created at `~/.kohdalab/config/iv.json`
+(`%USERPROFILE%\.kohdalab\config\iv.json` on Windows), alongside TRKR configs
+with a separate filename. The last path is stored in `~/.kohdalab/last_iv_config.json`;
+the old `~/.kohdalab-iv/last_config.json` remains a fallback. Override the state
+root with `KOHDALAB_IV_STATE_DIR` or the shared `KOHDALAB_STATE_DIR`.
+
+Set `V source: stop |I| ≥` (default **1 mA**) and `I source: stop |V| ≥`
+(default **1 V**) in Measurement, then click Config **Save**. Both values and
+units survive mode changes and reloads; existing legacy `compliance` values
+are preserved. They are saved as `measurements.iv.safety.current_compliance`
+and `voltage_compliance`, with the active value also written to `compliance`.
+The API prefers the mode-specific field, falling back to legacy `compliance`.
+
+After each averaged reading, reaching or exceeding the absolute threshold
+stops the sweep and ramps the output to zero before turning it off. This is
+a software check, not continuous hardware shutdown. Hardware protection is
+clamped to the instrument's supported range: for example, the 7651 receives
+a 5 mA hardware setting even when the software threshold is 1 mA.
 
 `Source` selects GS210 or 7651. `Meter` selects 34401A, 34411A, 34465A, or 7461A and exposes
 the DMM integration setting, `NPLC`.

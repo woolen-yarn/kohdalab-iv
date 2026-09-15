@@ -23,6 +23,12 @@ This roadmap tracks practical milestones for making KohdaLab IV easier to run, t
 - Strengthen GUI state handling, measurement safety, and hardware-free regression coverage to 100%.
 - Synchronize release metadata and automate guarded version bumps, artifact verification, and draft releases.
 
+## v0.2.2 - Compliance Settings and Shared Config Location
+
+- Expose persistent current and voltage stop thresholds in the GUI.
+- Align the config directory with TRKR while keeping IV settings and path history separate.
+- Preserve legacy settings and validate stop behavior at both positive and negative limits.
+
 ## v0.3.0 - Instrument Coverage
 
 - Expand source and meter driver coverage from shared instrument capability interfaces.
