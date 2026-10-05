@@ -8,9 +8,17 @@ KohdaLab IV is a Python toolkit for reproducible DC I-V and V-I measurements fro
 
 ## Portable desktop downloads
 
-Download the Mac (Apple Silicon) or Windows (x64) portable from
-[Kohdalab](https://github.com/Kohdalab/kohdalab-iv/releases/tag/portable-v0.2.3)
-or the [personal mirror](https://github.com/woolen-yarn/kohdalab-iv/releases/tag/portable-v0.2.3).
+Download the portable ZIP for your computer (v0.2.3):
+
+| Platform | Kohdalab download | Personal mirror |
+| --- | --- | --- |
+| macOS — Apple Silicon (arm64) | [Download Mac portable](https://github.com/Kohdalab/kohdalab-iv/releases/download/portable-v0.2.3/kohdalab-iv-0.2.3-macos-arm64-portable.zip) | [Download Mac portable](https://github.com/woolen-yarn/kohdalab-iv/releases/download/portable-v0.2.3/kohdalab-iv-0.2.3-macos-arm64-portable.zip) |
+| Windows — 64-bit (x64) | [Download Windows portable](https://github.com/Kohdalab/kohdalab-iv/releases/download/portable-v0.2.3/kohdalab-iv-0.2.3-windows-x64-portable.zip) | [Download Windows portable](https://github.com/woolen-yarn/kohdalab-iv/releases/download/portable-v0.2.3/kohdalab-iv-0.2.3-windows-x64-portable.zip) |
+
+For build kits, checksums and release notes, visit the
+[Kohdalab release](https://github.com/Kohdalab/kohdalab-iv/releases/tag/portable-v0.2.3)
+or the [personal release](https://github.com/woolen-yarn/kohdalab-iv/releases/tag/portable-v0.2.3).
+
 Extract the entire ZIP and open the app. Supported native connections do not
 require Python or VISA. Build kits are included in `portable/build-kits` and
 as release assets. See [the portable guide](docs/portable_release.md) for
