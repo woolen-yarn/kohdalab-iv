@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 from types import SimpleNamespace
+import threading
+import time
 
 import pytest
 
@@ -74,7 +76,34 @@ def gui_window(monkeypatch, tmp_path, request):
     window._test_tmp_path = tmp_path
     window._test_qt_widgets = qt_widgets
     window._test_worker_class = closure["MeasurementWorker"]
+    window._test_refresh_async = window.refresh_resources
+    discovery_closure = dict(
+        zip(
+            window.refresh_resources.__func__.__code__.co_freevars,
+            (
+                cell.cell_contents
+                for cell in window.refresh_resources.__func__.__closure__
+            ),
+        )
+    )
+    window._test_discovery_worker_class = discovery_closure["ResourceDiscoveryWorker"]
+
+    def wait_discovery():
+        deadline = time.monotonic() + 5
+        while window.discovery_thread is not None and time.monotonic() < deadline:
+            app.processEvents()
+            time.sleep(0.005)
+        assert window.discovery_thread is None
+
+    window._test_wait_discovery = wait_discovery
+
+    def refresh_and_wait():
+        window._test_refresh_async()
+        wait_discovery()
+
+    monkeypatch.setattr(window, "refresh_resources", refresh_and_wait)
     yield window
+    wait_discovery()
     window.experiment.disconnect_all()
     window.deleteLater()
     app.processEvents()
@@ -89,6 +118,25 @@ def test_gui_window_initializes_from_packaged_config(gui_window) -> None:
     assert window.start_button.isEnabled()
     assert not window.stop_button.isEnabled()
     assert "Ready." in window.log.toPlainText()
+
+
+def test_gui_connects_simulated_instruments_without_errors(gui_window) -> None:
+    window = gui_window
+    window.load_preset(str(DEFAULT_CONFIG_PATH.with_name("simulated.json")))
+    window.connect_all()
+
+    assert window._test_messages == []
+    assert "SIMULATED_SOURCE" in window.source_status.text()
+    assert "output=False" in window.source_status.text()
+    assert "SIMULATED_METER" in window.meter_status.text()
+    assert "No error" in window.meter_status.text()
+
+    source_ref, _ = window._active_refs(window.config)
+    source = window.experiment.connect_device(source_ref)
+    source.output_on()
+    assert source.output_state() is True
+    window.disconnect_all()
+    assert source.output_state() is False
 
 
 def test_gui_fields_build_valid_mode_specific_config(gui_window) -> None:
@@ -277,6 +325,13 @@ def test_gui_browse_refresh_and_panel_controls(gui_window, monkeypatch) -> None:
     assert window.source_resource_combo.findText("GPIB0::1::INSTR") >= 0
     assert "Resources refreshed." in window.log.toPlainText()
 
+    assert (
+        window.source_resource_combo.findText(
+            window.source_resource_combo.currentText()
+        )
+        >= 0
+    )
+
     window.snapshot_toggle.setChecked(False)
     window._toggle_snapshot()
     assert window.snapshot_table.isHidden()
@@ -286,6 +341,90 @@ def test_gui_browse_refresh_and_panel_controls(gui_window, monkeypatch) -> None:
     window.right_panel_toggle.setChecked(True)
     window._toggle_right_panel()
     assert window.right_content.isHidden()
+
+
+def test_refresh_usb_discovery_preserves_gpib_and_populates_empty_selector(
+    gui_window, monkeypatch
+):
+    window = gui_window
+    usb = "USB0::0x0957::0x0A07::MY53000981::INSTR"
+    gpib = "GPIB0::5::INSTR"
+    window.source_resource_combo.setCurrentText(gpib)
+    window.meter_resource_combo.clear()
+    window.meter_resource_combo.setCurrentText("")
+    monkeypatch.setattr(iv_gui, "list_visa_resources", lambda: (usb,))
+    window.refresh_resources()
+    assert window.source_resource_combo.currentText() == gpib
+    assert window.source_resource_combo.findText(gpib) >= 0
+    assert window.meter_resource_combo.currentText() == usb
+    assert window.meter_resource_combo.count() == 1
+    assert "Found 1 resource(s)." in window.log.toPlainText()
+    monkeypatch.setattr(iv_gui, "list_visa_resources", lambda: ())
+    window.refresh_resources()
+    assert window.source_resource_combo.currentText() == gpib
+    assert window.meter_resource_combo.currentText() == usb
+    assert window.meter_resource_combo.findText(usb) >= 0
+    assert "Found 0 resource(s)." in window.log.toPlainText()
+
+
+def test_gpib_discovery_runs_in_background_and_prevents_measurement_race(
+    gui_window, monkeypatch
+):
+    window = gui_window
+    started = threading.Event()
+    release = threading.Event()
+
+    def discover():
+        started.set()
+        assert release.wait(3)
+        return ("GPIB0::17::INSTR",)
+
+    monkeypatch.setattr(iv_gui, "list_visa_resources", discover)
+    window._test_refresh_async()
+    try:
+        assert started.wait(1)
+        assert not window.start_button.isEnabled()
+        assert not window.meter_refresh_button.isEnabled()
+        assert window.meter_refresh_button.text() == "Scanning..."
+        window._test_refresh_async()
+        window.connect_source()
+        window.start_measurement()
+        ignored = []
+        window.closeEvent(SimpleNamespace(ignore=lambda: ignored.append(True)))
+        assert ignored == [True]
+        assert (
+            "Start skipped: instrument discovery is running."
+            in window.log.toPlainText()
+        )
+        assert "Close delayed" in window.log.toPlainText()
+    finally:
+        release.set()
+        window._test_wait_discovery()
+    assert window.source_resource_combo.findText("GPIB0::17::INSTR") >= 0
+    assert window.meter_refresh_button.text() == "Refresh"
+    assert window.start_button.isEnabled()
+
+
+@pytest.mark.parametrize("fail", [False, True])
+def test_discovery_worker_reports_result_or_error_and_always_finishes(
+    gui_window, monkeypatch, fail
+):
+    results, errors, finished = [], [], []
+
+    def discover():
+        if fail:
+            raise RuntimeError("GPIB adapter disconnected")
+        return ("GPIB0::17::INSTR",)
+
+    monkeypatch.setattr(iv_gui, "list_visa_resources", discover)
+    worker = gui_window._test_discovery_worker_class()
+    worker.discovered.connect(results.append)
+    worker.error_occurred.connect(errors.append)
+    worker.finished.connect(lambda: finished.append(True))
+    worker.run()
+    assert finished == [True]
+    assert errors == (["GPIB adapter disconnected"] if fail else [])
+    assert results == ([] if fail else [("GPIB0::17::INSTR",)])
 
 
 def test_gui_connect_disconnect_and_safe_output(gui_window) -> None:
@@ -980,3 +1119,87 @@ def test_measurement_settings_popup_apply_cancel_and_save(gui_window, accept):
     window.open_measurement_settings()
     assert not window.measurement_settings_dialog.isVisible()
     assert "Measurement Settings skipped" in window.log.toPlainText()
+
+
+def test_refresh_progress_and_timeout_recover_for_next_scan(gui_window, monkeypatch):
+    import subprocess
+    from kohdalab_iv.interfaces.common import DISCOVERY_PROGRESS
+
+    window = gui_window
+    previous_status = window.status_label.text()
+    fail = True
+
+    def discover():
+        callback = DISCOVERY_PROGRESS.get()
+        assert callback is not None
+        callback("Checking direct USB instruments (10s timeout)")
+        if fail:
+            raise subprocess.TimeoutExpired("USB discovery", 10)
+        return ("USB0::0x0957::0x0A07::SERIAL::INSTR",)
+
+    monkeypatch.setattr(iv_gui, "list_visa_resources", discover)
+    window.refresh_resources()
+    assert window._test_messages[-1][0] == "warning"
+    assert "Checking direct USB instruments" in window.log.toPlainText()
+    assert window.source_refresh_button.isEnabled()
+    assert not window.discovery_timer.isActive()
+    assert window.status_label.text() == previous_status
+    fail = False
+    window.refresh_resources()
+    assert (
+        window.meter_resource_combo.findText("USB0::0x0957::0x0A07::SERIAL::INSTR") >= 0
+    )
+    assert not window.discovery_timer.isActive()
+    assert window.status_label.text() == previous_status
+    assert DISCOVERY_PROGRESS.get() is None
+
+
+def test_popup_expands_for_long_resources_without_resizing_closed_field(gui_window):
+    combo = gui_window.source_resource_combo
+    closed_width = combo.width()
+    combo.clear()
+    combo.showPopup()
+    combo.hidePopup()
+    combo.addItem("USB0::0x0957::0x0A07::LONG_INSTRUMENT_SERIAL_NUMBER::INSTR")
+    combo.showPopup()
+    assert combo.view().minimumWidth() > closed_width
+    assert combo.width() == closed_width
+    combo.hidePopup()
+    assert combo.width() == closed_width
+
+
+def test_startup_check_blocks_connection_refresh_and_closing(gui_window):
+    window = gui_window
+    window.startup_busy = True
+    window._sync_measurement_controls()
+    assert not window.source_connect_button.isEnabled()
+    window.connect_source()
+    window.refresh_resources()
+    assert window.discovery_thread is None
+    ignored = []
+    window.closeEvent(SimpleNamespace(ignore=lambda: ignored.append(True)))
+    assert ignored == [True]
+    assert "USB setup is running" in window.log.toPlainText()
+    window.startup_busy = False
+    window._sync_measurement_controls()
+    status = window.status_label.text()
+    window._update_discovery_status()
+    assert window.status_label.text() == status
+
+
+def test_startup_callback_runs_after_window_is_shown(gui_window, monkeypatch):
+    from PySide6 import QtCore
+
+    shown = []
+    callbacks = []
+    monkeypatch.setattr(
+        gui_window._test_qt_widgets.QMainWindow,
+        "show",
+        lambda window: shown.append(window),
+    )
+    iv_gui.main(startup=callbacks.append)
+    assert shown and callbacks == []
+    QtCore.QCoreApplication.instance().processEvents()
+    assert callbacks == shown
+    shown[0].deleteLater()
+    QtCore.QCoreApplication.instance().processEvents()

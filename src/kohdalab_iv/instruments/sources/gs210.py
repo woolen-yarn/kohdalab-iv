@@ -4,6 +4,9 @@ from kohdalab_iv.instruments.visa_base import VisaDevice
 
 
 class YokogawaGS210(VisaDevice):
+    identity_models: tuple[str, ...] = ("GS210",)
+    identity_manufacturers: tuple[str, ...] = ("YOKOGAWA",)
+
     def configure_source(
         self,
         *,

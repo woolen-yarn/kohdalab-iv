@@ -2,6 +2,8 @@ include CHANGELOG.md CITATION.cff CONTRIBUTING.md LICENSE README.md ROADMAP.md S
 graft docs
 graft notebook
 graft scripts
+graft native
+graft portable
 graft tests
 global-exclude .DS_Store *.py[cod]
 prune **/__pycache__

@@ -10,6 +10,9 @@ _FLOAT_RE = re.compile(r"[-+]?(?:\d+(?:\.\d*)?|\.\d+)(?:[Ee][-+]?\d+)?")
 
 
 class ADCMT7461A(VisaDevice):
+    identity_models: tuple[str, ...] = ("7461A", "AD7461A")
+    identity_manufacturers: tuple[str, ...] = ("ADC", "ADCMT", "ADVANTEST")
+
     ADC_FUNCTION_COMMANDS = {
         "dc_voltage": "F1",
         "dc_current": "F5",

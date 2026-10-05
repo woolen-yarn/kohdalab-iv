@@ -56,12 +56,34 @@ class DeviceSession:
         existing = self._get_device(kind, key)
         if existing is not None:
             if self._can_reuse_device(existing, cls=cls, resource=resource):
+                try:
+                    self._validate_device_identity(existing)
+                except Exception:
+                    self._pop_device(kind, key)
+                    self._close_unverified_device(existing)
+                    raise
                 return existing
             self.disconnect_device(ref)
 
         device = cls(resource, **self._controller_kwargs(model, cfg))
+        try:
+            self._validate_device_identity(device)
+        except Exception:
+            self._close_unverified_device(device)
+            raise
         self._set_device(kind, key, device)
         return device
+
+    def _validate_device_identity(self, device) -> None:
+        validator = getattr(device, "validate_identity", None)
+        if validator is not None:
+            validator()
+
+    def _close_unverified_device(self, device) -> None:
+        # The selected controller may be wrong: do not send its output/local
+        # commands to an unverified instrument during error cleanup.
+        self._call_if_present(device, "close")
+        self._call_if_present(device, "close_resource_manager")
 
     def _controller_kwargs(self, model: str, cfg: dict[str, Any]) -> dict[str, Any]:
         kwargs: dict[str, Any] = {"timeout_ms": int(cfg.get("timeout_ms", 5000))}
