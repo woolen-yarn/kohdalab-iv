@@ -375,6 +375,7 @@ for line in sys.stdin:
 
 
 def test_pipe_reader_surfaces_os_error_and_posix_poll_timeout(monkeypatch):
+    from pathlib import Path
     import queue
     from types import SimpleNamespace
 
@@ -395,3 +396,16 @@ def test_pipe_reader_surfaces_os_error_and_posix_poll_timeout(monkeypatch):
     monkeypatch.setattr(native.select, "select", lambda *args: ([], [], []))
     with pytest.raises(TimeoutError):
         bridge._chunk(1)
+
+    # Exercise the POSIX startup/read path even on a Windows test runner.
+    monkeypatch.setattr(native.sys, "platform", "linux")
+    monkeypatch.setattr(
+        native.subprocess, "Popen", lambda *args, **kwargs: bridge.process
+    )
+    monkeypatch.setattr(
+        native.select, "select", lambda *args: ([bridge.process.stdout], [], [])
+    )
+    monkeypatch.setattr(native.os, "read", lambda *args: b"KIV\tOK\t7265616479\n")
+    posix = native._Bridge(Path("mock-helper"))
+    assert posix.chunks is None
+    assert posix._chunk(1) == b"KIV\tOK\t7265616479\n"

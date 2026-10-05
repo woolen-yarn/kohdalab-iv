@@ -16,14 +16,16 @@ def python_helper_scripts_on_windows(monkeypatch):
         return
     original_popen = subprocess.Popen
 
-    def popen(args, *positional, **kwargs):
-        if isinstance(args, (list, tuple)) and args:
-            path = Path(args[0])
-            if path.is_file():
-                with path.open("rb") as stream:
-                    python_script = stream.read(2) == b"#!"
-                if python_script:
-                    args = [sys.executable, *args]
-        return original_popen(args, *positional, **kwargs)
+    # Retain Popen's class/type interface for libraries importing Popen[bytes].
+    class PythonScriptPopen(original_popen):
+        def __init__(self, args, *positional, **kwargs):
+            if isinstance(args, (list, tuple)) and args:
+                path = Path(args[0])
+                if path.is_file():
+                    with path.open("rb") as stream:
+                        python_script = stream.read(2) == b"#!"
+                    if python_script:
+                        args = [sys.executable, *args]
+            super().__init__(args, *positional, **kwargs)
 
-    monkeypatch.setattr(subprocess, "Popen", popen)
+    monkeypatch.setattr(subprocess, "Popen", PythonScriptPopen)
