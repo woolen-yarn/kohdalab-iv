@@ -12,3 +12,10 @@ results/
 
 # PC-specific configs should not be overwritten by git pulls.
 config/*.json
+
+.DS_Store
+.mypy_cache/
+.ruff_cache/
+dist-upstream/*.whl
+dist-upstream/*.tar.gz
+releases/**/*.zip

@@ -2,6 +2,43 @@
 
 ## Unreleased
 
+No changes yet.
+
+## Portable v0.2.3 (2026-10-05)
+
+- Publish matching macOS arm64 and Windows x64 portable distributions, English documentation, source build kits and checksums. Preserve the original Python v0.2.3 release.
+
+- Simplify the Windows user distribution to a root GUI executable, README.txt, runtime and support folders; archive corresponding source and keep diagnostics/licenses in support. Validate the relocated GUI before packaging.
+
+- Verify actual instrument identity before accepting hardware connections, reject mismatched Device/Resource selections on USB and GPIB, and close unverified handles without model-specific output commands.
+
+- Avoid external vendor VISA discovery in the native portable, and display Refresh phases and elapsed seconds. Verify timeout recovery and repeated scans.
+
+### Added
+
+- Add PyInstaller build scripts and instructions for standalone GUI and CLI apps with Python included, with a writable per-user working directory for the frozen GUI.
+- Add an optional persistent NI USB-GPIB userspace helper for Apple Silicon builds, with shared device access, configured timeouts, addressed local control, and explicit source-distribution instructions.
+- Add a bundled direct USBTMC helper for the Agilent 34411A, including serial selection and USB descriptor discovery.
+- Discover unregistered GPIB listeners at primary addresses 1–30 through the NI helper, and run Refresh in a background thread with measurement/discovery coordination.
+- Add an Agilent 82357B userspace transport for macOS with automatic adapter selection, checked FX2 firmware loading, primary listener discovery, and an initial firmware download script. Identification has been verified on a remote Apple Silicon Mac.
+- Check physical ATN on 82357B and interpret write-completion counts without an undocumented response prefix; include raw status diagnostics for remote verification.
+- Release the 82357B external TI reset before AUX register setup so reopening after close can initialize the GPIB controller; verify repeated reopen/query cycles with a reset-aware USB simulator.
+- Accept the physical 82357B's six-byte transfer-status response while preserving completion and exact byte-count checks; reject responses that omit any byte of the count.
+- Release and verify ATN after GPIB addressing and before Agilent NO_ADDRESS data send/read, matching the Linux-GPIB common-layer standby transition.
+
+- Support direct USB for GS210/GS200 alongside 34411A, with per-device USB ID and serial matching, and verified two-session isolation in native mock tests.
+- Prepare an English macOS arm64 portable release package with source, licenses, diagnostic tools, USB/GPIB profiles, release notes and SHA256 checksums.
+- Add a Windows x64 native build kit with statically linked USBTMC/NI/82357B helpers, Windows pipe handling, SHA256-verified firmware setup, WinUSB instructions, corresponding source and build-time executable checks. Windows hardware validation remains pending.
+- Add a dedicated Windows USB setup candidate using a replaceable libwdi DLL, fixed instrument/adapter selection, exact-instance driver assignment, automatic first-launch checks and 82357B firmware/staging. Real Windows installation remains unverified.
+
+### Fixed
+
+- Avoid register polling between 82357B standby and receive requests, resolving observed GS210 first-byte loss on the remote Mac.
+- Widen all dropdown menus only while open, preserving original input and panel widths.
+
+- Provide identification and connection status for simulated instruments so the GUI can connect them without errors.
+- Populate resource selectors from native USB discovery even when no external VISA runtime is installed, merge available VISA resources, and retain manually entered addresses when refreshing.
+
 ## [0.2.3] - 2026-09-15
 
 ### Changed
@@ -71,3 +108,5 @@
 - Expanded CI across Python 3.10 and 3.13 on Ubuntu and Windows.
 - Moved the default configuration into the installable package.
 - Derived the runtime version from installed package metadata and displayed it in the GUI title.
+
+- Show the Windows GUI before checking USB drivers, with asynchronous setup, phase messages and elapsed seconds. Keep the GUI open after setup failure or cancellation.

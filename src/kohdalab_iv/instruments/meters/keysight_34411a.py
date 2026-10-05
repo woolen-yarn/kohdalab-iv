@@ -4,6 +4,9 @@ from kohdalab_iv.instruments.meters.scpi_dmm import ScpiDMM
 
 
 class Keysight34411A(ScpiDMM):
+    identity_models: tuple[str, ...] = ("34411A",)
+    identity_manufacturers: tuple[str, ...] = ("AGILENT", "KEYSIGHT", "HEWLETT-PACKARD")
+
     def local(self) -> None:
         self.release_remote_control()
 

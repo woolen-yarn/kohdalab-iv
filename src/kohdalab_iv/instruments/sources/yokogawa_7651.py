@@ -6,6 +6,22 @@ from kohdalab_iv.instruments.visa_base import VisaDevice
 
 
 class Yokogawa7651(VisaDevice):
+    def validate_identity(self) -> str:
+        # Use the actual OS response, never identify()'s display-only fallback.
+        try:
+            identity = self.query("OS;E")
+        except Exception as error:
+            raise RuntimeError(
+                f"Cannot verify YOKOGAWA_7651 at {self.resource}: identification failed: {error}"
+            ) from error
+        first_line = identity.splitlines()[0].strip() if identity else ""
+        if not re.search(r"^(?:YOKOGAWA[ ,]+)?7651\b", first_line, flags=re.IGNORECASE):
+            raise ValueError(
+                f"Instrument mismatch at {self.resource}: selected 7651; "
+                f"device replied {identity!r}. Select the matching Device and Resource."
+            )
+        return identity
+
     def configure_source(
         self,
         *,

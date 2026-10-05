@@ -102,3 +102,18 @@ def test_missing_legacy_target_falls_back_to_default(monkeypatch, tmp_path):
     resolution = resolve_config_path()
     assert resolution.path == DEFAULT_CONFIG_PATH
     assert resolution.source == "lab_default"
+
+
+def test_first_run_without_saved_or_legacy_config_uses_default(monkeypatch, tmp_path):
+    monkeypatch.setattr(config_module.Path, "home", lambda: tmp_path)
+    for name in (
+        config_module.CONFIG_PATH_ENV,
+        config_module.DEFAULT_CONFIG_PATH_ENV,
+        config_module.CONFIG_STATE_DIR_ENV,
+        config_module.LAST_CONFIG_STATE_PATH_ENV,
+        config_module.SHARED_CONFIG_STATE_DIR_ENV,
+    ):
+        monkeypatch.delenv(name, raising=False)
+    resolution = resolve_config_path()
+    assert resolution.path == DEFAULT_CONFIG_PATH
+    assert resolution.source == "lab_default"
