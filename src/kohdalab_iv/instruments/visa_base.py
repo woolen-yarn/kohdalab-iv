@@ -17,6 +17,11 @@ def gpib_board_from_resource(resource: str) -> str | None:
 
 
 def release_gpib_remote(board: str) -> None:
+    from kohdalab_iv.interfaces import native_gpib
+
+    if native_gpib.enabled():
+        native_gpib.release_remote(board)
+        return
     _release_gpib_remote_pyvisa(board)
     _ni4882_set_ren(board, False)
 
@@ -103,6 +108,31 @@ def _ni4882_set_ren(board: str, asserted: bool, *, loader: Any | None = None) ->
 
 
 class VisaDevice:
+    identity_models: tuple[str, ...] = ()
+    identity_manufacturers: tuple[str, ...] = ()
+
+    def validate_identity(self) -> str:
+        """Verify the real model before model-specific configuration is allowed."""
+        try:
+            identity = self.query("*IDN?")
+        except Exception as error:
+            raise RuntimeError(
+                f"Cannot verify {type(self).__name__} at {self.resource}: identification failed: {error}"
+            ) from error
+        parts = [part.strip().upper() for part in identity.split(",")]
+        manufacturer = parts[0] if parts else ""
+        model = parts[1] if len(parts) > 1 else ""
+        if model not in self.identity_models or not any(
+            manufacturer == name or manufacturer.startswith(name + " ")
+            for name in self.identity_manufacturers
+        ):
+            expected = "/".join(self.identity_models)
+            raise ValueError(
+                f"Instrument mismatch at {self.resource}: selected {expected}; "
+                f"device replied {identity!r}. Select the matching Device and Resource."
+            )
+        return identity
+
     def __init__(
         self, resource: str, *, timeout_ms: int = 5000, handle: Any | None = None
     ):

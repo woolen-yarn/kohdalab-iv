@@ -35,6 +35,12 @@ class SimulatedSource:
         circuit.level = 0.0
         circuit.output_enabled = False
 
+    def identify(self) -> str:
+        return "KohdaLab,SIMULATED_SOURCE,0,1"
+
+    def output_state(self) -> bool:
+        return _circuit(self.resource).output_enabled
+
     def configure_source(
         self,
         *,
@@ -92,6 +98,12 @@ class SimulatedMeter:
         self.measure_function = "dc_current"
         self._connected = True
         _circuit(resource).resistance_ohm = float(resistance_ohm)
+
+    def identify(self) -> str:
+        return "KohdaLab,SIMULATED_METER,0,1"
+
+    def connect_status(self) -> str:
+        return "0,No error"
 
     def configure_measurement(
         self, *, measure_function: str, nplc: float, auto_range: bool

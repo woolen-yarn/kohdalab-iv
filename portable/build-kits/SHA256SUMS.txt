@@ -1,0 +1,2 @@
+fca5f072abb78eac06c00ac6991def00160161a3759c95973f99a36ced61ca38  kohdalab-iv-0.2.3-macos-release-build-kit.zip
+afea72a14ebbe15cdf2913233dc877c791a68b9d1d9a2672fe0db57cdb540328  kohdalab-iv-0.2.3-windows-release-build-kit.zip

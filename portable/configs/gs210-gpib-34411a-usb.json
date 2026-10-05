@@ -1,0 +1,100 @@
+{
+  "config_version": 1,
+  "profile": {
+    "name": "GS210-GPIB-34411A-USB",
+    "description": "GS210 at GPIB 3 and 34411A MY48001051 over direct USB."
+  },
+  "instruments": {
+    "source": {
+      "gs210": {
+        "model": "YOKOGAWA_GS210",
+        "transport": "visa",
+        "resource": "GPIB0::3::INSTR",
+        "timeout_ms": 5000
+      }
+    },
+    "meter": {
+      "dmm_34411a": {
+        "model": "KEYSIGHT_34411A",
+        "transport": "visa",
+        "resource": "USB0::0x0957::0x0A07::MY48001051::INSTR",
+        "timeout_ms": 10000,
+        "auto_range": true
+      }
+    }
+  },
+  "roles": {
+    "iv": {
+      "source": "source.gs210",
+      "measure": "meter.dmm_34411a"
+    },
+    "vi": {
+      "source": "source.gs210",
+      "measure": "meter.dmm_34411a"
+    }
+  },
+  "measurements": {
+    "iv": {
+      "mode": "dc_iv",
+      "signal": {
+        "kind": "dc",
+        "ac_enabled": false
+      },
+      "scan": {
+        "pattern": "zero_centered",
+        "start": {
+          "value": -1.0,
+          "unit": "mV"
+        },
+        "stop": {
+          "value": 1.0,
+          "unit": "mV"
+        },
+        "step": {
+          "value": 0.1,
+          "unit": "mV"
+        },
+        "repeat": 1,
+        "custom_points": []
+      },
+      "timing": {
+        "pre_delay_s": 0.1,
+        "start_settle_s": 0.5,
+        "settle_s": 0.2,
+        "post_zero_delay_s": 0.1,
+        "ramp_step_wait_s": 0.02,
+        "nplc": 1.0,
+        "average_count": 1,
+        "measure_timeout_s": 10.0,
+        "timing_mode": "software"
+      },
+      "measure": {
+        "auto_range": true
+      },
+      "safety": {
+        "max_abs_source": {
+          "value": 1.0,
+          "unit": "mV"
+        },
+        "compliance": {
+          "value": 1.0,
+          "unit": "mA"
+        },
+        "stop_on_compliance": true,
+        "ramp_step": {
+          "value": 0.1,
+          "unit": "mV"
+        },
+        "on_finish": "ramp_to_zero_then_off",
+        "on_stop": "ramp_to_zero_then_off",
+        "on_error": "output_off",
+        "output_off_on_finish": true
+      },
+      "output": {
+        "dir": "results",
+        "filename": "iv_run",
+        "auto_timestamp_suffix": true
+      }
+    }
+  }
+}

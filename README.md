@@ -6,6 +6,16 @@
 
 KohdaLab IV is a Python toolkit for reproducible DC I-V and V-I measurements from GUI, CLI, and Jupyter Notebook workflows.
 
+## Portable desktop downloads
+
+Download the Mac (Apple Silicon) or Windows (x64) portable from
+[Kohdalab](https://github.com/Kohdalab/kohdalab-iv/releases/tag/portable-v0.2.3)
+or the [personal mirror](https://github.com/woolen-yarn/kohdalab-iv/releases/tag/portable-v0.2.3).
+Extract the entire ZIP and open the app. Supported native connections do not
+require Python or VISA. Build kits are included in `portable/build-kits` and
+as release assets. See [the portable guide](docs/portable_release.md) for
+setup, supported connections and rebuild instructions.
+
 ## What It Does
 
 - Controls supported source and meter instruments through a shared measurement API.
@@ -100,6 +110,7 @@ Real hardware operation requires the checks in [Safety notes](SAFETY.md) and the
 - [I-V measurement specification](docs/iv_measurement_spec.md): scan-plan and output-field details.
 - [Hardware smoke test](docs/hardware_smoke_test.md): conservative first-run procedure for real instruments.
 - [Windows setup](docs/windows_setup.md): VISA and instrument-PC preparation.
+- [Standalone apps](docs/standalone.md): build Windows and Mac apps with Python included.
 - [Roadmap](ROADMAP.md): planned milestones.
 - [Safety notes](SAFETY.md): operator responsibilities and safety assumptions.
 - [Contributing](CONTRIBUTING.md): architecture boundaries and development checks.

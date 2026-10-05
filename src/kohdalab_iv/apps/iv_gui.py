@@ -4,7 +4,7 @@ import copy
 import math
 import sys
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable
 
 from kohdalab_iv import __version__
 from kohdalab_iv.api.config import (
@@ -21,7 +21,7 @@ from kohdalab_iv.api.formatting import format_conductance, format_resistance
 from kohdalab_iv.api.scan_plan import iv_plan_from_config
 from kohdalab_iv.api.units import normalize_unit, parse_quantity
 from kohdalab_iv.apps.gui_state import MeasurementRunState
-from kohdalab_iv.interfaces.common import list_visa_resources
+from kohdalab_iv.interfaces.common import DISCOVERY_PROGRESS, list_visa_resources
 
 
 SOURCE_MODELS = ["YOKOGAWA_GS210", "YOKOGAWA_7651", "SIMULATED_SOURCE"]
@@ -153,12 +153,32 @@ def _resistance_from_rows(rows: list[dict[str, Any]]) -> float | None:
     return sum((i - mean_i) * (v - mean_v) for i, v in pairs) / denominator
 
 
-def main() -> None:
+def main(*, startup: Callable[[Any], None] | None = None) -> None:
     from PySide6 import QtCore, QtWidgets
     import pyqtgraph as pg
 
     pg.setConfigOption("background", "#050505")
     pg.setConfigOption("foreground", "#e8e8e8")
+
+    class PopupComboBox(QtWidgets.QComboBox):
+        def __init__(self):
+            super().__init__()
+            view = QtWidgets.QListView()
+            view.setTextElideMode(QtCore.Qt.TextElideMode.ElideNone)
+            self.setView(view)
+
+        def showPopup(self) -> None:
+            metrics = self.view().fontMetrics()
+            text_width = max(
+                (
+                    metrics.horizontalAdvance(self.itemText(i))
+                    for i in range(self.count())
+                ),
+                default=0,
+            )
+            # Resource names may be much longer than the closed input field.
+            self.view().setMinimumWidth(max(self.width(), text_width + 48))
+            super().showPopup()
 
     class ComplianceSpinBox(QtWidgets.QDoubleSpinBox):
         def textFromValue(self, value: float) -> str:
@@ -206,6 +226,23 @@ def main() -> None:
             finally:
                 self.finished.emit(rows)
 
+    class ResourceDiscoveryWorker(QtCore.QObject):
+        progress = QtCore.Signal(str)
+        discovered = QtCore.Signal(object)
+        error_occurred = QtCore.Signal(str)
+        finished = QtCore.Signal()
+
+        @QtCore.Slot()
+        def run(self) -> None:
+            token = DISCOVERY_PROGRESS.set(self.progress.emit)
+            try:
+                self.discovered.emit(list_visa_resources())
+            except Exception as error:
+                self.error_occurred.emit(str(error))
+            finally:
+                DISCOVERY_PROGRESS.reset(token)
+                self.finished.emit()
+
     class IVGui(QtWidgets.QMainWindow):
         def __init__(self):
             super().__init__()
@@ -224,7 +261,14 @@ def main() -> None:
             self.experiment = Experiment(self.config, auto_connect=False)
             self.worker_thread: QtCore.QThread | None = None
             self.worker: MeasurementWorker | None = None
+            self.discovery_thread: QtCore.QThread | None = None
+            self.discovery_worker: ResourceDiscoveryWorker | None = None
+            self.discovery_phase = "Checking connected instruments"
+            self.discovery_elapsed = QtCore.QElapsedTimer()
+            self.discovery_timer = QtCore.QTimer(self)
+            self.discovery_timer.timeout.connect(self._update_discovery_status)
             self.rows: list[dict[str, Any]] = []
+            self.startup_busy = False
             self.measurement_state = MeasurementRunState()
             self._build_widgets()
             self._build_measurement_settings_dialog()
@@ -245,12 +289,12 @@ def main() -> None:
             self.connect_all_button.clicked.connect(self.connect_all)
             self.disconnect_all_button.clicked.connect(self.disconnect_all)
 
-            self.source_model_combo = QtWidgets.QComboBox()
+            self.source_model_combo = PopupComboBox()
             self.source_model_combo.addItems(SOURCE_MODELS)
             self.source_model_combo.currentTextChanged.connect(
                 self._source_model_changed
             )
-            self.source_resource_combo = QtWidgets.QComboBox()
+            self.source_resource_combo = PopupComboBox()
             self.source_resource_combo.setEditable(True)
             self.source_refresh_button = QtWidgets.QPushButton("Refresh")
             self.source_connect_button = QtWidgets.QPushButton("Connect")
@@ -261,10 +305,10 @@ def main() -> None:
             self.source_connect_button.clicked.connect(self.connect_source)
             self.source_disconnect_button.clicked.connect(self.disconnect_source)
 
-            self.meter_model_combo = QtWidgets.QComboBox()
+            self.meter_model_combo = PopupComboBox()
             self.meter_model_combo.addItems(METER_MODELS)
             self.meter_model_combo.currentTextChanged.connect(self._meter_model_changed)
-            self.meter_resource_combo = QtWidgets.QComboBox()
+            self.meter_resource_combo = PopupComboBox()
             self.meter_resource_combo.setEditable(True)
             self.nplc_spin = self._spin(0.001, 100.0, 3, 1.0)
             self.meter_refresh_button = QtWidgets.QPushButton("Refresh")
@@ -276,27 +320,27 @@ def main() -> None:
             self.meter_connect_button.clicked.connect(self.connect_meter)
             self.meter_disconnect_button.clicked.connect(self.disconnect_meter)
 
-            self.mode_combo = QtWidgets.QComboBox()
+            self.mode_combo = PopupComboBox()
             for mode, label in MODE_LABELS.items():
                 self.mode_combo.addItem(label, mode)
             self.mode_combo.currentIndexChanged.connect(self._mode_changed)
-            self.sweep_combo = QtWidgets.QComboBox()
+            self.sweep_combo = PopupComboBox()
             self.sweep_combo.addItems(
                 ["linear", "round_trip", "zero_centered", "custom_list"]
             )
             self.start_spin = self._spin(-1e12, 1e12, 6, 0.0)
             self.end_spin = self._spin(-1e12, 1e12, 6, 0.0)
             self.step_spin = self._spin(-1e12, 1e12, 6, 1.0)
-            self.start_unit_combo = QtWidgets.QComboBox()
-            self.end_unit_combo = QtWidgets.QComboBox()
-            self.step_unit_combo = QtWidgets.QComboBox()
+            self.start_unit_combo = PopupComboBox()
+            self.end_unit_combo = PopupComboBox()
+            self.step_unit_combo = PopupComboBox()
             self.wait_spin = self._spin(0.0, 3600.0, 3, 0.2)
             self.current_compliance_spin = ComplianceSpinBox()
-            self.current_compliance_unit = QtWidgets.QComboBox()
+            self.current_compliance_unit = PopupComboBox()
             self.current_compliance_unit.addItems(CURRENT_UNITS)
             self.current_compliance_unit.setCurrentText("mA")
             self.voltage_compliance_spin = ComplianceSpinBox()
-            self.voltage_compliance_unit = QtWidgets.QComboBox()
+            self.voltage_compliance_unit = PopupComboBox()
             self.voltage_compliance_unit.addItems(VOLTAGE_UNITS)
             self.voltage_compliance_unit.setCurrentText("V")
             for spin in (self.current_compliance_spin, self.voltage_compliance_spin):
@@ -749,7 +793,11 @@ def main() -> None:
             return meter_ref.split(".", 1)[1]
 
         def _sync_measurement_controls(self) -> None:
-            controls_enabled = self.measurement_state.controls_enabled
+            controls_enabled = (
+                self.measurement_state.controls_enabled
+                and self.discovery_thread is None
+                and not self.startup_busy
+            )
             for widget in (
                 self.config_path_edit,
                 self.browse_button,
@@ -779,6 +827,12 @@ def main() -> None:
             self.stop_button.setEnabled(self.measurement_state.can_stop)
 
         def _ensure_measurement_idle(self, action: str) -> bool:
+            if self.startup_busy:
+                self.append_log(f"{action} skipped: USB setup is running.")
+                return False
+            if self.discovery_thread is not None:
+                self.append_log(f"{action} skipped: instrument discovery is running.")
+                return False
             if not self.measurement_state.active:
                 return True
             self.append_log(f"{action} skipped: measurement is running.")
@@ -1109,17 +1163,68 @@ def main() -> None:
         def refresh_resources(self) -> None:
             if not self._ensure_measurement_idle("Refresh Resources"):
                 return
-            try:
-                resources = list(list_visa_resources())
-                for combo in (self.source_resource_combo, self.meter_resource_combo):
-                    current = combo.currentText()
-                    combo.clear()
-                    combo.addItems(resources)
+            thread = QtCore.QThread(self)
+            worker = ResourceDiscoveryWorker()
+            self.discovery_thread = thread
+            self.discovery_worker = worker
+            worker.moveToThread(thread)
+            thread.started.connect(worker.run)
+            worker.progress.connect(self._discovery_progress)
+            worker.discovered.connect(self._resources_discovered)
+            worker.error_occurred.connect(self._resource_discovery_error)
+            worker.finished.connect(thread.quit)
+            worker.finished.connect(worker.deleteLater)
+            thread.finished.connect(self._resource_discovery_finished)
+            thread.finished.connect(thread.deleteLater)
+            self.source_refresh_button.setText("Scanning...")
+            self.meter_refresh_button.setText("Scanning...")
+            self._sync_measurement_controls()
+            self.append_log("Scanning connected instruments...")
+            self.discovery_phase = "Checking connected instruments"
+            self.discovery_previous_status = self.status_label.text()
+            self.discovery_elapsed.start()
+            self.discovery_timer.start(1000)
+            self._update_discovery_status()
+            thread.start()
+
+        def _update_discovery_status(self) -> None:
+            if self.discovery_thread is not None:
+                self.status_label.setText(
+                    f"Scanning: {self.discovery_phase} ({self.discovery_elapsed.elapsed() // 1000}s)"
+                )
+
+        def _discovery_progress(self, message: str) -> None:
+            self.discovery_phase = message
+            self.append_log(
+                f"Scan [{self.discovery_elapsed.elapsed() // 1000}s]: {message}"
+            )
+            self._update_discovery_status()
+
+        def _resources_discovered(self, found: tuple[str, ...]) -> None:
+            resources = list(found)
+            for combo in (self.source_resource_combo, self.meter_resource_combo):
+                current = combo.currentText()
+                combo.clear()
+                choices = list(
+                    dict.fromkeys([*resources, *([current] if current else [])])
+                )
+                combo.addItems(choices)
+                if current:
                     combo.setCurrentText(current)
-                self.append_log("Resources refreshed.")
-            except Exception as e:
-                QtWidgets.QMessageBox.warning(self, "Resource Error", str(e))
-                self.append_log(f"Resource error: {e}")
+            self.append_log(f"Resources refreshed. Found {len(resources)} resource(s).")
+
+        def _resource_discovery_error(self, message: str) -> None:
+            QtWidgets.QMessageBox.warning(self, "Resource Error", message)
+            self.append_log(f"Resource error: {message}")
+
+        def _resource_discovery_finished(self) -> None:
+            self.discovery_timer.stop()
+            self.status_label.setText(self.discovery_previous_status)
+            self.discovery_thread = None
+            self.discovery_worker = None
+            self.source_refresh_button.setText("Refresh")
+            self.meter_refresh_button.setText("Refresh")
+            self._sync_measurement_controls()
 
         def _apply_config(self) -> None:
             self.config = self._config_from_fields()
@@ -1142,6 +1247,7 @@ def main() -> None:
                 self.append_log(f"Connected {source_ref}: {idn}")
             except Exception as e:
                 QtWidgets.QMessageBox.critical(self, "Connect Error", str(e))
+                self.source_status.setText("connection failed")
                 self.append_log(f"Source connect error: {e}")
 
         def disconnect_source(self) -> None:
@@ -1166,6 +1272,7 @@ def main() -> None:
                 self.append_log(f"Connected {meter_ref}: {idn}")
             except Exception as e:
                 QtWidgets.QMessageBox.critical(self, "Connect Error", str(e))
+                self.meter_status.setText("connection failed")
                 self.append_log(f"Meter connect error: {e}")
 
         def _connect_status(self, device) -> str:
@@ -1204,6 +1311,9 @@ def main() -> None:
                 self.append_log(f"Plan error: {e}")
 
         def start_measurement(self) -> None:
+            if self.discovery_thread is not None:
+                self.append_log("Start skipped: instrument discovery is running.")
+                return
             if self.measurement_state.active:
                 self.append_log("Start skipped: measurement is already running.")
                 return
@@ -1422,6 +1532,16 @@ def main() -> None:
             )
 
         def closeEvent(self, event) -> None:
+            if self.startup_busy:
+                self.append_log(
+                    "Close delayed: USB setup is still running. Check Windows approval dialogs."
+                )
+                event.ignore()
+                return
+            if self.discovery_thread is not None:
+                self.append_log("Close delayed: instrument discovery is still running.")
+                event.ignore()
+                return
             if self.worker is not None:
                 self.worker.stop()
             if self.worker_thread is not None and self.worker_thread.isRunning():
@@ -1441,6 +1561,8 @@ def main() -> None:
     app = QtWidgets.QApplication(sys.argv)
     window = IVGui()
     window.show()
+    if startup is not None:
+        QtCore.QTimer.singleShot(0, lambda: startup(window))
     sys.exit(app.exec())
 
 
