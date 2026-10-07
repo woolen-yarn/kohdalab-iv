@@ -445,7 +445,9 @@ void __cdecl syslog_reader_thread(void* param)
 		safe_strcpy(log_path, MAX_PATH_LENGTH, getenv("WINDIR"));	// Use %WINDIR% env variable
 		safe_strcat(log_path, MAX_PATH_LENGTH, syslog_name[i]);
 		// coverity[tainted_string]
-		log_handle = CreateFileA(log_path, GENERIC_READ, FILE_SHARE_READ|FILE_SHARE_WRITE,
+		// Windows rotates/replaces this log during installation. A reader must
+		// share deletion too, otherwise SetupAPI waits about 34 seconds per pass.
+		log_handle = CreateFileA(log_path, GENERIC_READ, FILE_SHARE_READ|FILE_SHARE_WRITE|FILE_SHARE_DELETE,
 			NULL, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, NULL);
 
 		if (log_handle != INVALID_HANDLE_VALUE) {
@@ -787,7 +789,20 @@ error:
 /* KohdaLab modification, 2026-10-01: install only the selected device instance.
  * Do not force a driver onto other devices with the same hardware ID.
  */
+static void kiv_install_timing(const char* phase, ULONGLONG start) {
+    wchar_t directory[32768], path[32768];
+    DWORD size = GetEnvironmentVariableW(L"LOCALAPPDATA", directory, 32768);
+    if (!size || size >= 32700) return;
+    swprintf(path, 32768, L"%ls\\KohdaLab IV\\driver-install-timing.log", directory);
+    FILE* file = _wfopen(path, L"a");
+    if (!file) return;
+    fprintf(file, "%s: elapsed_ms=%llu tick_ms=%llu\n", phase,
+        (unsigned long long)(GetTickCount64() - start),
+        (unsigned long long)GetTickCount64());
+    fclose(file);
+}
 static BOOL kiv_install_device(const char* id, const char* inf) {
+    ULONGLONG start = GetTickCount64();
     if (id == NULL || id[0] == 0) { SetLastError(ERROR_INVALID_PARAMETER); return FALSE; }
     wchar_t* wid = utf8_to_wchar(id);
     wchar_t* winf = utf8_to_wchar(inf);
@@ -798,7 +813,9 @@ static BOOL kiv_install_device(const char* id, const char* inf) {
     BOOL result = FALSE, reboot = FALSE;
     DWORD error = ERROR_INVALID_PARAMETER;
     if (wid == NULL || winf == NULL || devices == INVALID_HANDLE_VALUE) goto done;
+    kiv_install_timing("staging start", start);
     if (!SetupCopyOEMInfW(winf, NULL, SPOST_PATH, 0, NULL, 0, NULL, NULL) && GetLastError() != ERROR_FILE_EXISTS) goto failed;
+    kiv_install_timing("staging complete", start);
     if (!SetupDiOpenDeviceInfoW(devices, wid, NULL, 0, &device)) goto failed;
     if (!SetupDiGetDeviceInstallParamsW(devices, &device, &options)) goto failed;
     options.Flags |= DI_ENUMSINGLEINF;
@@ -817,6 +834,7 @@ static BOOL kiv_install_device(const char* id, const char* inf) {
         else SetLastError(ERROR_PROC_NOT_FOUND);
         error = result ? ERROR_SUCCESS : GetLastError();
         if (newdev) FreeLibrary(newdev);
+        kiv_install_timing("device installation complete", start);
         if (!result) goto done;
     }
     if (result) goto done;

@@ -2201,6 +2201,16 @@ static int ni_usb_hs_plus_extra_init(ni_usb_private_t *ni_priv)
 				__FILE__, __FUNCTION__, (int)buffer[0], NI_USB_HS_PLUS_LED_REQUEST);
 		}
 
+#ifdef _WIN32
+        /* The 0xf8 request initializes the unused analyzer interface (1).
+         * WinUSB rewrites interface-recipient wIndex to the claimed interface
+         * (0), causing a stall when only the GPIB function has WinUSB. The
+         * upstream comment explicitly marks these extra requests optional.
+         * Keep LED/device initialization, and omit only this analyzer request
+         * on Windows so GPIB needs no driver for the unused analyzer function.
+         */
+        break;
+#endif
 		transfer_size = 9;
 		BUG_ON(transfer_size > buffer_size);
 		retval = ni_usb_receive_control_msg(ni_priv, NI_USB_HS_PLUS_0xf8_REQUEST, USB_DIR_IN | USB_TYPE_VENDOR | USB_RECIP_INTERFACE,

@@ -70,6 +70,7 @@ def test_async_setup_keeps_events_running_and_reports_progress(
     timer.timeout.connect(lambda: ticks.append(1))
     timer.start(10)
     start = time.monotonic()
+    follow_up = []
     entry["start_usb_setup"](
         window,
         [
@@ -78,6 +79,7 @@ def test_async_setup_keeps_events_running_and_reports_progress(
             "-c",
             f"import time; print('Checking test device', flush=True); time.sleep(0.3); raise SystemExit({exit_code})",
         ],
+        on_success=lambda: follow_up.append("scan"),
     )
     assert time.monotonic() - start < 0.2
     assert window.startup_busy
@@ -88,12 +90,39 @@ def test_async_setup_keeps_events_running_and_reports_progress(
     assert not window.startup_busy
     assert len(ticks) >= 5
     assert window.states == [True, False]
+    assert follow_up == (["scan"] if exit_code == 0 else [])
     assert any("Checking test device" in text for text in window.logs)
     assert window.status_label.text() == (
         "idle" if exit_code == 0 else "USB setup failed"
     )
     timer.stop()
     window.close()
+
+
+def test_refresh_prepares_usb_again_before_scanning(entry, monkeypatch, tmp_path):
+    from types import SimpleNamespace
+
+    setup = tmp_path / "USB-Setup.exe"
+    calls = []
+    scans = []
+    monkeypatch.setitem(
+        entry["prepare_windows_usb"].__globals__,
+        "windows_usb_setup_path",
+        lambda: setup,
+    )
+    monkeypatch.setitem(
+        entry["prepare_windows_usb"].__globals__,
+        "start_usb_setup",
+        lambda window, command, **kwargs: calls.append((command, kwargs)),
+    )
+    window = SimpleNamespace(_start_resource_discovery=lambda: scans.append(1))
+    entry["prepare_windows_usb"](window)
+    assert calls[0][0] == [str(setup), "--ensure"]
+    window.resource_prepare()
+    assert calls[1][0] == [str(setup), "--ensure", "--rescan"]
+    assert not scans
+    calls[1][1]["on_success"]()
+    assert scans == [1]
 
 
 def test_missing_setup_restores_controls(entry, monkeypatch, qt_app):

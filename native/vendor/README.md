@@ -23,3 +23,11 @@ It is based on Linux v6.17 `drivers/staging/gpib/agilent_82357a` and
 https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/drivers/staging/gpib?h=v6.17
 Its source, USB protocol and initialization changes are included here.
 Firmware is downloaded separately and is not redistributed in this archive.
+
+Windows HS+ initialization omits optional analyzer request 0xf8 (interface 1).
+WinUSB rewrites interface-recipient wIndex to the selected interface; sending
+this request through the GPIB interface (0) stalls. The upstream function notes
+that these analyzer-related requests are not required for GPIB operation.
+Device/LED requests and their failures remain checked. The Windows installer
+still assigns only interface 0 and does not replace the analyzer driver.
+The original POSIX initialization is retained.
