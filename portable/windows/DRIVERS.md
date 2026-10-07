@@ -7,10 +7,20 @@ actual Source and Meter resources and connect them. No separate Python, VISA,
 manufacturer installer or Zadig download is needed for these native connections.
 
 Direct USB communication and GPIB communication with both adapters have been
-reported working on the user's Windows instrument PC. Recent Refresh, identity
-validation and distribution-layout changes still require confirmation there.
+reported working on the user's Windows instrument PC. The NI HS+ Windows fix was
+verified with physical open-output GS210/34411A sweeps through GPIB and direct
+USB on 2026-10-07 (three points, -1 to +1 mV, 1 mA hardware current limit).
 Windows may request publisher/driver confirmation, a reconnect, or a restart.
 A system administrator's policy may prohibit the generated driver package.
+
+Refresh checks USB driver readiness again before instrument discovery. If a
+device was removed in Device Manager, Windows may need a hardware rescan and
+administrator approval. The setup recovers a missing NI communication child
+when its USB parent is present. It verifies device startup and interface GUIDs,
+and waits up to 15 seconds for activation after driver installation. If setup
+fails, discovery is not started. Follow the displayed reconnect/restart message
+and retry Refresh. Initial Windows driver installation can take longer than an
+already-configured check; progress and elapsed time remain visible in the GUI.
 
 ## Supported devices
 
@@ -24,6 +34,8 @@ A system administrator's policy may prohibit the generated driver package.
 Set GS210 to TMC mode before connecting. Storage-mode devices, nonzero composite
 interfaces and other USB IDs are excluded from this setup's selection. Do not
 change to Storage mode while using the native measurement connection.
+The NI HS+ Analyzer interface can remain without a driver; it is not used by
+this application. The communication interface (MI_00) must use WinUSB.
 Only one supported GPIB adapter may be connected at a time. GPIB0 uses controller
 address 0 and scans listeners at primary addresses 1-30, including unregistered
 models. Secondary addresses and multiple adapters are not supported.
@@ -100,3 +112,9 @@ required by the normal flow. Use only the listed USB IDs and TMC interfaces.
 - libwdi: https://github.com/pbatard/libwdi
 - WinUSB: https://learn.microsoft.com/en-us/windows-hardware/drivers/usbcon/winusb-installation
 - Optional Zadig fallback: https://zadig.akeo.ie/
+
+The 2026-10-07 installer shares deletion access when reading Windows SetupAPI
+logs so log rotation does not block installation. On the instrument test PC,
+full NI driver-package removal/reinstallation dropped from about 70 seconds to
+about 3 seconds. Timing varies with Windows policy, approval, and hardware.
+Normal startup reuses active drivers. Installer phases remain visible in the GUI.

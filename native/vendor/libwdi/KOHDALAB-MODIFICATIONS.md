@@ -26,3 +26,12 @@ Rebuild the replaceable libwdi DLL and setup application with
 `native/windows_usb_setup.cpp` (MIT). The DLL remains replaceable by a modified
 compatible libwdi build. The supplied binaries are cross-compiled candidates;
 Windows installation and hardware operation must be verified before release.
+
+Changes dated 2026-10-07:
+
+- Allow Windows to replace/rotate the SetupAPI log while the diagnostic reader
+  holds it open (`FILE_SHARE_DELETE`). Without this flag Windows retried log
+  replacement for about 34 seconds in each installation pass.
+- Record installer phase timing in `driver-install-timing.log` for diagnosis.
+- Preserve the original signed-package staging and exact-instance installation.
+  No signature checks, device allowlist rules, or restore settings were relaxed.

@@ -2,7 +2,10 @@
 
 ## Unreleased
 
-No changes yet.
+- Fix Windows USB installer log sharing so SetupAPI log replacement no longer causes repeated 34-second waits.
+
+- Fix native NI GPIB-USB-HS+ initialization on Windows when only the communication interface has WinUSB. Omit the optional analyzer-interface request; retain device/LED initialization and all required-transfer error handling. macOS behavior is unchanged.
+- Recheck Windows USB drivers before Refresh, recover missing NI communication device nodes after uninstall, and wait for driver activation before scanning. Failed setup does not start instrument discovery.
 
 ## Portable v0.2.3 (2026-10-05)
 

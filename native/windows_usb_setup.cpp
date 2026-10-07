@@ -7,6 +7,7 @@
 #include <shellapi.h>
 #include <winhttp.h>
 #include <bcrypt.h>
+#include <cfgmgr32.h>
 #include <filesystem>
 #include <fstream>
 #include <sstream>
@@ -54,10 +55,10 @@ static void check(int code, const char* operation) {
 }
 struct DeviceList {
     wdi_device_info* head = nullptr;
-    DeviceList() {
+    explicit DeviceList(bool include_parents = false) {
         wdi_options_create_list options{};
         options.list_all = TRUE;
-        options.list_hubs = FALSE;
+        options.list_hubs = include_parents;
         options.trim_whitespaces = TRUE;
         int code = wdi_create_list(&head, &options);
         if (code != WDI_ERROR_NO_DEVICE) check(code, "USB discovery");
@@ -70,6 +71,11 @@ static const char* name(wdi_device_info* device) {
 }
 static bool ready(wdi_device_info* device) {
     if (!device->driver || _stricmp(device->driver, "WinUSB") || !device->device_id) return false;
+    DEVINST node = 0; ULONG status = 0, problem = 0;
+    auto id = wide(device->device_id);
+    if (CM_Locate_DevNodeW(&node, id.data(), CM_LOCATE_DEVNODE_NORMAL) != CR_SUCCESS ||
+        CM_Get_DevNode_Status(&status, &problem, node, 0) != CR_SUCCESS ||
+        problem != 0 || !(status & DN_STARTED)) return false;
     std::wstring key = L"SYSTEM\\CurrentControlSet\\Enum\\" + wide(device->device_id) + L"\\Device Parameters";
     wchar_t value[4096]{}; DWORD bytes = sizeof(value);
     auto flags = RRF_RT_REG_SZ | RRF_RT_REG_MULTI_SZ;
@@ -171,11 +177,12 @@ static void stage_82357_operational(const fs::path& directory) {
         throw std::runtime_error("82357B driver staging failed; see the setup log and Windows driver policy");
     log_text += "82357B operational USB ID is staged for firmware re-enumeration.\n";
 }
-static int elevate(bool quiet) {
+static int elevate(bool quiet, bool rescan = false) {
     wchar_t executable[32768]; GetModuleFileNameW(nullptr, executable, 32768);
     SHELLEXECUTEINFOW info{}; info.cbSize = sizeof(info); info.fMask = SEE_MASK_NOCLOSEPROCESS;
     info.lpVerb = L"runas"; info.lpFile = executable;
-    info.lpParameters = quiet ? L"--install --ensure" : L"--install"; info.nShow = SW_SHOWNORMAL;
+    info.lpParameters = rescan ? L"--install --ensure --rescan" :
+        (quiet ? L"--install --ensure" : L"--install"); info.nShow = SW_SHOWNORMAL;
     if (!ShellExecuteExW(&info)) return 1;
     WaitForSingleObject(info.hProcess, INFINITE); DWORD code = 1;
     GetExitCodeProcess(info.hProcess, &code); CloseHandle(info.hProcess); return int(code);
@@ -194,6 +201,7 @@ struct SetupLock {
 };
 int WINAPI wWinMain(HINSTANCE, HINSTANCE, PWSTR arguments, int) {
     bool quiet = std::wstring(arguments).find(L"--ensure") != std::wstring::npos;
+    bool rescan = std::wstring(arguments).find(L"--rescan") != std::wstring::npos;
     if (std::wstring(arguments) == L"--self-test") {
         return setup_device_name(0x3923,0x7618,false,0,"") &&
             !setup_device_name(0x0b21,0x0039,false,0,"USB\\Class_08") &&
@@ -203,6 +211,34 @@ int WINAPI wWinMain(HINSTANCE, HINSTANCE, PWSTR arguments, int) {
             wdi_is_file_embedded(nullptr, "winusb.cat.in") ? 0 : 1;
     }
     try {
+        // Removing a device in Device Manager can leave the NI parent visible
+        // while its communication child no longer exists. Driver enumeration
+        // alone cannot reinstall a missing devnode; re-enumerate hardware first.
+        {
+            DeviceList initial(true);
+            bool ni_parent = false, ni_communication = false;
+            bool supported = false, configured = true;
+            for (auto* device = initial.head; device; device = device->next) {
+                bool parent = device->vid == 0x3923 && device->pid == 0x7618 &&
+                    device->device_id && std::string(device->device_id).find("&MI_") == std::string::npos;
+                if (!parent && name(device)) { supported = true; configured &= ready(device); }
+                if (device->vid != 0x3923 || device->pid != 0x7618) continue;
+                ni_parent |= parent;
+                ni_communication |= !parent && name(device) != nullptr;
+            }
+            // A normal Refresh must not prompt for administrator access when
+            // all visible communication devices are already operational.
+            if (supported && configured && !administrator()) rescan = false;
+            rescan |= ni_parent && !ni_communication;
+        }
+        if (rescan) {
+            progress("Re-detecting removed USB devices");
+            if (!administrator()) return elevate(quiet, true);
+            DEVINST root = 0;
+            if (CM_Locate_DevNodeW(&root, nullptr, CM_LOCATE_DEVNODE_NORMAL) != CR_SUCCESS ||
+                CM_Reenumerate_DevNode(root, CM_REENUMERATE_SYNCHRONOUS) != CR_SUCCESS)
+                throw std::runtime_error("Windows hardware rescan failed; reconnect the USB devices and retry");
+        }
         progress("Enumerating Windows USB devices");
         DeviceList devices; bool pending = false, agilent = false, boot = false, found = false;
         for (auto* device = devices.head; device; device = device->next) {
@@ -212,6 +248,7 @@ int WINAPI wWinMain(HINSTANCE, HINSTANCE, PWSTR arguments, int) {
             boot |= device->vid == 0x0957 && device->pid == 0x0518;
         }
         if (!found) {
+            progress("No supported USB instruments found; connect devices and retry Refresh");
             if (!quiet) MessageBoxW(nullptr, L"Connect supported instruments first. GS210 USB must be in TMC mode.", L"KohdaLab USB Setup", MB_OK);
             return 0;
         }
@@ -251,9 +288,12 @@ int WINAPI wWinMain(HINSTANCE, HINSTANCE, PWSTR arguments, int) {
             log_text += std::string("Configuring ") + model + ": " + device->device_id +
                 "; previous driver=" + (device->driver ? device->driver : "none") + "\n";
             progress(std::string("Installing WinUSB for ") + model);
+            ULONGLONG started = GetTickCount64();
             prepare(device, drivers);
+            progress("WinUSB package prepared in " + std::to_string(GetTickCount64() - started) + " ms");
             wdi_options_install_driver options{}; options.pending_install_timeout = 60000;
             check(wdi_install_driver(device, utf8(drivers.wstring()).c_str(), inf_name(device).c_str(), &options), "WinUSB assignment");
+            progress("WinUSB installation completed in " + std::to_string(GetTickCount64() - started) + " ms");
         }
         if (agilent) {
             progress("Staging 82357B operational driver");
@@ -261,11 +301,24 @@ int WINAPI wWinMain(HINSTANCE, HINSTANCE, PWSTR arguments, int) {
             std::ofstream(drivers / L"82357-staged.ok") << "0957:0718\n";
         }
         progress("Verifying installed USB drivers");
-        DeviceList refreshed;
-        for (auto* device = refreshed.head; device; device = device->next) {
-            if (name(device) && !ready(device))
-                throw std::runtime_error("WinUSB is not active yet; reconnect the device or restart Windows, then retry");
+        bool verified = false;
+        // Driver installation can finish before PnP starts the device and
+        // publishes its interface. Never enable discovery during that interval.
+        for (int attempt = 0; attempt < 30; ++attempt) {
+            DeviceList refreshed;
+            std::set<std::string> active;
+            bool pending_device = false;
+            for (auto* device = refreshed.head; device; device = device->next) {
+                if (!name(device)) continue;
+                pending_device |= !ready(device);
+                if (ready(device) && device->device_id) active.insert(device->device_id);
+            }
+            verified = !pending_device &&
+                std::includes(active.begin(), active.end(), installed.begin(), installed.end());
+            if (verified) break;
+            Sleep(500);
         }
+        if (!verified) throw std::runtime_error("WinUSB is not active yet; reconnect the device or restart Windows, then retry Refresh");
         log_text += "Setup completed. Windows may require reconnect or restart.\n";
         std::ofstream(directory / L"usb-setup.log", std::ios::app) << log_text;
         if (!quiet) MessageBoxW(nullptr, wide(log_text + "Open KohdaLab IV and click Refresh.").c_str(), L"KohdaLab USB Setup", MB_OK);

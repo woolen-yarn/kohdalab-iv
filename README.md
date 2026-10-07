@@ -10,6 +10,10 @@ KohdaLab IV is a Python toolkit for reproducible DC I-V and V-I measurements fro
 
 Download the portable ZIP for your computer (v0.2.3):
 
+The Windows package was updated on 2026-10-07 with NI USB-HS+ initialization
+and driver-removal recovery fixes. Full driver reinstallation took about
+3 seconds on the test PC, down from about 70 seconds; timing varies by PC.
+
 | Platform | Kohdalab download | Personal mirror |
 | --- | --- | --- |
 | macOS — Apple Silicon (arm64) | [Download Mac portable](https://github.com/Kohdalab/kohdalab-iv/releases/download/portable-v0.2.3/kohdalab-iv-0.2.3-macos-arm64-portable.zip) | [Download Mac portable](https://github.com/woolen-yarn/kohdalab-iv/releases/download/portable-v0.2.3/kohdalab-iv-0.2.3-macos-arm64-portable.zip) |

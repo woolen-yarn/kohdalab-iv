@@ -79,10 +79,10 @@ def gui_window(monkeypatch, tmp_path, request):
     window._test_refresh_async = window.refresh_resources
     discovery_closure = dict(
         zip(
-            window.refresh_resources.__func__.__code__.co_freevars,
+            window._start_resource_discovery.__func__.__code__.co_freevars,
             (
                 cell.cell_contents
-                for cell in window.refresh_resources.__func__.__closure__
+                for cell in window._start_resource_discovery.__func__.__closure__
             ),
         )
     )
@@ -1203,3 +1203,17 @@ def test_startup_callback_runs_after_window_is_shown(gui_window, monkeypatch):
     assert callbacks == shown
     shown[0].deleteLater()
     QtCore.QCoreApplication.instance().processEvents()
+
+
+def test_refresh_waits_for_driver_preparation_before_discovery(gui_window, monkeypatch):
+    window = gui_window
+    calls = []
+    window.resource_prepare = lambda: calls.append("prepare")
+    window.refresh_resources()
+    assert calls == ["prepare"]
+    assert window.discovery_thread is None
+    monkeypatch.setattr(iv_gui, "list_visa_resources", lambda: ("GPIB0::5::INSTR",))
+    window._start_resource_discovery()
+    window._test_wait_discovery()
+    assert window.source_resource_combo.findText("GPIB0::5::INSTR") >= 0
+    window.resource_prepare = None

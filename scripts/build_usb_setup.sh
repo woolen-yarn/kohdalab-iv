@@ -24,5 +24,5 @@ cd "$TASK_BUILD/libwdi"
 cd ..
 "$TASK_CXX" -std=c++17 -O2 -static -s -municode -mwindows \
     -Ilibwdi "$TASK_ROOT/native/windows_usb_setup.cpp" libwdi.dll.a \
-    -ladvapi32 -lshell32 -lole32 -lwinhttp -lbcrypt -o USB-Setup.exe
+    -ladvapi32 -lshell32 -lole32 -lwinhttp -lbcrypt -lcfgmgr32 -o USB-Setup.exe
 echo "Built $TASK_BUILD/USB-Setup.exe and libwdi.dll"

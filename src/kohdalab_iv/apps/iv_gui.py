@@ -269,6 +269,7 @@ def main(*, startup: Callable[[Any], None] | None = None) -> None:
             self.discovery_timer.timeout.connect(self._update_discovery_status)
             self.rows: list[dict[str, Any]] = []
             self.startup_busy = False
+            self.resource_prepare: Callable[[], None] | None = None
             self.measurement_state = MeasurementRunState()
             self._build_widgets()
             self._build_measurement_settings_dialog()
@@ -1163,6 +1164,12 @@ def main(*, startup: Callable[[Any], None] | None = None) -> None:
         def refresh_resources(self) -> None:
             if not self._ensure_measurement_idle("Refresh Resources"):
                 return
+            if self.resource_prepare is not None:
+                self.resource_prepare()
+                return
+            self._start_resource_discovery()
+
+        def _start_resource_discovery(self) -> None:
             thread = QtCore.QThread(self)
             worker = ResourceDiscoveryWorker()
             self.discovery_thread = thread
