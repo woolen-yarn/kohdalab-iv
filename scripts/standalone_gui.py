@@ -22,7 +22,7 @@ def windows_usb_setup_path() -> Path | None:
     return None
 
 
-def start_usb_setup(window, command: list[str]) -> None:
+def start_usb_setup(window, command: list[str], *, on_success=None) -> None:
     """Run setup after the window is visible, without blocking Qt events."""
     from PySide6 import QtCore
 
@@ -71,6 +71,8 @@ def start_usb_setup(window, command: list[str]) -> None:
             window.append_log(
                 f"USB setup completed in {elapsed.elapsed() // 1000}s. Click Refresh to find instruments."
             )
+            if on_success is not None:
+                on_success()
         else:
             window.status_label.setText("USB setup failed")
             window.append_log(
@@ -93,6 +95,13 @@ def start_usb_setup(window, command: list[str]) -> None:
 def prepare_windows_usb(window) -> None:
     setup = windows_usb_setup_path()
     if setup is not None:
+        # Refresh revalidates drivers even after device removal/reinstallation
+        # while the application was open. Scan only after setup succeeds.
+        window.resource_prepare = lambda: start_usb_setup(
+            window,
+            [str(setup), "--ensure", "--rescan"],
+            on_success=window._start_resource_discovery,
+        )
         start_usb_setup(window, [str(setup), "--ensure"])
 
 

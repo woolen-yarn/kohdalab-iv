@@ -19,3 +19,6 @@ config/*.json
 dist-upstream/*.whl
 dist-upstream/*.tar.gz
 releases/**/*.zip
+
+# Local remote-hardware acceptance logs and test staging.
+validation/
