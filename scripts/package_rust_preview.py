@@ -49,15 +49,17 @@ def source_archive(path: Path) -> None:
     with ZipFile(path, "w", ZIP_DEFLATED, strict_timestamps=False) as archive:
         for name in (
             "next",
+            "bindings",
+            ".github",
+            "CONTRIBUTING.md",
+            "CHANGELOG.md",
+            "SECURITY.md",
             "native",
-            "src",
             "scripts",
             "docs",
             "portable/windows",
             "portable/licenses",
             "README.md",
-            "pyproject.toml",
-            "uv.lock",
             "LICENSE",
             "SAFETY.md",
         ):
@@ -218,6 +220,7 @@ def main() -> None:
         documentation / "licenses/libwdi-LGPL.txt",
     )
     shutil.copy2(ROOT / "LICENSE", documentation / "licenses/KohdaLab-IV-MIT.txt")
+    shutil.copytree(ROOT / "bindings/python", stage / "python-control", ignore=shutil.ignore_patterns("__pycache__"))
     source_archive(documentation / "SOURCE.zip")
     target = (
         ("x86_64-pc-windows-msvc" if os.name == "nt" else "x86_64-pc-windows-gnu")

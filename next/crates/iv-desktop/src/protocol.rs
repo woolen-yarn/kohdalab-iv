@@ -1,4 +1,4 @@
-use iv_core::{Record, RunConfig};
+use iv_core::{Mode, Record, RunConfig};
 use iv_transport::ResourceInfo;
 use serde::{Deserialize, Serialize};
 
@@ -7,6 +7,9 @@ use serde::{Deserialize, Serialize};
 pub enum Command {
     Heartbeat,
     Discover,
+    SetLiveMode {
+        mode: Mode,
+    },
     Connect {
         simulation: bool,
         source: String,
@@ -52,6 +55,10 @@ pub struct Snapshot {
     pub elapsed: f64,
     pub resistance: Option<f64>,
     pub last: Option<Record>,
+    #[serde(default)]
+    pub live: Option<Record>,
+    #[serde(default)]
+    pub live_error: String,
     pub path: String,
     pub error: String,
     pub resources: Vec<ResourceInfo>,
@@ -77,6 +84,8 @@ impl Default for Snapshot {
             total: 0,
             elapsed: 0.0,
             last: None,
+            live: None,
+            live_error: String::new(),
             path: String::new(),
             source_resource: String::new(),
             meter_resource: String::new(),

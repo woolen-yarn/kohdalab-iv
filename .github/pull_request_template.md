@@ -1,13 +1,11 @@
 ## Summary
 
-## Verification
+## Validation
 
-- [ ] `uv run pytest`
-- [ ] `uv run kohdalab-iv --config config/default.json check-config`
+- Cargo format / Clippy / workspace tests
+- Simulation or hardware checks relevant to this change
 
-## Hardware Impact
+## Measurement behavior
 
-- [ ] No hardware-facing behavior changed
-- [ ] Hardware-facing behavior changed and was tested with a small safe range
-
-## Notes
+Describe effects on device commands, timing, saved data and verified output-off.
+Distinguish simulated checks from real instrument verification.

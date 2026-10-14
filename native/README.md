@@ -3,23 +3,24 @@
 ## Windows native build
 
 Windows x64 frozen apps can bundle the same USBTMC and NI/82357B protocol code.
-See `docs/windows_portable.md` for the precompiled-helper build kit and source
+See `next/README.md` for the native application build kit and source
 rebuild instructions. Initial WinUSB device assignment is required; see
 `portable/windows/DRIVERS.md`. The user reported USB and both GPIB adapters working on Windows and confirmed
 the final portable. Mock tests validate protocol behavior, not measurement accuracy.
-See docs/portable_release.md for the current distribution; the notes below record
+See next/README.md for the current distribution; the notes below record
 the development investigation.
 
 The Windows NI shim uses private thread names to coexist with MinGW's pthread
-runtime, the Python bridge reads pipes through a dedicated reader thread, and
+runtime, the Rust bridge reads pipes through a dedicated reader thread, and
 82357B firmware is checked using Windows BCrypt SHA256 and cached in LOCALAPPDATA.
 Only OS-provided DLLs are imported by the supplied statically linked helpers.
 
 ## macOS build
 
 The macOS standalone app can use a separate GPL-2.0-or-later process built from
-KAME's userspace linux-gpib port, communicating over framed stdin/stdout. Python
-instrument controllers and measurement cleanup remain shared with the VISA path.
+KAME's userspace linux-gpib port, communicating over framed stdin/stdout. The Rust measurement engine owns instrument transfers and output cleanup;
+there is no VISA fallback or Python measurement implementation. The optional
+Python client controls the Rust engine rather than the native helpers directly.
 
 Build on an Apple Silicon Mac with Xcode Command Line Tools:
 
@@ -32,7 +33,7 @@ uv run --extra gui --with pyinstaller python scripts/build_standalone.py \
 The builder pins KAME commit `b413cc7102e984fa8e5e13bd4993549a6e4584cc` and
 libusb 1.0.30. It adds public timeout and addressed Go-To-Local methods to the
 driver API; protocol code in `kohdalab_gpib_helper.cpp` is GPL-2.0-or-later.
-The repository's MIT license continues to cover the Python application.
+The repository's MIT license continues to cover the Rust application.
 Distributions containing the GPL helper must also supply its complete
 corresponding source, driver modifications, build instructions, and licenses.
 Supply libusb's source and LGPL license as well when distributing the static link.
@@ -48,8 +49,7 @@ adapters are not supported by the native transport. An already-open adapter is
 reused without IFC or reopening; a temporary scan session releases REN and closes
 when finished. No adapter produces an empty GPIB list, while a bus error is
 reported. The GUI scans in a worker thread, blocks measurement during scanning,
-and retains manually entered resources. Other resources use VISA
-unless the optional USBTMC helper described below is bundled.
+and retains manually entered resources. The native desktop supports explicit GPIB and USBTMC resources without a VISA fallback.
 The environment variable `KOHDALAB_IV_GPIB_HELPER` selects an explicit helper
 for development/testing; otherwise macOS frozen apps use their bundled helper.
 

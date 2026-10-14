@@ -21,7 +21,7 @@ assignees: ""
 ## Environment
 
 - OS:
-- Python / uv version:
+- Portable / Rust version:
 - Repository commit or version:
 - Config file:
 
@@ -29,7 +29,7 @@ assignees: ""
 
 - Source:
 - Meter:
-- VISA/Serial resource:
+- USB/GPIB resource:
 - Was output enabled?
 
 ## Logs or Screenshots

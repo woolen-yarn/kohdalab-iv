@@ -1361,6 +1361,7 @@ mod tests {
 
     // These tests intentionally use the production GPIB adapter lease key, so
     // serialize them without weakening the production cross-process lock.
+    #[cfg(unix)]
     static GPIB_TEST_LOCK: Mutex<()> = Mutex::new(());
 
     #[test]

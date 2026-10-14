@@ -1,4 +1,4 @@
-//! Shared display policy from the same reviewed TOML resources as Python.
+//! Native display policy from reviewed instrument TOML resources.
 use crate::Mode;
 use std::sync::OnceLock;
 
@@ -6,10 +6,8 @@ fn sources() -> Result<&'static toml::Value, String> {
     static SPECS: OnceLock<Result<toml::Value, String>> = OnceLock::new();
     SPECS
         .get_or_init(|| {
-            toml::from_str(include_str!(
-                "../../../../src/kohdalab_iv/instruments/sources/specs.toml"
-            ))
-            .map_err(|e| format!("Source display specification: {e}"))
+            toml::from_str(include_str!("../../../specs/sources.toml"))
+                .map_err(|e| format!("Source display specification: {e}"))
         })
         .as_ref()
         .map_err(Clone::clone)
@@ -18,10 +16,8 @@ fn meters() -> Result<&'static toml::Value, String> {
     static SPECS: OnceLock<Result<toml::Value, String>> = OnceLock::new();
     SPECS
         .get_or_init(|| {
-            toml::from_str(include_str!(
-                "../../../../src/kohdalab_iv/instruments/meters/specs.toml"
-            ))
-            .map_err(|e| format!("Meter display specification: {e}"))
+            toml::from_str(include_str!("../../../specs/meters.toml"))
+                .map_err(|e| format!("Meter display specification: {e}"))
         })
         .as_ref()
         .map_err(Clone::clone)

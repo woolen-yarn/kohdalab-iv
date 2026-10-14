@@ -1,174 +1,94 @@
 # KohdaLab IV
 
-[![Test](https://github.com/Kohdalab/kohdalab-iv/actions/workflows/test.yml/badge.svg)](https://github.com/Kohdalab/kohdalab-iv/actions/workflows/test.yml)
-[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
-![Python](https://img.shields.io/badge/python-3.13%2B-blue)
+A Rust desktop for DC I-V and V-I measurements with GS210 and 34411A over direct
+USB or USB-GPIB. The three-column interface keeps setup on the left, measurement
+and the I-V graph in the center, and detailed values/logs on the right.
 
-KohdaLab IV provides a native Rust desktop and a Python toolkit for reproducible
-DC I-V and V-I measurements from GUI, CLI, and Jupyter Notebook workflows.
+## Native version: 0.4.0
 
-## Portable desktop downloads
+Config stays at the top of the left panel. Source and Meter each contain a compact
+resolution-aware readout, zero-centered level bar and filled time-history trend,
+including while connected before measurement. The channel follows the actual
+source function: V at Source / I at Meter, or I at Source / V at Meter.
+Source level and meter readings are clearly distinguished. A single measurement
+engine owns the devices; live monitoring runs between source steps during settling and uses each
+meter conversion during averaging. Monitoring never enables the source output.
 
-Download the native Rust portable ZIP for your computer (**v0.3.4**):
+The application, planning, IPC and UI are Rust. The old Python application,
+compatibility CSV API and legacy Python CI/builds are removed. A lightweight
+[Python control client](bindings/python/README.md) supports scripts and Notebooks
+by calling the same Rust engine; no measurement logic is duplicated.
+Reviewed instrument profiles live in `next/specs/`. Native USB/GPIB helpers remain
+separate processes with their own licenses and OS boundaries.
 
-| Platform | Kohdalab download | Personal mirror |
+## Published portable downloads
+
+The current published release is **v0.4.0**.
+
+| Platform | Kohdalab | Personal mirror |
 | --- | --- | --- |
-| macOS — Apple Silicon (arm64) | [Download Mac portable](https://github.com/Kohdalab/kohdalab-iv/releases/download/portable-v0.3.4/kohdalab-iv-0.3.4-macos-arm64-portable.zip) | [Download Mac portable](https://github.com/woolen-yarn/kohdalab-iv/releases/download/portable-v0.3.4/kohdalab-iv-0.3.4-macos-arm64-portable.zip) |
-| Windows — 64-bit (x64) | [Download Windows portable](https://github.com/Kohdalab/kohdalab-iv/releases/download/portable-v0.3.4/kohdalab-iv-0.3.4-windows-x64-portable.zip) | [Download Windows portable](https://github.com/woolen-yarn/kohdalab-iv/releases/download/portable-v0.3.4/kohdalab-iv-0.3.4-windows-x64-portable.zip) |
+| macOS Apple Silicon | [Mac portable](https://github.com/Kohdalab/kohdalab-iv/releases/download/portable-v0.4.0/kohdalab-iv-0.4.0-macos-arm64-portable.zip) | [Mac portable](https://github.com/woolen-yarn/kohdalab-iv/releases/download/portable-v0.4.0/kohdalab-iv-0.4.0-macos-arm64-portable.zip) |
+| Windows x64 | [Windows portable](https://github.com/Kohdalab/kohdalab-iv/releases/download/portable-v0.4.0/kohdalab-iv-0.4.0-windows-x64-portable.zip) | [Windows portable](https://github.com/woolen-yarn/kohdalab-iv/releases/download/portable-v0.4.0/kohdalab-iv-0.4.0-windows-x64-portable.zip) |
 
-Extract the entire ZIP and open `KohdaLab IV Next.app` on Mac or
-`kohdalab-iv-next.exe` on Windows. Python, Rust and vendor VISA are not required
-on the instrument PC. On Windows, run `support/USB-Setup.exe` for initial WinUSB
-setup if necessary. The Mac app is ad hoc signed and not notarized.
-This edition supports GS210 and 34411A; it uses a separate config format from
-the Python edition. See [the native desktop guide](next/README.md) for setup,
-build instructions and known limitations.
+[Source build kit (Kohdalab)](https://github.com/Kohdalab/kohdalab-iv/releases/download/portable-v0.4.0/kohdalab-iv-0.4.0-build-kit.zip) ·
+[Source build kit (personal)](https://github.com/woolen-yarn/kohdalab-iv/releases/download/portable-v0.4.0/kohdalab-iv-0.4.0-build-kit.zip) ·
+[SHA-256 checksums](https://github.com/Kohdalab/kohdalab-iv/releases/download/portable-v0.4.0/SHA256SUMS.txt)
 
-This update adds nonnegative timing inputs, automatic graph units and
-range/resolution-based screen readings. CSV retains unrounded SI values using
-17-digit scientific notation. Per-model policies and their review limitations
-are documented in [the instrument precision audit](docs/instrument_precision.md).
+Extract the whole ZIP. Mac: open `KohdaLab IV Next.app`; Windows: open
+`kohdalab-iv-next.exe`. No Python, Rust or manufacturer VISA installation is
+needed to run it. Windows may need the included `support/USB-Setup.exe` for WinUSB.
+Mac bundles are ad hoc signed, not Apple-notarized.
 
-For source, build kit, checksums and release notes, visit the
-[Kohdalab v0.3.4 release](https://github.com/Kohdalab/kohdalab-iv/releases/tag/portable-v0.3.4)
-or the [personal mirror](https://github.com/woolen-yarn/kohdalab-iv/releases/tag/portable-v0.3.4).
+## Build and validation
 
-### Previous Python desktop v0.2.3
+Install the Rust toolchain declared in `next/rust-toolchain.toml`.
 
-The Python portable remains available for existing workflows and other models:
-
-The Windows package was updated on 2026-10-07 with NI USB-HS+ initialization
-and driver-removal recovery fixes. Full driver reinstallation took about
-3 seconds on the test PC, down from about 70 seconds; timing varies by PC.
-
-| Platform | Kohdalab download | Personal mirror |
-| --- | --- | --- |
-| macOS — Apple Silicon (arm64) | [Download Mac portable](https://github.com/Kohdalab/kohdalab-iv/releases/download/portable-v0.2.3/kohdalab-iv-0.2.3-macos-arm64-portable.zip) | [Download Mac portable](https://github.com/woolen-yarn/kohdalab-iv/releases/download/portable-v0.2.3/kohdalab-iv-0.2.3-macos-arm64-portable.zip) |
-| Windows — 64-bit (x64) | [Download Windows portable](https://github.com/Kohdalab/kohdalab-iv/releases/download/portable-v0.2.3/kohdalab-iv-0.2.3-windows-x64-portable.zip) | [Download Windows portable](https://github.com/woolen-yarn/kohdalab-iv/releases/download/portable-v0.2.3/kohdalab-iv-0.2.3-windows-x64-portable.zip) |
-
-For build kits, checksums and release notes, visit the
-[Kohdalab release](https://github.com/Kohdalab/kohdalab-iv/releases/tag/portable-v0.2.3)
-or the [personal release](https://github.com/woolen-yarn/kohdalab-iv/releases/tag/portable-v0.2.3).
-
-Extract the entire ZIP and open the app. Supported native connections do not
-require Python or VISA. Build kits are included in `portable/build-kits` and
-as release assets. See [the portable guide](docs/portable_release.md) for
-setup, supported connections and rebuild instructions.
-
-## What It Does
-
-A Rust desktop is available in [next/](next/README.md).
-The native edition keeps the established USB/GPIB helpers and introduces a
-responsive GUI and separate measurement engine. See the
-[implementation plan](docs/next_version_plan.md) for its intended release criteria.
-Measured startup, memory, simulation processing and archive sizes are recorded in
-[the Rust and Python comparison](docs/performance_comparison.md).
-The alpha.2 internal optimizations and before/after measurements are in
-[the Rust optimization report](docs/rust_optimization.md).
-
-- Controls supported source and meter instruments through a shared measurement API.
-- Validates sweep targets, source resolution, ranges, NPLC, limits, and compliance before measurement.
-- Supports linear, round-trip, zero-centered, and custom-point sweeps.
-- Writes provenance-rich CSV rows continuously so partial results survive a controlled stop.
-- Returns the source to zero and turns output off on normal finish, Stop, and configured error paths.
-- Includes simulated instruments and hardware-free tests with 100% statement and branch coverage.
-- Displays the installed package version in the GUI title.
-
-## Quick Start
-
-For a new PC, start with [Initial setup](docs/initial_setup.md).
-
-For repository development:
-
-```powershell
-uv sync --all-extras --group dev --frozen
-uv run pre-commit install --install-hooks
-uv run kohdalab-iv init-config config/local.json
-uv run kohdalab-iv --config config/local.json doctor
-uv run --extra gui kohdalab-iv-gui
+```sh
+cd next
+cargo fmt --all --check
+cargo clippy --workspace --all-targets --locked -- -D warnings
+cargo test --workspace --locked
+cargo build --release --locked
 ```
 
-For a local installation without development tools:
+See [native build/setup guide](next/README.md) for platform packaging. Optional
+host-only packaging/validation tools use Python standard-library scripts; the
+application and its CI do not depend on the former Python toolkit.
 
-```powershell
-python -m pip install .
-python -m pip install ".[gui]"
-python -m pip install ".[notebook]"
-```
+## Data and instrument semantics
 
-The base package installs the API and CLI. GUI and Notebook dependencies are explicit extras, so headless instrument PCs and automation environments do not need Qt or Jupyter.
+The native CSV has 14 columns: timestamp, elapsed time, point/repeat/sweep
+indices, direction, target and unit, voltage/current, origins, limit flag and
+status. Numeric values use shortest round-trip scientific notation. Display
+rounding does not change saved values or protection comparisons. Keep the CSV
+and `.run.json` together; settings are saved before output is enabled.
 
-Use `kohdalab-iv --version` to report the installed version. The `doctor` command
-reports the resolved config, scan plan, Python/platform details, and visible VISA
-resources without starting a measurement. Add `--json` for support automation.
+The GS210 level query is programmed source level, not an independent measurement
+of the voltage/current delivered to a load. Display resolution is not a
+measurement-uncertainty guarantee.
 
-Run a complete hardware-free measurement:
+- [Instrument precision and limitations](docs/instrument_precision.md)
+- [CSV column audit](docs/csv_column_audit.md)
+- [Safety](SAFETY.md)
+- [Native helper sources and licenses](native/README.md)
 
-```powershell
-uv run kohdalab-iv --config src/kohdalab_iv/resources/simulated.json measure
-```
+Historical benchmark reports and prior GitHub releases remain available as
+evidence of the migration. MIT covers the Rust application; retain all native
+helper and dependency source/license notices when distributing portable bundles.
 
-The simulated profile models a 1 kOhm circuit and uses the same planning, session, cleanup, and CSV-writing path as a real measurement.
+Live acquisition targets a 50 ms start-to-start interval (up to 20 samples/s),
+with a 33 ms display refresh interval. Actual acquisition rate depends on the
+instrument, NPLC and USB/GPIB latency; no synthetic measured samples are added.
+All floating CSV columns (`elapsed_s`, `target_value`, `voltage_V`, `current_A`)
+use shortest round-trip scientific notation, including zero (`0e0`).
 
-Run development checks:
+The central I-V plot ignores ordinary wheel scrolling. Drag, boxed zoom,
+modifier-wheel zoom and double-click reset remain available. Direction colors
+share measured turning points, so forward/backward lines meet at the endpoints.
+Excel may reformat numeric CSV cells on import; choose Scientific number format
+in Excel to display all electrical values as exponents. CSV text remains scientific.
 
-```powershell
-uv run python scripts/check_project.py quality
-uv run --group package python scripts/check_project.py package
-uv run --group audit python scripts/check_project.py audit
-```
-
-## Configuration
-
-The packaged default is the single source of truth for the standard configuration. Resolution order is:
-
-1. explicit `--config PATH`;
-2. `KOHDALAB_IV_CONFIG`;
-3. the last config selected in the GUI;
-4. optional lab default from `KOHDALAB_IV_DEFAULT_CONFIG`;
-5. packaged `src/kohdalab_iv/resources/default.json` during repository development.
-
-Do not edit an installed package's bundled JSON. Create a local editable copy with `kohdalab-iv init-config config/local.json`, update VISA resource strings and safety limits, then select it with `--config` or the GUI. Existing files are never replaced unless `--force` is provided. See [Usage](docs/usage.md) for the schema and operating details.
-
-Configs use `"config_version": 1`. Legacy files without the field are normalized to version 1; newer unsupported versions fail before hardware access. The packaged [JSON Schema](src/kohdalab_iv/resources/config.schema.json) supports editor completion and independent validation.
-
-## Supported Instruments
-
-Sources:
-
-- Yokogawa GS210
-- Yokogawa 7651
-- simulated source
-
-Meters:
-
-- Agilent/HP 34401A
-- Agilent 34411A
-- Keysight 34411A and 34465A
-- ADCMT 7461A using GPIB SCPI or USB/ADC commands
-- simulated meter
-
-Real hardware operation requires the checks in [Safety notes](SAFETY.md) and the [Hardware smoke-test guide](docs/hardware_smoke_test.md).
-
-## Documentation
-
-- [Initial setup](docs/initial_setup.md): install tools, clone, sync, and verify the environment.
-- [Usage guide](docs/usage.md): GUI, CLI, config, instruments, CSV, and safety behavior.
-- [API usage](docs/api_usage.md): public Python API and callback examples.
-- [I-V measurement specification](docs/iv_measurement_spec.md): scan-plan and output-field details.
-- [Hardware smoke test](docs/hardware_smoke_test.md): conservative first-run procedure for real instruments.
-- [Windows setup](docs/windows_setup.md): VISA and instrument-PC preparation.
-- [Standalone apps](docs/standalone.md): build Windows and Mac apps with Python included.
-- [Next version plan](docs/next_version_plan.md): Rust desktop architecture, UI and UX, compatibility, performance targets, and implementation phases.
-- [Roadmap](ROADMAP.md): planned milestones.
-- [Safety notes](SAFETY.md): operator responsibilities and safety assumptions.
-- [Contributing](CONTRIBUTING.md): architecture boundaries and development checks.
-- [Changelog](CHANGELOG.md): released and upcoming changes.
-
-## Project Status
-
-The current development version is `0.2.3`. It includes simulated end-to-end measurements, configuration preflight validation, provenance-rich CSV output, GUI run-state protection, cross-platform Python 3.13 CI, release-artifact verification, and 100% statement and branch coverage.
-
-## License
-
-MIT. See [LICENSE](LICENSE).
+Voltage uses amber; current uses teal. Forward/backward sweeps use blue/purple
+with a legend. Changing Mode while idle switches live source/meter functions
+after verifying output OFF and zero level. The GUI applies the chosen Mode on
+source connection; changing Mode never enables output.

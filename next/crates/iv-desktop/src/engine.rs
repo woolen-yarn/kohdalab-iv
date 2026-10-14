@@ -165,6 +165,10 @@ pub fn serve() -> Result<(), String> {
     });
     let mut pair: Option<DevicePair> = None;
     let mut state = Snapshot::default();
+    let monitor_begin = Instant::now();
+    let mut last_monitor = Instant::now();
+    let mut monitor_mode = None;
+    let mut simulation_mode = Mode::Iv;
     publish(&latest, &state);
     while !control.closed.load(Ordering::Acquire) {
         if (state.source_connected || state.meter_connected)
@@ -182,13 +186,91 @@ pub fn serve() -> Result<(), String> {
             clear_connections(&mut state);
             publish(&latest, &state);
         }
-        let command = match rx.recv_timeout(Duration::from_millis(100)) {
+        // Schedule from the start of the preceding acquisition, so transport
+        // time does not add another fixed delay. Check queued controls first.
+        let monitor_interval = Duration::from_millis(50);
+        let monitor_ready = state.connected
+            && state.source_simulation == state.meter_simulation
+            && state.error.is_empty();
+        let wait = if monitor_ready {
+            monitor_interval.saturating_sub(last_monitor.elapsed())
+        } else {
+            Duration::from_millis(100)
+        };
+        let command = match rx.recv_timeout(wait) {
             Ok(command) => command,
-            Err(mpsc::RecvTimeoutError::Timeout) => continue,
+            Err(mpsc::RecvTimeoutError::Timeout) => {
+                if monitor_ready && last_monitor.elapsed() >= monitor_interval {
+                    last_monitor = Instant::now();
+                    let result = if state.simulation {
+                        let config = RunConfig {
+                            mode: simulation_mode,
+                            ..Default::default()
+                        };
+                        let point = iv_core::SweepPoint {
+                            target: 0.0,
+                            direction: "monitor".into(),
+                            repeat_index: 0,
+                            sweep_index: 0,
+                            point_index: 0,
+                            total_points: 0,
+                        };
+                        let mut record =
+                            simulate_record(&config, &point, monitor_begin.elapsed().as_secs_f64());
+                        record.timestamp = timestamp();
+                        Ok(record)
+                    } else {
+                        monitor_reading(
+                            pair.as_mut().ok_or("Live monitor transport missing")?,
+                            &mut monitor_mode,
+                            monitor_begin.elapsed().as_secs_f64(),
+                            &control,
+                            &mut state.output,
+                        )
+                    };
+                    match result {
+                        Ok(record) => {
+                            state.live = Some(record);
+                            state.live_error.clear();
+                        }
+                        Err(_)
+                            if control.closed.load(Ordering::Acquire)
+                                || control.off.load(Ordering::Acquire) => {}
+                        Err(error) => {
+                            state.live_error = error.clone();
+                            state.error =
+                                format!("Live monitor failed: {error}. Reconnect the instruments.");
+                            state.phase = "Failed".into();
+                            clean_output(pair.as_mut(), &mut state, None, &control);
+                        }
+                    }
+                    publish(&latest, &state);
+                }
+                continue;
+            }
             Err(_) => break,
         };
+        monitor_mode = None;
+        let resume_monitor = matches!(
+            &command,
+            Command::OutputOff
+                | Command::Connect { .. }
+                | Command::ConnectSource { .. }
+                | Command::ConnectMeter { .. }
+                | Command::SetLiveMode { .. }
+        );
         let result = match command {
             Command::Discover => discover(pair.as_mut(), &mut state, &latest),
+            Command::SetLiveMode { mode } => {
+                state.phase = "Switching mode".into();
+                state.message = "Verifying output off before switching live channels…".into();
+                publish(&latest, &state);
+                let result = set_live_mode(pair.as_mut(), &mut state, mode);
+                if result.is_ok() {
+                    simulation_mode = mode;
+                }
+                result
+            }
             Command::Connect {
                 simulation,
                 source,
@@ -219,19 +301,22 @@ pub fn serve() -> Result<(), String> {
             Command::DisconnectMeter => {
                 disconnect_role(&mut pair, &mut state, Role::Meter, &control)
             }
-            Command::Run { config, path } => execute(
-                &config,
-                Path::new(&path),
-                if state.simulation {
-                    None
-                } else {
-                    pair.as_mut()
-                },
-                &control,
-                &mut state,
-                &latest,
-                &points_tx,
-            ),
+            Command::Run { config, path } => {
+                simulation_mode = config.mode;
+                execute(
+                    &config,
+                    Path::new(&path),
+                    if state.simulation {
+                        None
+                    } else {
+                        pair.as_mut()
+                    },
+                    &control,
+                    &mut state,
+                    &latest,
+                    &points_tx,
+                )
+            }
             Command::OutputOff => {
                 clean_output(pair.as_mut(), &mut state, None, &control);
                 if state.output == "Off" {
@@ -244,6 +329,9 @@ pub fn serve() -> Result<(), String> {
                 .and_then(|()| disconnect_role(&mut pair, &mut state, Role::Meter, &control)),
             _ => Ok(()),
         };
+        if result.is_ok() && resume_monitor && state.output == "Off" {
+            control.off.store(false, Ordering::Release);
+        }
         if let Err(error) = result {
             state.phase = "Failed".into();
             state.error = error;
@@ -284,6 +372,7 @@ fn begin_connect(state: &mut Snapshot, latest: &StateFeed) {
     state.phase = "Connecting".into();
     state.message = "Verifying instrument identity…".into();
     state.error.clear();
+    state.live_error.clear();
     publish(latest, state);
 }
 
@@ -470,19 +559,6 @@ fn discover(
     Ok(())
 }
 
-fn sleep(seconds: f64, control: &Control) -> bool {
-    let end = Instant::now() + Duration::from_secs_f64(seconds.max(0.0));
-    while Instant::now() < end {
-        if control.cancelled() {
-            return false;
-        }
-        std::thread::sleep(
-            Duration::from_millis(10).min(end.saturating_duration_since(Instant::now())),
-        );
-    }
-    !control.cancelled()
-}
-
 fn timestamp() -> String {
     time::OffsetDateTime::now_utc()
         .format(&time::format_description::well_known::Rfc3339)
@@ -578,6 +654,192 @@ fn configure(
     Ok(())
 }
 
+fn monitor_query(
+    pair: &mut DevicePair,
+    role: Role,
+    command: &str,
+    control: &Control,
+) -> Result<String, String> {
+    if control.closed.load(Ordering::Acquire)
+        || control.off.load(Ordering::Acquire)
+        || control
+            .heartbeat
+            .lock()
+            .map_or(true, |h| h.elapsed() > Duration::from_secs(2))
+    {
+        return Err("Live acquisition interrupted".into());
+    }
+    pair.query(role, command)
+}
+
+// Live mode changes happen only on the device-owner thread, between runs.
+// Require verified OFF and zero level before changing the source function.
+fn set_live_mode(
+    pair: Option<&mut DevicePair>,
+    state: &mut Snapshot,
+    mode: Mode,
+) -> Result<(), String> {
+    if !state.error.is_empty() {
+        return Err(state.error.clone());
+    }
+    if !state.source_connected {
+        return Err("Connect the source before changing live mode".into());
+    }
+    if state.connected && state.source_simulation != state.meter_simulation {
+        return Err("Live mode requires two real or two simulated instruments".into());
+    }
+    state.live = None;
+    if !state.source_simulation {
+        let device = pair.ok_or("Source transport unavailable")?;
+        let report = device.force_output_off()?;
+        if !report.output_off_verified {
+            return Err("Output OFF was not verified; live mode unchanged".into());
+        }
+        state.output = "Off".into();
+        device.write(Role::Source, ":SOUR:LEV:FIX 0")?;
+        let zero = device
+            .query(Role::Source, ":SOUR:LEV?")?
+            .trim()
+            .parse::<f64>()
+            .map_err(|_| "Source zero level could not be verified")?;
+        if zero != 0.0 {
+            return Err("Source zero level could not be verified; live mode unchanged".into());
+        }
+        let function = if mode == Mode::Iv { "VOLT" } else { "CURR" };
+        device.write(Role::Source, &format!(":SOUR:FUNC {function}"))?;
+        let actual = device
+            .query(Role::Source, ":SOUR:FUNC?")?
+            .trim()
+            .trim_matches('"')
+            .to_ascii_uppercase();
+        if !actual.starts_with(function) {
+            return Err("Source function change was not confirmed".into());
+        }
+        // The instrument may retain a separate level for each source function.
+        device.write(Role::Source, ":SOUR:LEV:FIX 0")?;
+        let new_zero = device
+            .query(Role::Source, ":SOUR:LEV?")?
+            .trim()
+            .parse::<f64>()
+            .map_err(|_| "New source function zero level could not be verified")?;
+        if new_zero != 0.0 {
+            return Err("New source function zero level could not be verified".into());
+        }
+        if state.meter_connected {
+            let measure = if mode == Mode::Iv { "CURR" } else { "VOLT" };
+            device.write(Role::Meter, &format!("CONF:{measure}:DC"))?;
+            device.write(Role::Meter, &format!("SENS:{measure}:DC:RANG:AUTO ON"))?;
+            device.write(Role::Meter, &format!("SENS:{measure}:DC:NPLC 1"))?;
+            device.write(Role::Meter, "TRIG:SOUR IMM")?;
+        }
+        for role in [Role::Source, Role::Meter] {
+            if role == Role::Meter && !state.meter_connected {
+                continue;
+            }
+            let error = device.query(role, "SYST:ERR?")?;
+            if !error.trim_start().starts_with("0,") && !error.trim_start().starts_with("+0,") {
+                return Err(format!("Live mode configuration failed: {error}"));
+            }
+        }
+    }
+    state.output = "Off".into();
+    state.live_error.clear();
+    state.phase = "Ready".into();
+    state.message = format!("Live mode {} · output off verified", mode.as_str());
+    Ok(())
+}
+
+fn monitor_reading(
+    pair: &mut DevicePair,
+    configured: &mut Option<Mode>,
+    elapsed: f64,
+    control: &Control,
+    output: &mut String,
+) -> Result<Record, String> {
+    let function = monitor_query(pair, Role::Source, ":SOUR:FUNC?", control)?;
+    let mode = match function
+        .trim()
+        .trim_matches('"')
+        .to_ascii_uppercase()
+        .as_str()
+    {
+        "VOLT" | "VOLTAGE" => Mode::Iv,
+        "CURR" | "CURRENT" => Mode::Vi,
+        _ => return Err(format!("Unknown source function: {function}")),
+    };
+    let measure = if mode == Mode::Iv { "CURR" } else { "VOLT" };
+    if *configured != Some(mode) {
+        pair.write(Role::Meter, &format!("CONF:{measure}:DC"))?;
+        pair.write(Role::Meter, &format!("SENS:{measure}:DC:RANG:AUTO ON"))?;
+        pair.write(Role::Meter, &format!("SENS:{measure}:DC:NPLC 1"))?;
+        pair.write(Role::Meter, "TRIG:SOUR IMM")?;
+        *configured = Some(mode);
+    }
+    if control.closed.load(Ordering::Acquire) || control.off.load(Ordering::Acquire) {
+        return Err("Live acquisition interrupted by output-off/shutdown".into());
+    }
+    let measured = monitor_query(pair, Role::Meter, "READ?", control)?
+        .trim()
+        .parse::<f64>()
+        .map_err(|_| "Invalid live meter reading")?;
+    if !measured.is_finite() || measured.abs() > 1e30 {
+        return Err("Live meter overload".into());
+    }
+    let raw_source = monitor_query(pair, Role::Source, ":SOUR:LEV?", control)?;
+    let source = raw_source
+        .trim()
+        .parse::<f64>()
+        .map_err(|_| "Live source level unavailable")?;
+    if !source.is_finite() {
+        return Err("Invalid live source level".into());
+    }
+    let range = monitor_query(
+        pair,
+        Role::Source,
+        iv_core::source_range_query("YOKOGAWA_GS210")?.ok_or("Source range query unavailable")?,
+        control,
+    )?;
+    let (range_query, resolution_query) = iv_core::meter_display_queries("AGILENT_34411A", mode)?
+        .ok_or("Meter display queries unavailable")?;
+    let meter_range = positive_reading(&monitor_query(pair, Role::Meter, range_query, control)?);
+    let meter_resolution = positive_reading(&monitor_query(
+        pair,
+        Role::Meter,
+        resolution_query,
+        control,
+    )?);
+    let raw_output = monitor_query(pair, Role::Source, ":OUTP?", control)?;
+    *output = match raw_output.trim() {
+        "0" | "+0" | "OFF" => "Off",
+        "1" | "+1" | "ON" => "On",
+        _ => return Err("Unknown source output state".into()),
+    }
+    .into();
+    let config = RunConfig {
+        mode,
+        ..Default::default()
+    };
+    let point = iv_core::SweepPoint {
+        target: source,
+        direction: "monitor".into(),
+        repeat_index: 0,
+        sweep_index: 0,
+        point_index: 0,
+        total_points: 0,
+    };
+    let mut record = simulate_record(&config, &point, elapsed);
+    record.timestamp = timestamp();
+    record.source_set = source;
+    record.source_readback = Some(source);
+    record.meter_value = measured;
+    record.source_resolution = positive_reading(&range).and_then(|r| source_resolution(mode, r));
+    record.meter_range = meter_range;
+    record.meter_resolution = meter_resolution;
+    record.source_resource = "source.gs210".into();
+    record.meter_resource = "meter.dmm_34411a".into();
+    Ok(record)
+}
+
 fn set_level(pair: &mut DevicePair, level: f64) -> Result<(), String> {
     pair.write(Role::Source, &format!(":SOUR:LEV:FIX {level:.12e}"))
 }
@@ -594,6 +856,21 @@ fn positive_reading(text: &str) -> Option<f64> {
         .parse::<f64>()
         .ok()
         .filter(|v| v.is_finite() && *v > 0.0 && *v < 1e30)
+}
+
+fn write_json_new(path: &Path, value: &serde_json::Value) -> std::io::Result<()> {
+    let mut file = std::fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(path)?;
+    serde_json::to_writer_pretty(&mut file, value).map_err(std::io::Error::other)?;
+    file.sync_all()
+}
+
+fn replace_json(path: &Path, value: &serde_json::Value) -> std::io::Result<()> {
+    let temporary = path.with_extension("json.tmp");
+    write_json_new(&temporary, value)?;
+    std::fs::rename(temporary, path)
 }
 
 fn clean_output(
@@ -668,6 +945,113 @@ fn clean_output(
     }
 }
 
+// One owner serializes device I/O. Live samples use the already configured
+// sweep NPLC and never enter the CSV or resistance fit.
+struct SweepMonitor<'a> {
+    config: &'a RunConfig,
+    control: &'a Control,
+    latest: &'a StateFeed,
+    begin: Instant,
+    last: Instant,
+    source_resolution: Option<f64>,
+}
+impl SweepMonitor<'_> {
+    fn record(&self, level: f64) -> Record {
+        let point = iv_core::SweepPoint {
+            target: level,
+            direction: "monitor".into(),
+            repeat_index: 0,
+            sweep_index: 0,
+            point_index: 0,
+            total_points: 0,
+        };
+        let mut record = simulate_record(self.config, &point, self.begin.elapsed().as_secs_f64());
+        record.status = "live".into();
+        record
+    }
+
+    fn publish(&mut self, mut record: Record, state: &mut Snapshot) {
+        record.timestamp = timestamp();
+        state.live = Some(record);
+        publish(self.latest, state);
+    }
+
+    fn acquire(&self, pair: Option<&mut DevicePair>, level: f64) -> Result<Record, String> {
+        let mut record = self.record(level);
+        if let Some(device) = pair {
+            let measured = monitor_query(device, Role::Meter, "READ?", self.control)?;
+            record.meter_value = measured
+                .trim()
+                .parse::<f64>()
+                .map_err(|_| "Invalid live meter reading")?;
+            if !record.meter_value.is_finite() || record.meter_value.abs() > 1e30 {
+                return Err("Meter overload during live settling acquisition".into());
+            }
+            let readback = monitor_query(device, Role::Source, ":SOUR:LEV?", self.control)?;
+            let readback = readback
+                .trim()
+                .parse::<f64>()
+                .map_err(|_| "Invalid live source level")?;
+            if !readback.is_finite() {
+                return Err("Invalid live source level".into());
+            }
+            record.source_readback = Some(readback);
+            record.source_resolution = self.source_resolution;
+            let (range, resolution) =
+                iv_core::meter_display_queries("AGILENT_34411A", self.config.mode)?
+                    .ok_or("Reviewed meter display queries are unavailable")?;
+            record.meter_range =
+                positive_reading(&monitor_query(device, Role::Meter, range, self.control)?);
+            record.meter_resolution = positive_reading(&monitor_query(
+                device,
+                Role::Meter,
+                resolution,
+                self.control,
+            )?);
+            record.source_resource = "source.gs210".into();
+            record.meter_resource = "meter.dmm_34411a".into();
+        }
+        Ok(record)
+    }
+
+    fn wait(
+        &mut self,
+        seconds: f64,
+        mut pair: Option<&mut DevicePair>,
+        level: f64,
+        state: &mut Snapshot,
+    ) -> Result<bool, String> {
+        let end = Instant::now() + Duration::from_secs_f64(seconds.max(0.0));
+        // Avoid starting a conversion at the end of a short ramp/settling wait.
+        // Budget conservatively for 50 Hz mains, autozero and transport overhead.
+        let budget = if pair.is_some() {
+            Duration::from_secs_f64((self.config.nplc * 2.0 / 50.0 + 0.03).max(0.05))
+        } else {
+            Duration::from_millis(1)
+        };
+        while Instant::now() < end {
+            if self.control.cancelled() {
+                return Ok(false);
+            }
+            if self.last.elapsed() >= Duration::from_millis(50)
+                && end.saturating_duration_since(Instant::now()) >= budget
+            {
+                self.last = Instant::now();
+                let reading = self.acquire(pair.as_deref_mut(), level);
+                if self.control.cancelled() {
+                    return Ok(false);
+                }
+                self.publish(reading?, state);
+            } else {
+                std::thread::sleep(
+                    Duration::from_millis(10).min(end.saturating_duration_since(Instant::now())),
+                );
+            }
+        }
+        Ok(!self.control.cancelled())
+    }
+}
+
 fn execute(
     config: &RunConfig,
     path: &Path,
@@ -700,6 +1084,11 @@ fn execute(
         std::fs::create_dir_all(parent).map_err(|e| format!("Create result folder: {e}"))?;
     }
     let mut writer = CsvWriter::create(path)?;
+    let manifest = path.with_extension("run.json");
+    let initial_metadata = serde_json::json!({"schema_version":3,"csv_schema":"compact_v2","csv_fields":iv_core::CSV_FIELDS,"csv_numeric_format":"shortest_roundtrip_scientific","application_version":env!("CARGO_PKG_VERSION"),"config":config,"outcome":state,"in_progress":true,
+        "source_range_setting":planned.source_range,"hardware_compliance_setting":planned.hardware_compliance,"display_settings_changes":[],"simulation":state.simulation,"csv":path.display().to_string()});
+    write_json_new(&manifest, &initial_metadata)
+        .map_err(|error| format!("Cannot save settings before enabling output: {error}"))?;
     let begin = Instant::now();
     let mut level = 0.0;
     let mut stopped = false;
@@ -707,6 +1096,17 @@ fn execute(
     let mut fit = ResistanceFit::default();
     let mut last_progress = Instant::now();
     let mut actual_source_resolution = None;
+    let mut live = SweepMonitor {
+        config,
+        control,
+        latest,
+        begin,
+        last: Instant::now(),
+        source_resolution: None,
+    };
+    let mut display_settings_changes = Vec::new();
+    let mut instrument_status_events = Vec::new();
+    let mut previous_display_settings = None;
     let work = (|| -> Result<(), String> {
         if let Some(device) = pair.as_deref_mut() {
             configure(
@@ -720,6 +1120,7 @@ fn execute(
             let range = device.query(Role::Source, range_query)?;
             actual_source_resolution =
                 positive_reading(&range).and_then(|range| source_resolution(config.mode, range));
+            live.source_resolution = actual_source_resolution;
             if control.cancelled() {
                 stopped = true;
                 return Ok(());
@@ -747,7 +1148,7 @@ fn execute(
                     }
                     level += (point.target - level).signum() * config.ramp_step;
                     set_level(device, level)?;
-                    if !sleep(config.ramp_wait_s, control) {
+                    if !live.wait(config.ramp_wait_s, Some(device), level, state)? {
                         stopped = true;
                         break;
                     }
@@ -763,7 +1164,7 @@ fn execute(
             } else {
                 config.settle_s
             };
-            if !sleep(settling, control) {
+            if !live.wait(settling, pair.as_deref_mut(), level, state)? {
                 stopped = true;
                 break;
             }
@@ -783,6 +1184,7 @@ fn execute(
                         stopped = true;
                         break;
                     }
+                    live.last = Instant::now();
                     let text = device.query(Role::Meter, "READ?")?;
                     let measured = text
                         .trim()
@@ -813,6 +1215,17 @@ fn execute(
                     if let Some(range) = range {
                         meter_range = Some(meter_range.unwrap_or(0.0).max(range));
                     }
+                    // Show each actual conversion, rather than waiting for
+                    // the complete average and the next saved sweep point.
+                    let mut reading = live.record(level);
+                    reading.meter_value = measured;
+                    reading.source_readback = None;
+                    reading.source_resolution = actual_source_resolution;
+                    reading.meter_range = range;
+                    reading.meter_resolution = resolution;
+                    reading.source_resource = "source.gs210".into();
+                    reading.meter_resource = "meter.dmm_34411a".into();
+                    live.publish(reading, state);
                 }
                 if stopped {
                     break;
@@ -844,7 +1257,19 @@ fn execute(
             }
             .into();
             compliance_hit = record.compliance;
-            writer.append(&record, config)?;
+            if !record.instrument_status.is_empty() {
+                instrument_status_events.push(serde_json::json!({"point_index":record.point.point_index,"instrument_status":record.instrument_status}));
+            }
+            let display_settings = (
+                record.source_resolution,
+                record.meter_range,
+                record.meter_resolution,
+            );
+            if previous_display_settings != Some(display_settings) {
+                display_settings_changes.push(serde_json::json!({"point_index":record.point.point_index,"source_resolution":record.source_resolution,"meter_range":record.meter_range,"meter_resolution":record.meter_resolution}));
+                previous_display_settings = Some(display_settings);
+            }
+            writer.append(&record)?;
             let source_value = record.source_readback.unwrap_or(record.source_set);
             let (voltage, current) = if config.mode == Mode::Iv {
                 (source_value, record.meter_value)
@@ -853,6 +1278,10 @@ fn execute(
             };
             state.resistance = fit.add(voltage, current);
             state.last = Some(record.clone());
+            if state.simulation {
+                live.last = Instant::now();
+                live.publish(record.clone(), state);
+            }
             state.points += 1;
             state.elapsed = begin.elapsed().as_secs_f64();
             let _ = events.try_send((state.run_id, record));
@@ -903,18 +1332,9 @@ fn execute(
             format!("{error} · {}", state.error)
         };
     }
-    let manifest = path.with_extension("run.json");
-    let metadata = serde_json::json!({"schema_version":1,"application_version":env!("CARGO_PKG_VERSION"),"config":config,"outcome":state,
-        "simulation":state.simulation,"csv":path.display().to_string()});
-    if let Err(error) = std::fs::OpenOptions::new()
-        .write(true)
-        .create_new(true)
-        .open(manifest)
-        .and_then(|mut f| {
-            serde_json::to_writer_pretty(&mut f, &metadata).map_err(std::io::Error::other)?;
-            f.flush()
-        })
-    {
+    let metadata = serde_json::json!({"schema_version":3,"csv_schema":"compact_v2","csv_fields":iv_core::CSV_FIELDS,"csv_numeric_format":"shortest_roundtrip_scientific","application_version":env!("CARGO_PKG_VERSION"),"config":config,"outcome":state,"in_progress":false,
+        "source_range_setting":planned.source_range,"hardware_compliance_setting":planned.hardware_compliance,"display_settings_changes":display_settings_changes,"instrument_status_events":instrument_status_events,"simulation":state.simulation,"csv":path.display().to_string()});
+    if let Err(error) = replace_json(&manifest, &metadata) {
         state
             .warnings
             .push(format!("Run metadata could not be saved: {error}"));
@@ -925,6 +1345,36 @@ fn execute(
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn metadata_update_keeps_initial_settings_when_final_write_fails() {
+        let path = std::env::temp_dir().join(format!(
+            "iv-metadata-{}-{}.run.json",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        let initial = serde_json::json!({"in_progress":true,"config":{"nplc":1.0}});
+        super::write_json_new(&path, &initial).unwrap();
+        assert!(super::write_json_new(&path, &serde_json::json!({})).is_err());
+        let temporary = path.with_extension("json.tmp");
+        std::fs::write(&temporary, "collision").unwrap();
+        let final_value = serde_json::json!({"in_progress":false,"config":{"nplc":1.0},"points":3});
+        assert!(super::replace_json(&path, &final_value).is_err());
+        assert_eq!(
+            serde_json::from_slice::<serde_json::Value>(&std::fs::read(&path).unwrap()).unwrap(),
+            initial
+        );
+        std::fs::remove_file(&temporary).unwrap();
+        super::replace_json(&path, &final_value).unwrap();
+        assert_eq!(
+            serde_json::from_slice::<serde_json::Value>(&std::fs::read(&path).unwrap()).unwrap(),
+            final_value
+        );
+        std::fs::remove_file(path).unwrap();
+    }
+
     #[test]
     fn gs210_resolution_uses_actual_range_and_rejects_unknown_ranges() {
         assert_eq!(

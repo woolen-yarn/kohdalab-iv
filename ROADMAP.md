@@ -1,54 +1,11 @@
-# Roadmap
+# Native roadmap
 
-This roadmap tracks practical milestones for making KohdaLab IV easier to run, test, and extend across lab instruments.
+Current work: continuous I/V monitor, pinned channel cards and bounded time
+history; a Rust-only application and native CSV/schema.
 
-## v0.1.0 - Project Baseline
+Future work must preserve single-owner instrument access, output shutdown,
+per-point CSV flushing and documented resolution semantics. Extend device
+profiles only after their official protocol has been reviewed and tested.
 
-- MIT license, contribution guide, security policy, safety notes, and changelog.
-- GitHub issue templates, pull request template, CODEOWNERS, Dependabot, and CI on Ubuntu and Windows.
-- Windows setup documentation for instrument PCs.
-- Repository topics, labels, branch protection, and release metadata.
-
-## v0.2.0 - Measurement Core Hardening
-
-- Add hardware-free simulated source and meter drivers for development and CI.
-- Preserve measurement metadata, compliance state, ranges, and instrument status in CSV output.
-- Clarify user-facing I-V and V-I mode labels across CLI, GUI, and notebook workflows.
-- Add regression tests for sweep generation, unit parsing, CSV schema, and stop/ramp safety behavior.
-
-## v0.2.1 - Project Foundation Modernization
-
-- Standardize development and CI on Python 3.13 with shared quality, type, audit, and package checks.
-- Add versioned configuration, JSON Schema validation, config initialization, and environment diagnostics.
-- Strengthen GUI state handling, measurement safety, and hardware-free regression coverage to 100%.
-- Synchronize release metadata and automate guarded version bumps, artifact verification, and draft releases.
-
-## v0.2.2 - Compliance Settings and Shared Config Location
-
-- Expose persistent current and voltage stop thresholds in the GUI.
-- Align the config directory with TRKR while keeping IV settings and path history separate.
-- Preserve legacy settings and validate stop behavior at both positive and negative limits.
-
-## v0.2.3 - Measurement Settings Popup
-
-- Group timing and compliance settings in a popup below Step.
-- Support applying or cancelling edits and preserve config-file persistence.
-- Integrate validated dependency and release-tool updates.
-
-## v0.3.0 - Instrument Coverage
-
-- Expand source and meter driver coverage from shared instrument capability interfaces.
-- Document validated resource strings and known-good settings for each supported instrument.
-- Add example configs for common KohdaLab measurement setups.
-
-## v0.4.0 - User Workflow
-
-- Provide notebook examples for simulated and real-device measurements.
-- Improve GUI session recovery, recent config handling, and live measurement diagnostics.
-- Add optional post-measurement summary plots and metadata reports.
-
-## Later
-
-- Consider plugin-style instrument discovery.
-- Consider structured exports alongside CSV, such as JSON metadata sidecars.
-- Consider remote instrument-PC execution workflows after the local Windows flow is stable.
+Historical migration and performance evidence remains in the docs and Git
+history; historical results must not be rewritten to match later software.
