@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import argparse
-import ast
 import csv
 import json
 from pathlib import Path
@@ -93,26 +92,37 @@ def main() -> None:
             and not completed["error"]
         )
         assert abs(completed["resistance"] - 1000) < 1e-9
-        root = Path(__file__).resolve().parents[1]
-        tree = ast.parse((root / "src/kohdalab_iv/api/measurement_rows.py").read_text())
-        expected = next(
-            ast.literal_eval(node.value)
-            for node in tree.body
-            if isinstance(node, ast.Assign)
-            and any(
-                isinstance(t, ast.Name) and t.id == "IV_FIELDS" for t in node.targets
-            )
-        )
+        expected = [
+            "timestamp",
+            "elapsed_s",
+            "point_index",
+            "repeat_index",
+            "sweep_index",
+            "direction",
+            "target_value",
+            "target_unit",
+            "voltage_V",
+            "current_A",
+            "voltage_origin",
+            "current_origin",
+            "software_limit_hit",
+            "status",
+        ]
         with completed_path.open(newline="") as stream:
             rows = csv.DictReader(stream)
             assert rows.fieldnames == expected
             saved = list(rows)
         assert len(saved) == 3 and all(
-            row["source_ref"] == "source.simulated" for row in saved
+            float(row["current_A"]) == float(row["target_value"]) / 1000
+            and row["target_unit"] == "V"
+            for row in saved
         )
         results.append(
-            "completed: 3 points, 46 compatible CSV fields, 1 kOhm fit, output Off"
+            "completed: 3 points, 14 compact CSV fields, 1 kOhm fit, output Off"
         )
+        metadata = json.loads(completed_path.with_suffix(".run.json").read_text())
+        assert metadata["csv_fields"] == expected and not metadata["in_progress"]
+        assert metadata["csv_schema"] == "compact_v2"
         long_config = {**config, "start_settle_s": 10.0}
         send(
             "run",

@@ -27,6 +27,13 @@ fn main() {
 fn run() -> Result<(), String> {
     let boot = Instant::now();
     let args: Vec<String> = std::env::args().collect();
+    if args.iter().any(|a| a == "--default-config") {
+        println!(
+            "{}",
+            serde_json::to_string(&iv_core::RunConfig::default()).map_err(|e| e.to_string())?
+        );
+        return Ok(());
+    }
     if args.iter().any(|a| a == "--engine") {
         return engine::serve();
     }

@@ -1,84 +1,53 @@
 name: Test
-
 on:
   push:
     branches: [main]
   pull_request:
   workflow_dispatch:
-
 permissions:
   contents: read
-
 concurrency:
-  group: test-${{ github.workflow }}-${{ github.ref }}
+  group: rust-${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
-
 jobs:
   test:
-    name: ${{ matrix.check-name }}
+    name: ${{ matrix.os }}
     runs-on: ${{ matrix.os }}
     timeout-minutes: 30
     strategy:
       fail-fast: false
       matrix:
-        include:
-          - os: ubuntu-latest
-            python-version: "3.13"
-            check-name: ubuntu-latest
-          - os: windows-latest
-            python-version: "3.13"
-            check-name: windows-latest
-
+        os: [ubuntu-latest, windows-latest, macos-latest]
     steps:
-      - name: Check out repository
-        uses: actions/checkout@v7
-        with:
-          persist-credentials: false
-
-      - name: Set up uv
-        uses: astral-sh/setup-uv@v7
-        with:
-          enable-cache: true
-          python-version: ${{ matrix.python-version }}
-
-      - name: Install Linux GUI runtime
+      - uses: actions/checkout@v7
+      - name: Linux GUI dependencies
         if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y libegl1 libxkbcommon-dev libwayland-dev
+      - name: Windows resource compiler
+        if: runner.os == 'Windows'
+        shell: pwsh
         run: |
-          sudo apt-get update
-          sudo apt-get install --yes libegl1
-
-      - name: Install dependencies
-        run: uv sync --all-extras --group dev --frozen
-
-      - name: Run project quality checks
-        run: uv run python scripts/check_project.py quality
-
-  package:
-    name: Package smoke test
-    runs-on: ubuntu-latest
-    timeout-minutes: 20
-
-    steps:
-      - name: Check out repository
-        uses: actions/checkout@v7
-        with:
-          persist-credentials: false
-
-      - name: Set up uv
-        uses: astral-sh/setup-uv@v7
-        with:
-          enable-cache: true
-          python-version: "3.13"
-
-      - name: Install package validation tools
-        run: uv sync --only-group package --frozen
-
-      - name: Build and validate distributions
-        run: uv run --only-group package python scripts/check_project.py package --dist-dir dist
-
-      - name: Install and smoke-test wheel
+          $rc = Get-ChildItem 'C:\Program Files (x86)\Windows Kits\10\bin' -Recurse -Filter rc.exe | Where-Object { $_.FullName -match '\\x64\\rc.exe$' } | Sort-Object FullName | Select-Object -Last 1
+          if (-not $rc) { throw 'Windows resource compiler missing' }
+          "RC=$($rc.FullName)" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+      - name: Install Rust toolchain
+        working-directory: next
+        run: rustup toolchain install 1.99.0 --profile minimal --component clippy,rustfmt
+      - name: Format
+        working-directory: next
+        run: cargo fmt --all --check
+      - name: Lints
+        working-directory: next
+        run: cargo clippy --workspace --all-targets --locked -- -D warnings
+      - name: Tests
+        working-directory: next
+        run: cargo test --workspace --locked
+      - name: Python control client (simulation only)
+        shell: bash
         run: |
-          uv venv .wheel-venv
-          uv pip install --python .wheel-venv/bin/python dist/*.whl
-          .wheel-venv/bin/python -c 'from importlib.metadata import version; from kohdalab_iv import __version__; from kohdalab_iv.api.config import DEFAULT_CONFIG_PATH, load_config; assert __version__ == version("kohdalab-iv"); assert DEFAULT_CONFIG_PATH.is_file(); assert load_config()["profile"]["name"] == "default"'
-          .wheel-venv/bin/kohdalab-iv --help
+          if [ "${{ runner.os }}" = Windows ]; then
+            export KOHDALAB_IV_EXE="$PWD/next/target/debug/iv-cli.exe"
+          else
+            export KOHDALAB_IV_EXE="$PWD/next/target/debug/iv-cli"
+          fi
+          python bindings/python/test_native_client.py

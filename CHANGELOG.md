@@ -1,5 +1,23 @@
 # Changelog
 
+## 0.4.0 (2026-10-14)
+
+- Coordinated amber/teal electrical channels and blue/purple sweep directions with a plot legend.
+- Mode changes switch live instrument functions after verified output OFF and zero levels.
+- Live acquisition continues during settling and each averaging conversion without adding CSV rows.
+- Join turning points and render separate finite paths so sweep endpoints remain connected.
+- Ignore ordinary wheel movement in the central graph; retain explicit zoom/pan controls.
+- Support Python/Notebook automation through a thin standard-library client for Rust.
+
+
+- Config at the top; compact I/V readouts, filled time-history trends and zero-centered level bars embedded in Source and Meter.
+- Continuous idle monitoring after both instruments connect, using one worker
+  with sweeps. No source output enable during monitoring.
+- Native 14-column CSV and typed display data; removed the legacy CSV API.
+- Rust-owned instrument TOML, Rust tests/CI and Cargo dependency audit.
+- Removed the former Python application, notebooks and PyInstaller builds.
+
+
 ## Unreleased
 
 - Fix Windows USB installer log sharing so SetupAPI log replacement no longer causes repeated 34-second waits.

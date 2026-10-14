@@ -1,10 +1,10 @@
 # Instrument precision and display policy audit
 
 Reviewed on 2026-10-14. The authoritative per-model configuration is in
-`src/kohdalab_iv/instruments/sources/specs.toml` and
-`src/kohdalab_iv/instruments/meters/specs.toml`. Each model now has a
+`next/specs/sources.toml` and
+`next/specs/meters.toml`. Each model now has a
 `display_precision` table with provenance, policy, review status and limitations.
-Rust embeds those same files; its setting-resolution table and display query
+Rust embeds those files; its setting-resolution table and display query
 commands are no longer independently hardcoded. Parsing is cached.
 
 ## What the numbers mean
@@ -20,8 +20,8 @@ resolution. For example, a resolution of 1.5 nA leads to the 10 nA decimal place
 it does not mean a 1.5 nA quantization lattice. Zero displays without a negative
 sign. Unknown resolution is explicitly marked and does not borrow another
 model's specification. Plot coordinates, fitting, protection comparisons and CSV
-values retain the original floating-point values. CSV uses 17 significant digits
-in scientific notation to round-trip finite f64 values; this is numerical
+values retain the original floating-point values. Native CSV uses shortest-round-trip
+scientific notation to preserve finite f64 values; this is numerical
 persistence, not a claim of 17 physically meaningful digits.
 
 ## Reviewed models

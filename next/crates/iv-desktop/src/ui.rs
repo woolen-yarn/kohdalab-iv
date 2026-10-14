@@ -1,9 +1,10 @@
 use crate::client::Client;
 use crate::protocol::{Command, Snapshot};
 use eframe::egui::{self, Color32, RichText, Stroke, Vec2};
-use egui_plot::{Line, Plot, PlotMemory, PlotPoint, PlotPoints, Points};
-use iv_core::{IV_FIELDS, Mode, Pattern, RunConfig};
+use egui_plot::{Legend, Line, Plot, PlotMemory, PlotPoint, PlotPoints, Points};
+use iv_core::{Mode, Pattern, RunConfig};
 use serde::{Deserialize, Serialize};
+use std::collections::VecDeque;
 use std::path::{Path, PathBuf};
 use std::sync::{
     Arc,
@@ -11,15 +12,17 @@ use std::sync::{
 };
 use std::time::{Duration, Instant};
 
-const BG: Color32 = Color32::from_rgb(5, 5, 5);
-const PANEL: Color32 = Color32::from_rgb(11, 11, 11);
-const INPUT: Color32 = Color32::from_rgb(17, 17, 17);
-const BUTTON: Color32 = Color32::from_rgb(27, 27, 27);
-const BORDER: Color32 = Color32::from_rgb(51, 51, 51);
-const TEXT: Color32 = Color32::from_rgb(232, 232, 232);
-const BLUE: Color32 = Color32::from_rgb(90, 169, 255);
-const ORANGE: Color32 = Color32::from_rgb(255, 159, 67);
-const PURPLE: Color32 = Color32::from_rgb(197, 163, 255);
+const BG: Color32 = Color32::from_rgb(9, 14, 20);
+const PANEL: Color32 = Color32::from_rgb(15, 22, 31);
+const INPUT: Color32 = Color32::from_rgb(11, 18, 27);
+const BUTTON: Color32 = Color32::from_rgb(25, 36, 49);
+const BORDER: Color32 = Color32::from_rgb(43, 59, 76);
+const TEXT: Color32 = Color32::from_rgb(228, 235, 244);
+const BLUE: Color32 = Color32::from_rgb(102, 174, 255);
+const ORANGE: Color32 = Color32::from_rgb(245, 183, 82);
+const PURPLE: Color32 = Color32::from_rgb(179, 155, 248);
+const TEAL: Color32 = Color32::from_rgb(63, 215, 194);
+const MUTED: Color32 = Color32::from_rgb(139, 156, 175);
 const RED: Color32 = Color32::from_rgb(255, 123, 130);
 const SOURCE_MODELS: &[&str] = &["YOKOGAWA_GS210", "YOKOGAWA_7651", "SIMULATED_SOURCE"];
 const METER_MODELS: &[&str] = &[
@@ -239,6 +242,15 @@ fn extend_plot_extent(extent: &mut [f64; 2], x: f64, y: f64) {
 
 fn display_reading(value: f64, resolution: Option<f64>, unit: &str) -> String {
     let scale = AxisScale::for_magnitude(value.abs().max(resolution.unwrap_or(0.0)));
+    display_reading_at_scale(value, resolution, unit, scale)
+}
+
+fn display_reading_at_scale(
+    value: f64,
+    resolution: Option<f64>,
+    unit: &str,
+    scale: AxisScale,
+) -> String {
     match resolution.filter(|r| r.is_finite() && *r > 0.0) {
         Some(resolution) => {
             // Round the display to a decimal place supported by the instrument.
@@ -254,7 +266,11 @@ fn display_reading(value: f64, resolution: Option<f64>, unit: &str) -> String {
             };
             format!("{shown:.decimals$} {}{unit}", scale.prefix)
         }
-        None => format!("{value:.6e} {unit} (resolution unknown)"),
+        None => format!(
+            "{:.6e} {}{unit} (resolution unknown)",
+            value / scale.factor,
+            scale.prefix
+        ),
     }
 }
 
@@ -282,9 +298,53 @@ fn append_plot_point(
     };
     let current = index(direction);
     if let Some(last) = previous.map(index).filter(|last| *last != current) {
+        // Share the measured turning point across the two colored segments.
+        // This is a drawing anchor only; it does not create another CSV sample.
+        if last < 2
+            && current < 2
+            && let Some(anchor) = series[last].last().copied()
+            && anchor.x.is_finite()
+            && anchor.y.is_finite()
+        {
+            series[current].push(anchor);
+        }
         series[last].push(PlotPoint::new(f64::NAN, f64::NAN));
     }
     series[current].push(PlotPoint::new(x, y));
+}
+
+#[derive(Clone, Copy)]
+struct LiveSample {
+    time: f64,
+    voltage: f64,
+    current: f64,
+}
+
+fn append_live_sample(samples: &mut VecDeque<LiveSample>, record: &iv_core::Record) {
+    let source = record.source_readback.unwrap_or(record.source_set);
+    let (voltage, current) = if record.mode == Mode::Iv {
+        (source, record.meter_value)
+    } else {
+        (record.meter_value, source)
+    };
+    if ![record.elapsed_s, voltage, current]
+        .into_iter()
+        .all(f64::is_finite)
+    {
+        return;
+    }
+    samples.push_back(LiveSample {
+        time: record.elapsed_s,
+        voltage,
+        current,
+    });
+    while samples.len() > 1024
+        || samples
+            .front()
+            .is_some_and(|s| record.elapsed_s - s.time > 30.0)
+    {
+        samples.pop_front();
+    }
 }
 
 pub struct IvApp {
@@ -298,6 +358,9 @@ pub struct IvApp {
     samples: Vec<(f64, f64, String, [Option<f64>; 2])>,
     plot_series: [Vec<PlotPoint>; 3],
     plot_extent: [f64; 2],
+    live_samples: VecDeque<LiveSample>,
+    live_reading: Option<iv_core::Record>,
+    last_live_timestamp: String,
     table_values: Vec<String>,
     table_run_id: u64,
     table_points: usize,
@@ -391,6 +454,9 @@ impl IvApp {
             samples: vec![],
             plot_series: std::array::from_fn(|_| Vec::new()),
             plot_extent: [0.0; 2],
+            live_samples: VecDeque::new(),
+            live_reading: None,
+            last_live_timestamp: String::new(),
             table_values: vec![],
             table_run_id: u64::MAX,
             table_points: usize::MAX,
@@ -440,7 +506,7 @@ impl IvApp {
     fn busy(&self) -> bool {
         matches!(
             self.state.phase.as_str(),
-            "Connecting" | "Scanning" | "Preparing" | "Running" | "Cleaning up"
+            "Connecting" | "Scanning" | "Switching mode" | "Preparing" | "Running" | "Cleaning up"
         )
     }
 
@@ -464,6 +530,15 @@ impl IvApp {
                 return;
             };
             state_changed = true;
+            if let Some(record) = &next.live
+                && self.last_live_timestamp != record.timestamp
+            {
+                let mut sample = record.clone();
+                sample.elapsed_s = self.boot.elapsed().as_secs_f64();
+                append_live_sample(&mut self.live_samples, &sample);
+                self.last_live_timestamp.clone_from(&record.timestamp);
+                self.live_reading = Some(record.clone());
+            }
             let new_run = next.run_id > self.run_id;
             if new_run {
                 self.run_id = next.run_id;
@@ -576,61 +651,43 @@ impl IvApp {
             .state
             .last
             .as_ref()
-            .map(|record| record.csv_values(&self.settings.config))
-            .unwrap_or_default();
-        if let Some(record) = &self.state.last {
-            let source = record.source_readback.unwrap_or(record.source_set);
-            let (voltage, voltage_resolution, current, current_resolution) =
-                if record.mode == Mode::Iv {
-                    (
-                        source,
-                        record.source_resolution,
-                        record.meter_value,
-                        record.meter_resolution,
-                    )
+            .map(|record| {
+                let source = record.source_readback.unwrap_or(record.source_set);
+                let (voltage, current, voltage_origin, current_origin) = record.electrical_values();
+                let (vr, ir) = if record.mode == Mode::Iv {
+                    (record.source_resolution, record.meter_resolution)
                 } else {
-                    (
-                        record.meter_value,
-                        record.meter_resolution,
-                        source,
-                        record.source_resolution,
-                    )
+                    (record.meter_resolution, record.source_resolution)
                 };
-            for (field, value, resolution, unit) in [
-                (
-                    "source_target_value",
-                    record.point.target,
-                    record.source_resolution,
-                    if record.mode == Mode::Iv { "V" } else { "A" },
-                ),
-                (
-                    "source_readback_value",
-                    source,
-                    record.source_resolution,
-                    if record.mode == Mode::Iv { "V" } else { "A" },
-                ),
-                ("voltage_V", voltage, voltage_resolution, "V"),
-                ("current_A", current, current_resolution, "A"),
-            ] {
-                let index = IV_FIELDS
-                    .iter()
-                    .position(|name| *name == field)
-                    .expect("known field");
-                self.table_values[index] = display_reading(value, resolution, unit);
-            }
-            for (field, unit) in [("resistance_Ohm", "Ohm"), ("conductance_S", "S")] {
-                let index = IV_FIELDS
-                    .iter()
-                    .position(|name| *name == field)
-                    .expect("known field");
-                if let Ok(value) = self.table_values[index].parse::<f64>() {
-                    self.table_values[index] = fmt_quantity(value, unit);
-                }
-            }
-            if record.source_readback.is_none() {
-                self.table_values[20] = "Unavailable".into();
-            }
-        }
+                let unit = if record.mode == Mode::Iv { "V" } else { "A" };
+                vec![
+                    record.timestamp.clone(),
+                    format!("{:.3} s", record.elapsed_s),
+                    record.point.point_index.to_string(),
+                    record.point.total_points.to_string(),
+                    record.point.direction.clone(),
+                    display_reading(record.point.target, record.source_resolution, unit),
+                    record
+                        .source_readback
+                        .map(|_| display_reading(source, record.source_resolution, unit))
+                        .unwrap_or_else(|| "Unavailable".into()),
+                    display_reading(voltage, vr, "V"),
+                    voltage_origin.into(),
+                    display_reading(current, ir, "A"),
+                    current_origin.into(),
+                    if current == 0.0 {
+                        "—".into()
+                    } else {
+                        fmt_quantity(voltage / current, "Ohm")
+                    },
+                    if voltage == 0.0 {
+                        "—".into()
+                    } else {
+                        fmt_quantity(current / voltage, "S")
+                    },
+                ]
+            })
+            .unwrap_or_default();
         self.table_run_id = self.state.run_id;
         self.table_points = self.state.points;
     }
@@ -707,14 +764,14 @@ impl IvApp {
                             .layout(egui::Layout::top_down(egui::Align::Min)),
                         |ui| {
                             ui.set_clip_rect(content);
+                            self.profile(ui);
+                            ui.add_space(4.0);
                             egui::ScrollArea::vertical()
                                 .id_salt("settings_scroll")
                                 .auto_shrink([false, false])
                                 .show(ui, |ui| {
-                                    self.profile(ui);
-                                    ui.add_space(8.0);
                                     self.instrument(ui, true);
-                                    ui.add_space(8.0);
+                                    ui.add_space(4.0);
                                     self.instrument(ui, false);
                                 });
                         },
@@ -824,6 +881,185 @@ impl IvApp {
         });
     }
 
+    fn live_monitor(&self, ui: &mut egui::Ui, source: bool) {
+        let mode = self
+            .live_reading
+            .as_ref()
+            .map_or(self.settings.config.mode, |r| r.mode);
+        let source_channel = if mode == Mode::Iv { 1 } else { 0 };
+        let channel = if source {
+            source_channel
+        } else {
+            1 - source_channel
+        };
+        let (unit, color) = if channel == 0 {
+            ("A", TEAL)
+        } else {
+            ("V", ORANGE)
+        };
+        let running = self.state.connected && self.state.error.is_empty();
+        let stale = self
+            .live_samples
+            .back()
+            .is_some_and(|s| self.boot.elapsed().as_secs_f64() - s.time > 3.0);
+        ui.add_space(4.0);
+        ui.separator();
+        ui.horizontal(|ui| {
+            ui.label(
+                RichText::new(if channel == 0 { "I" } else { "V" })
+                    .color(color)
+                    .strong(),
+            );
+            ui.label(
+                RichText::new(if self.state.simulation {
+                    "SIM"
+                } else if source {
+                    "SOURCE LEVEL"
+                } else {
+                    "MEASURED"
+                })
+                .size(9.0)
+                .color(MUTED),
+            )
+            .on_hover_text(if source {
+                "Programmed source level; not an independent output measurement."
+            } else {
+                "Measured by the meter."
+            });
+            ui.label(
+                RichText::new(if running && stale {
+                    "STALE"
+                } else if running {
+                    "LIVE"
+                } else if self.live_samples.is_empty() {
+                    "WAITING"
+                } else {
+                    "HELD"
+                })
+                .size(9.0)
+                .color(if running { BLUE } else { MUTED }),
+            );
+            if source {
+                ui.label(
+                    RichText::new(format!("Out {}", self.state.output.to_lowercase()))
+                        .size(9.0)
+                        .color(MUTED),
+                );
+            }
+        });
+        let newest = if self.state.connected {
+            self.boot.elapsed().as_secs_f64()
+        } else {
+            self.live_samples.back().map_or(0.0, |s| s.time)
+        };
+        let window = newest.clamp(2.0, 30.0);
+        let extent = self.live_samples.iter().fold(0_f64, |m, s| {
+            m.max(if channel == 0 {
+                s.current.abs()
+            } else {
+                s.voltage.abs()
+            })
+        });
+        let scale = AxisScale::for_magnitude(extent);
+        let text = self
+            .live_reading
+            .as_ref()
+            .map(|record| {
+                let source = record.source_readback.unwrap_or(record.source_set);
+                let source_channel = if record.mode == Mode::Iv { 1 } else { 0 };
+                let (value, resolution) = if channel == source_channel {
+                    (source, record.source_resolution)
+                } else {
+                    (record.meter_value, record.meter_resolution)
+                };
+                display_reading_at_scale(value, resolution, unit, scale)
+            })
+            .unwrap_or_else(|| format!("— {unit}"));
+        let unknown = text.ends_with(" (resolution unknown)");
+        ui.label(
+            RichText::new(text.trim_end_matches(" (resolution unknown)"))
+                .monospace()
+                .size(22.0)
+                .color(color),
+        );
+        if unknown {
+            ui.label(RichText::new("Resolution unknown").size(9.0).color(MUTED));
+        }
+        let values: Vec<[f64; 2]> = self
+            .live_samples
+            .iter()
+            .filter(|s| newest - s.time <= window)
+            .map(|s| {
+                [
+                    s.time - newest,
+                    if channel == 0 { s.current } else { s.voltage },
+                ]
+            })
+            .collect();
+        let current = values.last().map_or(0.0, |p| p[1]);
+        let fraction = if extent > 0.0 {
+            (current / extent).clamp(-1.0, 1.0) as f32
+        } else {
+            0.0
+        };
+        let (rect, _) =
+            ui.allocate_exact_size(egui::vec2(ui.available_width(), 6.0), egui::Sense::hover());
+        let painter = ui.painter();
+        painter.rect_filled(rect, 2.0, BORDER);
+        let center = rect.center().x;
+        let end = center + fraction * rect.width() * 0.5;
+        painter.rect_filled(
+            egui::Rect::from_min_max(
+                egui::pos2(center.min(end), rect.top()),
+                egui::pos2(center.max(end), rect.bottom()),
+            ),
+            0.0,
+            color,
+        );
+        painter.line_segment(
+            [
+                egui::pos2(center, rect.top()),
+                egui::pos2(center, rect.bottom()),
+            ],
+            Stroke::new(1.0_f32, Color32::WHITE),
+        );
+        Plot::new(("live_channel", channel))
+            .height(55.0)
+            .show_background(false)
+            .show_axes([true, true])
+            .show_grid([true, true])
+            .allow_drag(false)
+            .allow_zoom(false)
+            .allow_scroll(false)
+            .include_x(-window)
+            .include_x(0.0)
+            .include_y(0.0)
+            .y_axis_formatter(move |mark, _| scale.tick(mark.value, mark.step_size))
+            .label_formatter(|_, _| String::new())
+            .show(ui, |plot_ui| {
+                plot_ui.line(
+                    Line::new("trend", values)
+                        .color(color)
+                        .width(1.5_f32)
+                        .fill(0.0_f32)
+                        .fill_alpha(0.75_f32),
+                );
+            });
+        ui.label(
+            RichText::new(format!(
+                "Time · s ago · {}{} · updated {:.1} s ago",
+                scale.prefix,
+                unit,
+                self.live_samples
+                    .back()
+                    .map_or(0.0, |s| (self.boot.elapsed().as_secs_f64() - s.time)
+                        .max(0.0))
+            ))
+            .size(9.0)
+            .color(MUTED),
+        );
+    }
+
     fn connect_instrument(&mut self, source: bool) {
         let model = if source {
             &self.settings.source_model
@@ -845,6 +1081,9 @@ impl IvApp {
                 simulation,
                 resource,
             });
+            self.send(Command::SetLiveMode {
+                mode: self.settings.config.mode,
+            });
         } else {
             self.send(Command::ConnectMeter {
                 simulation,
@@ -865,7 +1104,7 @@ impl IvApp {
             let width = (ui.available_width() - 65.0).max(140.0);
             egui::Grid::new(("instrument", source))
                 .num_columns(2)
-                .spacing([6.0, 12.0])
+                .spacing([6.0, 6.0])
                 .show(ui, |ui| {
                     form_label(ui, "Device", 57.0);
                     let model = if source {
@@ -955,6 +1194,7 @@ impl IvApp {
                     });
                     ui.end_row();
                 });
+            self.live_monitor(ui, source);
         });
     }
 
@@ -1049,6 +1289,13 @@ impl IvApp {
                     self.samples.clear();
                     self.rebuild_plot_series();
                     self.custom_text.clear();
+                    self.live_samples.clear();
+                    self.live_reading = None;
+                    if self.state.source_connected {
+                        self.send(Command::SetLiveMode {
+                            mode: self.settings.config.mode,
+                        });
+                    }
                 }
                 form_label(ui, "Sweep", 45.0);
                 egui::ComboBox::from_id_salt("pattern")
@@ -1352,7 +1599,7 @@ impl IvApp {
                                                             ui.end_row();
                                                             if !self.table_values.is_empty() {
                                                                 for field in SNAPSHOT_FIELDS {
-                                                                    let index = IV_FIELDS
+                                                                    let index = SNAPSHOT_FIELDS
                                                                         .iter()
                                                                         .position(|name| {
                                                                             name == field
@@ -1506,8 +1753,9 @@ impl IvApp {
                     display_reading(point.y, resolution[1], y_unit)
                 )
             })
+            .legend(Legend::default())
             .allow_boxed_zoom(true)
-            .allow_scroll(true)
+            .allow_scroll(false)
             .allow_drag(true)
             .include_x(0.0)
             .include_y(0.0)
@@ -1515,17 +1763,22 @@ impl IvApp {
             .show(ui, |plot_ui| {
                 for (values, (name, color)) in self.plot_series.iter().zip([
                     ("forward", BLUE),
-                    ("backward", ORANGE),
-                    ("custom", PURPLE),
+                    ("backward", PURPLE),
+                    ("custom", TEAL),
                 ]) {
-                    if !values.is_empty() {
+                    // NaN is an internal segment delimiter, never a renderer
+                    // coordinate: path tessellation otherwise drops end edges.
+                    for segment in values
+                        .split(|p| !p.x.is_finite() || !p.y.is_finite())
+                        .filter(|s| !s.is_empty())
+                    {
                         plot_ui.line(
-                            Line::new(name, PlotPoints::Borrowed(values))
+                            Line::new(name, PlotPoints::Borrowed(segment))
                                 .color(color)
                                 .width(2.0_f32),
                         );
                         plot_ui.points(
-                            Points::new(name, PlotPoints::Borrowed(values))
+                            Points::new(name, PlotPoints::Borrowed(segment))
                                 .color(color)
                                 .radius(2.5_f32),
                         );
@@ -1576,8 +1829,8 @@ impl eframe::App for IvApp {
                     .show(ui, |ui| self.main_view(ui));
             });
         self.timing_dialog(ctx);
-        if self.busy() {
-            ctx.request_repaint_after(Duration::from_millis(100));
+        if self.busy() || self.state.connected {
+            ctx.request_repaint_after(Duration::from_millis(33));
         }
         if self.smoke && !self.smoke_started && self.started.elapsed() > Duration::from_millis(100)
         {
@@ -1660,15 +1913,15 @@ fn style(ctx: &egui::Context) {
         &mut visuals.widgets.hovered,
         &mut visuals.widgets.active,
     ] {
-        widget.bg_stroke = Stroke::new(1.0_f32, Color32::from_rgb(74, 74, 74));
+        widget.bg_stroke = Stroke::new(1.0_f32, Color32::from_rgb(57, 75, 94));
         widget.corner_radius = egui::CornerRadius::same(3);
         widget.fg_stroke = Stroke::new(1.0_f32, TEXT);
     }
     visuals.widgets.inactive.bg_fill = BUTTON;
     visuals.widgets.inactive.weak_bg_fill = BUTTON;
-    visuals.widgets.hovered.bg_fill = Color32::from_rgb(42, 42, 42);
+    visuals.widgets.hovered.bg_fill = Color32::from_rgb(37, 52, 69);
     visuals.widgets.active.bg_fill = Color32::from_rgb(37, 93, 143);
-    visuals.widgets.noninteractive.bg_stroke = Stroke::new(1.0_f32, Color32::from_rgb(58, 58, 58));
+    visuals.widgets.noninteractive.bg_stroke = Stroke::new(1.0_f32, Color32::from_rgb(48, 65, 83));
     ctx.set_visuals(visuals);
     ctx.style_mut(|style| {
         style.spacing.item_spacing = Vec2::new(8.0, 4.0);
@@ -1803,6 +2056,44 @@ fn model_supported(model: &str) -> bool {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn live_history_is_bounded_and_iv_vi_values_keep_their_channel_units() {
+        let mut samples = VecDeque::new();
+        let config = iv_core::RunConfig::default();
+        let point = iv_core::SweepPoint {
+            target: 0.001,
+            direction: "forward".into(),
+            repeat_index: 1,
+            sweep_index: 1,
+            point_index: 1,
+            total_points: 1,
+        };
+        for i in 0..2000 {
+            append_live_sample(
+                &mut samples,
+                &iv_core::simulate_record(&config, &point, i as f64 * 0.01),
+            );
+        }
+        assert_eq!(samples.len(), 1024);
+        assert_eq!(samples.back().unwrap().voltage, 0.001);
+        assert_eq!(samples.back().unwrap().current, 1e-6);
+        let mut record = iv_core::simulate_record(
+            &iv_core::RunConfig {
+                mode: Mode::Vi,
+                ..config
+            },
+            &point,
+            50.0,
+        );
+        append_live_sample(&mut samples, &record);
+        assert_eq!(samples.len(), 1);
+        assert_eq!(samples[0].current, 0.001);
+        assert_eq!(samples[0].voltage, 1.0);
+        record.meter_value = f64::NAN;
+        append_live_sample(&mut samples, &record);
+        assert_eq!(samples.len(), 1);
+    }
+
     use super::*;
 
     #[test]
@@ -1902,7 +2193,8 @@ mod tests {
         assert_eq!(extent, [0.001, 1e-6]);
         let plotted = plot_series(&samples);
         assert_eq!(plotted[0][0], PlotPoint::new(-0.001, -1e-6));
-        assert_eq!(plotted[1][0], PlotPoint::new(0.001, 1e-6));
+        assert_eq!(plotted[1][0], plotted[0][0]);
+        assert_eq!(plotted[1][1], PlotPoint::new(0.001, 1e-6));
         assert_eq!(AxisScale::for_magnitude(extent[0]).prefix, "m");
         assert_eq!(AxisScale::for_magnitude(extent[1]).prefix, "µ");
     }
@@ -1934,14 +2226,16 @@ mod tests {
         ];
         let series = plot_series(&samples);
 
-        assert_eq!(series[0].len(), 4);
+        assert_eq!(series[0].len(), 5);
         assert_eq!(series[0][0], PlotPoint::new(0.0, 1.0));
         assert!(series[0][1].x.is_nan() && series[0][1].y.is_nan());
-        assert_eq!(series[0][2], PlotPoint::new(2.0, 3.0));
-        assert!(series[0][3].x.is_nan() && series[0][3].y.is_nan());
-        assert_eq!(series[1].len(), 2);
-        assert_eq!(series[1][0], PlotPoint::new(1.0, 2.0));
-        assert!(series[1][1].x.is_nan() && series[1][1].y.is_nan());
+        assert_eq!(series[0][2], PlotPoint::new(1.0, 2.0));
+        assert_eq!(series[0][3], PlotPoint::new(2.0, 3.0));
+        assert!(series[0][4].x.is_nan() && series[0][4].y.is_nan());
+        assert_eq!(series[1].len(), 3);
+        assert_eq!(series[1][0], PlotPoint::new(0.0, 1.0));
+        assert_eq!(series[1][1], PlotPoint::new(1.0, 2.0));
+        assert!(series[1][2].x.is_nan() && series[1][2].y.is_nan());
         assert_eq!(
             series[2],
             vec![PlotPoint::new(3.0, 4.0), PlotPoint::new(4.0, 5.0)]
