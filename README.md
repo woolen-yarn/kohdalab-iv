@@ -4,7 +4,7 @@ A Rust desktop for DC I-V and V-I measurements with GS210 and 34411A over direct
 USB or USB-GPIB. The three-column interface keeps setup on the left, measurement
 and the I-V graph in the center, and detailed values/logs on the right.
 
-## Native version: 0.4.0
+## Native version: 0.4.1
 
 Config stays at the top of the left panel. Source and Meter each contain a compact
 resolution-aware readout, zero-centered level bar and filled time-history trend,
@@ -23,16 +23,16 @@ separate processes with their own licenses and OS boundaries.
 
 ## Published portable downloads
 
-The current published release is **v0.4.0**.
+The current published release is **v0.4.1**.
 
 | Platform | Kohdalab | Personal mirror |
 | --- | --- | --- |
-| macOS Apple Silicon | [Mac portable](https://github.com/Kohdalab/kohdalab-iv/releases/download/portable-v0.4.0/kohdalab-iv-0.4.0-macos-arm64-portable.zip) | [Mac portable](https://github.com/woolen-yarn/kohdalab-iv/releases/download/portable-v0.4.0/kohdalab-iv-0.4.0-macos-arm64-portable.zip) |
-| Windows x64 | [Windows portable](https://github.com/Kohdalab/kohdalab-iv/releases/download/portable-v0.4.0/kohdalab-iv-0.4.0-windows-x64-portable.zip) | [Windows portable](https://github.com/woolen-yarn/kohdalab-iv/releases/download/portable-v0.4.0/kohdalab-iv-0.4.0-windows-x64-portable.zip) |
+| macOS Apple Silicon | [Mac portable](https://github.com/Kohdalab/kohdalab-iv/releases/download/portable-v0.4.1/kohdalab-iv-0.4.1-macos-arm64-portable.zip) | [Mac portable](https://github.com/woolen-yarn/kohdalab-iv/releases/download/portable-v0.4.1/kohdalab-iv-0.4.1-macos-arm64-portable.zip) |
+| Windows x64 | [Windows portable](https://github.com/Kohdalab/kohdalab-iv/releases/download/portable-v0.4.1/kohdalab-iv-0.4.1-windows-x64-portable.zip) | [Windows portable](https://github.com/woolen-yarn/kohdalab-iv/releases/download/portable-v0.4.1/kohdalab-iv-0.4.1-windows-x64-portable.zip) |
 
-[Source build kit (Kohdalab)](https://github.com/Kohdalab/kohdalab-iv/releases/download/portable-v0.4.0/kohdalab-iv-0.4.0-build-kit.zip) ·
-[Source build kit (personal)](https://github.com/woolen-yarn/kohdalab-iv/releases/download/portable-v0.4.0/kohdalab-iv-0.4.0-build-kit.zip) ·
-[SHA-256 checksums](https://github.com/Kohdalab/kohdalab-iv/releases/download/portable-v0.4.0/SHA256SUMS.txt)
+[Source build kit (Kohdalab)](https://github.com/Kohdalab/kohdalab-iv/releases/download/portable-v0.4.1/kohdalab-iv-0.4.1-build-kit.zip) ·
+[Source build kit (personal)](https://github.com/woolen-yarn/kohdalab-iv/releases/download/portable-v0.4.1/kohdalab-iv-0.4.1-build-kit.zip) ·
+[SHA-256 checksums](https://github.com/Kohdalab/kohdalab-iv/releases/download/portable-v0.4.1/SHA256SUMS.txt)
 
 Extract the whole ZIP. Mac: open `KohdaLab IV Next.app`; Windows: open
 `kohdalab-iv-next.exe`. No Python, Rust or manufacturer VISA installation is
@@ -92,3 +92,8 @@ Voltage uses amber; current uses teal. Forward/backward sweeps use blue/purple
 with a legend. Changing Mode while idle switches live source/meter functions
 after verifying output OFF and zero level. The GUI applies the chosen Mode on
 source connection; changing Mode never enables output.
+
+Forward curves are blue solid lines with filled circles; backward curves are
+purple dashed lines with open diamonds, so overlapping curves remain distinct.
+Field/Value shows the exact 14-column CSV schema and saved values; live readouts
+and plot tooltips continue using instrument-resolution display precision.

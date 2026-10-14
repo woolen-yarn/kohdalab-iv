@@ -1,17 +1,9 @@
 # KohdaLab IV Native Desktop
 
-Version 0.4.0 adds nonnegative timing inputs and automatic engineering units on
-the graph axes, including mV and µA. Zooming also updates the displayed units.
-Plot coordinates and CSV values remain in SI units. CSV numbers use the shortest round-trip scientific notation without fixed
-trailing zero padding. This preserves finite 64-bit floating-point values and
-does not claim that all saved digits have measurement significance.
-Screen readings now follow GS210 source-range resolution and the 34411A queried
-DC range/resolution. Autoranging is queried after each reading; averaging uses
-the coarsest resolution encountered and does not add display digits. Graph
-hover labels retain each point's resolution. Unknown resolution is marked
-explicitly. Derived resistance and conductance are not instrument readings and
-are not certified significant figures. The native CSV now contains 14 analysis columns; configuration and instrument
-metadata are kept in its companion `.run.json` (schema version 3). The old compatibility export has been removed. Simulation resolution is illustrative, not a hardware claim.
+Version 0.4.1 makes overlapping forward/backward sweeps distinct with blue solid
+lines/filled circles and purple dashed lines/open diamonds. Field/Value now
+shows the exact native CSV names, order and saved scientific values. Live
+readouts and plot tooltips retain instrument-resolution display precision.
 
 References: [GS210 manual, section 5.2](https://www.yokogawa.com/pdf/provide/E/GW/IM/0000023941/0/IMGS210-01EN.pdf),
 [34411A SCPI comparison](https://www.keysight.com/us/en/assets/7018-02044/white-papers-archived/5990-3515.pdf).
@@ -147,8 +139,8 @@ support licenses, dependency notices, and `SOURCE.zip` when redistributing.
 SOURCE.zip includes the Rust, helper, shared specification and build sources.
 
 Official downloads are available at
-https://github.com/Kohdalab/kohdalab-iv/releases/tag/portable-v0.4.0 and the
-personal mirror at https://github.com/woolen-yarn/kohdalab-iv/releases/tag/portable-v0.4.0.
+https://github.com/Kohdalab/kohdalab-iv/releases/tag/portable-v0.4.1 and the
+personal mirror at https://github.com/woolen-yarn/kohdalab-iv/releases/tag/portable-v0.4.1.
 Earlier releases remain archived on GitHub. Historical preview validation is
 recorded in `docs/rust_preview.md`; current behavior and limitations are described here.
 
