@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.4.1 (2026-10-14)
+
+- Distinguish overlapping forward/backward curves with blue solid and purple dashed lines, plus filled-circle/open-diamond markers.
+- Match Field/Value to the native CSV's 14 names, order and exact scientific values using one shared formatter.
+
 ## 0.4.0 (2026-10-14)
 
 - Coordinated amber/teal electrical channels and blue/purple sweep directions with a plot legend.

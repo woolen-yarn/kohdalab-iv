@@ -1,7 +1,9 @@
 use crate::client::Client;
 use crate::protocol::{Command, Snapshot};
 use eframe::egui::{self, Color32, RichText, Stroke, Vec2};
-use egui_plot::{Legend, Line, Plot, PlotMemory, PlotPoint, PlotPoints, Points};
+use egui_plot::{
+    Legend, Line, LineStyle, MarkerShape, Plot, PlotMemory, PlotPoint, PlotPoints, Points,
+};
 use iv_core::{Mode, Pattern, RunConfig};
 use serde::{Deserialize, Serialize};
 use std::collections::VecDeque;
@@ -33,21 +35,7 @@ const METER_MODELS: &[&str] = &[
     "ADCMT_7461A",
     "SIMULATED_METER",
 ];
-const SNAPSHOT_FIELDS: &[&str] = &[
-    "timestamp",
-    "elapsed_s",
-    "point_index",
-    "total_points",
-    "direction",
-    "source_target_value",
-    "source_readback_value",
-    "voltage_V",
-    "voltage_origin",
-    "current_A",
-    "current_origin",
-    "resistance_Ohm",
-    "conductance_S",
-];
+const SNAPSHOT_FIELDS: &[&str] = iv_core::CSV_FIELDS;
 
 #[derive(Clone, Serialize, Deserialize)]
 #[serde(default)]
@@ -651,42 +639,7 @@ impl IvApp {
             .state
             .last
             .as_ref()
-            .map(|record| {
-                let source = record.source_readback.unwrap_or(record.source_set);
-                let (voltage, current, voltage_origin, current_origin) = record.electrical_values();
-                let (vr, ir) = if record.mode == Mode::Iv {
-                    (record.source_resolution, record.meter_resolution)
-                } else {
-                    (record.meter_resolution, record.source_resolution)
-                };
-                let unit = if record.mode == Mode::Iv { "V" } else { "A" };
-                vec![
-                    record.timestamp.clone(),
-                    format!("{:.3} s", record.elapsed_s),
-                    record.point.point_index.to_string(),
-                    record.point.total_points.to_string(),
-                    record.point.direction.clone(),
-                    display_reading(record.point.target, record.source_resolution, unit),
-                    record
-                        .source_readback
-                        .map(|_| display_reading(source, record.source_resolution, unit))
-                        .unwrap_or_else(|| "Unavailable".into()),
-                    display_reading(voltage, vr, "V"),
-                    voltage_origin.into(),
-                    display_reading(current, ir, "A"),
-                    current_origin.into(),
-                    if current == 0.0 {
-                        "—".into()
-                    } else {
-                        fmt_quantity(voltage / current, "Ohm")
-                    },
-                    if voltage == 0.0 {
-                        "—".into()
-                    } else {
-                        fmt_quantity(current / voltage, "S")
-                    },
-                ]
-            })
+            .map(|record| record.native_csv_values().into())
             .unwrap_or_default();
         self.table_run_id = self.state.run_id;
         self.table_points = self.state.points;
@@ -1597,52 +1550,27 @@ impl IvApp {
                                                                 ),
                                                             );
                                                             ui.end_row();
-                                                            if !self.table_values.is_empty() {
-                                                                for field in SNAPSHOT_FIELDS {
-                                                                    let index = SNAPSHOT_FIELDS
-                                                                        .iter()
-                                                                        .position(|name| {
-                                                                            name == field
-                                                                        })
-                                                                        .expect(
-                                                                            "Known snapshot field",
-                                                                        );
-                                                                    ui.add_sized(
-                                                                        [111.0, 24.0],
-                                                                        egui::Label::new(match *field {
-                                                                            "voltage_V" => "Voltage",
-                                                                            "current_A" => "Current",
-                                                                            "source_target_value" => "Source target",
-                                                                            "source_readback_value" => "Source readback",
-                                                                            _ => *field,
-                                                                        })
-                                                                            .truncate(),
-                                                                    )
-                                                                    .on_hover_text(*field);
-                                                                    let value = self.table_values
-                                                                        [index]
-                                                                        .as_str();
-                                                                    ui.add_sized(
-                                                                        [111.0, 24.0],
-                                                                        egui::Label::new(value)
-                                                                            .truncate(),
-                                                                    )
-                                                                    .on_hover_text(value);
-                                                                    ui.end_row();
-                                                                }
-                                                                if let Some(record) = &self.state.last {
-                                                                    let source_unit = if record.mode == Mode::Iv { "V" } else { "A" };
-                                                                    let meter_unit = if record.mode == Mode::Iv { "A" } else { "V" };
-                                                                    for (label, value, unit) in [
-                                                                        ("Source resolution", record.source_resolution, source_unit),
-                                                                        ("Meter range", record.meter_range, meter_unit),
-                                                                        ("Meter resolution", record.meter_resolution, meter_unit),
-                                                                    ] {
-                                                                        ui.label(label).on_hover_text("Display resolution, not a measurement uncertainty or accuracy guarantee.");
-                                                                        ui.label(value.map(|v| format!("{v:e} {unit}")).unwrap_or_else(|| "Unknown".into()));
-                                                                        ui.end_row();
-                                                                    }
-                                                                }
+                                                            for (index, field) in
+                                                                SNAPSHOT_FIELDS.iter().enumerate()
+                                                            {
+                                                                ui.add_sized(
+                                                                    [111.0, 24.0],
+                                                                    egui::Label::new(*field)
+                                                                        .truncate(),
+                                                                )
+                                                                .on_hover_text(*field);
+                                                                let value = self
+                                                                    .table_values
+                                                                    .get(index)
+                                                                    .map(String::as_str)
+                                                                    .unwrap_or("—");
+                                                                ui.add_sized(
+                                                                    [111.0, 24.0],
+                                                                    egui::Label::new(value)
+                                                                        .truncate(),
+                                                                )
+                                                                .on_hover_text(value);
+                                                                ui.end_row();
                                                             }
                                                         });
                                                 });
@@ -1775,12 +1703,23 @@ impl IvApp {
                         plot_ui.line(
                             Line::new(name, PlotPoints::Borrowed(segment))
                                 .color(color)
-                                .width(2.0_f32),
+                                .width(if name == "forward" { 3.0_f32 } else { 2.0_f32 })
+                                .style(if name == "backward" {
+                                    LineStyle::dashed_dense()
+                                } else {
+                                    LineStyle::Solid
+                                }),
                         );
                         plot_ui.points(
                             Points::new(name, PlotPoints::Borrowed(segment))
                                 .color(color)
-                                .radius(2.5_f32),
+                                .radius(if name == "backward" { 4.0_f32 } else { 2.5_f32 })
+                                .shape(if name == "backward" {
+                                    MarkerShape::Diamond
+                                } else {
+                                    MarkerShape::Circle
+                                })
+                                .filled(name != "backward"),
                         );
                     }
                 }
@@ -2056,6 +1995,43 @@ fn model_supported(model: &str) -> bool {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn saved_data_inspector_has_exact_native_csv_fields_and_values() {
+        assert_eq!(SNAPSHOT_FIELDS, iv_core::CSV_FIELDS);
+        let point = iv_core::SweepPoint {
+            target: 0.001,
+            direction: "backward".into(),
+            repeat_index: 2,
+            sweep_index: 3,
+            point_index: 4,
+            total_points: 5,
+        };
+        let mut record = iv_core::simulate_record(&RunConfig::default(), &point, 0.5);
+        record.timestamp = "2026-10-14T00:00:00Z".into();
+        record.status = "running".into();
+        let values = record.native_csv_values();
+        assert_eq!(
+            values,
+            [
+                "2026-10-14T00:00:00Z",
+                "5e-1",
+                "4",
+                "2",
+                "3",
+                "backward",
+                "1e-3",
+                "V",
+                "1e-3",
+                "1e-6",
+                "source_readback",
+                "meter",
+                "false",
+                "running"
+            ]
+            .map(str::to_string)
+        );
+    }
+
     #[test]
     fn live_history_is_bounded_and_iv_vi_values_keep_their_channel_units() {
         let mut samples = VecDeque::new();

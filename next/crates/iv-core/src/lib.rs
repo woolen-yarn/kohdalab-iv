@@ -555,6 +555,13 @@ pub struct Record {
 }
 
 impl Record {
+    /// Exact native CSV field values for export and the saved-data inspector.
+    pub fn native_csv_values(&self) -> [String; CSV_FIELDS.len()] {
+        let mut fields = std::array::from_fn(|_| String::new());
+        fill_native_csv_values(self, &mut fields);
+        fields
+    }
+
     pub fn electrical_values(&self) -> (f64, f64, &'static str, &'static str) {
         let source = self.source_readback.unwrap_or(self.source_set);
         let origin = if self.source_readback.is_some() {
@@ -597,41 +604,45 @@ impl CsvWriter {
         })
     }
     pub fn append(&mut self, record: &Record) -> Result<(), String> {
-        let (voltage, current, voltage_origin, current_origin) = record.electrical_values();
-        for (index, value) in [
-            (1, record.elapsed_s),
-            (6, record.point.target),
-            (8, voltage),
-            (9, current),
-        ] {
-            shortest_sci_into(&mut self.fields[index], value);
-        }
-        for (index, value) in [
-            (2, record.point.point_index),
-            (3, record.point.repeat_index as usize),
-            (4, record.point.sweep_index as usize),
-        ] {
-            self.fields[index].clear();
-            write!(&mut self.fields[index], "{value}").expect("writing to String");
-        }
-        for (index, value) in [
-            (0, record.timestamp.as_str()),
-            (5, record.point.direction.as_str()),
-            (7, if record.mode == Mode::Iv { "V" } else { "A" }),
-            (10, voltage_origin),
-            (11, current_origin),
-            (12, if record.compliance { "true" } else { "false" }),
-            (13, record.status.as_str()),
-        ] {
-            self.fields[index].clear();
-            self.fields[index].push_str(value);
-        }
+        fill_native_csv_values(record, &mut self.fields);
         self.writer
             .write_record(&self.fields)
             .map_err(|e| format!("cannot write CSV row: {e}"))?;
         self.writer
             .flush()
             .map_err(|e| format!("cannot flush CSV row: {e}"))
+    }
+}
+
+fn fill_native_csv_values(record: &Record, fields: &mut [String; CSV_FIELDS.len()]) {
+    let (voltage, current, voltage_origin, current_origin) = record.electrical_values();
+    for (index, value) in [
+        (1, record.elapsed_s),
+        (6, record.point.target),
+        (8, voltage),
+        (9, current),
+    ] {
+        shortest_sci_into(&mut fields[index], value);
+    }
+    for (index, value) in [
+        (2, record.point.point_index),
+        (3, record.point.repeat_index as usize),
+        (4, record.point.sweep_index as usize),
+    ] {
+        fields[index].clear();
+        write!(&mut fields[index], "{value}").expect("writing to String");
+    }
+    for (index, value) in [
+        (0, record.timestamp.as_str()),
+        (5, record.point.direction.as_str()),
+        (7, if record.mode == Mode::Iv { "V" } else { "A" }),
+        (10, voltage_origin),
+        (11, current_origin),
+        (12, if record.compliance { "true" } else { "false" }),
+        (13, record.status.as_str()),
+    ] {
+        fields[index].clear();
+        fields[index].push_str(value);
     }
 }
 
@@ -902,6 +913,11 @@ mod tests {
         assert_eq!(rows.len(), 2);
         for (row, record) in rows.iter().zip(expected) {
             assert_eq!(row.len(), 14);
+            let inspector = record.native_csv_values();
+            assert_eq!(
+                row.iter().collect::<Vec<_>>(),
+                inspector.iter().map(String::as_str).collect::<Vec<_>>()
+            );
             assert_eq!(&row[0], record.timestamp);
             assert_eq!(&row[3], "2");
             assert_eq!(&row[4], "3");
