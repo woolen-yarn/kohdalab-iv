@@ -5,8 +5,6 @@
 #endif
 #include <windows.h>
 #include <shellapi.h>
-#include <winhttp.h>
-#include <bcrypt.h>
 #include <cfgmgr32.h>
 #include <filesystem>
 #include <fstream>
@@ -95,55 +93,6 @@ static bool administrator() {
     CheckTokenMembership(nullptr, group, &member); FreeSid(group);
     return member;
 }
-static bool valid_firmware(const std::string& bytes) {
-    if (bytes.empty() || bytes.size() > 65536) return false;
-    BCRYPT_ALG_HANDLE algorithm = nullptr; unsigned char digest[32];
-    if (BCryptOpenAlgorithmProvider(&algorithm, BCRYPT_SHA256_ALGORITHM, nullptr, 0) < 0) return false;
-    NTSTATUS code = BCryptHash(algorithm, nullptr, 0, reinterpret_cast<PUCHAR>(const_cast<char*>(bytes.data())),
-        ULONG(bytes.size()), digest, sizeof(digest));
-    BCryptCloseAlgorithmProvider(algorithm, 0);
-    const unsigned char expected[] = {0x2c,0x40,0x21,0x3a,0x3d,0x0d,0x8b,0x7d,0x7c,0xc0,0x83,0xb1,0x55,0xa5,0xed,0x09,
-        0x4e,0x29,0x76,0x72,0x14,0xa9,0xb8,0xaa,0x74,0x54,0x86,0xf3,0x5e,0xf5,0x86,0x64};
-    return code >= 0 && std::equal(std::begin(expected), std::end(expected), digest);
-}
-struct Http {
-    HINTERNET handle;
-    explicit Http(HINTERNET h) : handle(h) { if (!h) throw std::runtime_error("Firmware download could not start"); }
-    ~Http() { WinHttpCloseHandle(handle); }
-};
-static void firmware(const fs::path& directory) {
-    fs::path file = directory / L"measat_releaseX1.8.hex";
-    std::ifstream existing(file, std::ios::binary);
-    std::string bytes((std::istreambuf_iterator<char>(existing)), {});
-    existing.close();
-    if (valid_firmware(bytes)) return;
-    log_text += "Downloading checksum-verified 82357B firmware...\n";
-    Http session(WinHttpOpen(L"KohdaLab IV USB Setup", WINHTTP_ACCESS_TYPE_AUTOMATIC_PROXY,
-        WINHTTP_NO_PROXY_NAME, WINHTTP_NO_PROXY_BYPASS, 0));
-    WinHttpSetTimeouts(session.handle, 15000, 15000, 30000, 30000);
-    Http connection(WinHttpConnect(session.handle, L"raw.githubusercontent.com", INTERNET_DEFAULT_HTTPS_PORT, 0));
-    Http request(WinHttpOpenRequest(connection.handle, L"GET",
-        L"/fmhess/linux_gpib_firmware/8a5c6c2c1a2adac4c770763a7236452a871a0113/agilent_82357a/measat_releaseX1.8.hex",
-        nullptr, WINHTTP_NO_REFERER, WINHTTP_DEFAULT_ACCEPT_TYPES, WINHTTP_FLAG_SECURE));
-    if (!WinHttpSendRequest(request.handle, WINHTTP_NO_ADDITIONAL_HEADERS, 0, nullptr, 0, 0, 0) ||
-        !WinHttpReceiveResponse(request.handle, nullptr)) throw std::runtime_error("82357B firmware download failed; connect to the Internet and retry");
-    DWORD status = 0, size = sizeof(status);
-    if (!WinHttpQueryHeaders(request.handle, WINHTTP_QUERY_STATUS_CODE | WINHTTP_QUERY_FLAG_NUMBER,
-        WINHTTP_HEADER_NAME_BY_INDEX, &status, &size, WINHTTP_NO_HEADER_INDEX) || status != 200)
-        throw std::runtime_error("Firmware server returned an unexpected status");
-    bytes.clear(); char buffer[4096]; DWORD count;
-    do {
-        if (!WinHttpReadData(request.handle, buffer, sizeof(buffer), &count)) throw std::runtime_error("Firmware download interrupted");
-        bytes.append(buffer, count);
-        if (bytes.size() > 65536) throw std::runtime_error("Firmware download exceeded the expected size");
-    } while (count);
-    if (!valid_firmware(bytes)) throw std::runtime_error("Firmware checksum mismatch");
-    fs::path temporary = directory / (L"firmware-" + std::to_wstring(GetCurrentProcessId()) + L".download");
-    { std::ofstream output(temporary, std::ios::binary); output.write(bytes.data(), bytes.size());
-      if (!output) throw std::runtime_error("Cannot save firmware"); }
-    if (!MoveFileExW(temporary.c_str(), file.c_str(), MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH))
-        throw std::runtime_error("Cannot update firmware cache");
-}
 static std::string inf_name(wdi_device_info* device) {
     char value[64]; std::snprintf(value, sizeof(value), "kiv-%04x-%04x-%02x.inf", device->vid, device->pid, device->mi);
     return value;
@@ -157,25 +106,6 @@ static void prepare(wdi_device_info* device, const fs::path& directory) {
     wdi_device_info target = *device;
     target.desc = const_cast<char*>(name(device) ? name(device) : "Agilent 82357B");
     check(wdi_prepare_driver(&target, utf8(directory.wstring()).c_str(), inf_name(device).c_str(), &options), "WinUSB package preparation");
-}
-static void stage_82357_operational(const fs::path& directory) {
-    wdi_device_info device{};
-    device.vid = 0x0957; device.pid = 0x0718;
-    prepare(&device, directory);
-    wchar_t system[MAX_PATH]; GetSystemDirectoryW(system, MAX_PATH);
-    fs::path program = fs::path(system) / L"pnputil.exe";
-    std::wstring command = L"\"" + program.wstring() + L"\" /add-driver \"" +
-        (directory / wide(inf_name(&device))).wstring() + L"\"";
-    std::vector<wchar_t> writable(command.begin(), command.end()); writable.push_back(0);
-    STARTUPINFOW startup{}; startup.cb = sizeof(startup); PROCESS_INFORMATION process{};
-    if (!CreateProcessW(program.c_str(), writable.data(), nullptr, nullptr, FALSE, CREATE_NO_WINDOW,
-        nullptr, nullptr, &startup, &process)) throw std::runtime_error("Cannot stage 82357B operational driver");
-    DWORD wait = WaitForSingleObject(process.hProcess, 60000), code = 1;
-    if (wait == WAIT_OBJECT_0) GetExitCodeProcess(process.hProcess, &code);
-    CloseHandle(process.hThread); CloseHandle(process.hProcess);
-    if (wait != WAIT_OBJECT_0 || (code != 0 && code != 3010))
-        throw std::runtime_error("82357B driver staging failed; see the setup log and Windows driver policy");
-    log_text += "82357B operational USB ID is staged for firmware re-enumeration.\n";
 }
 static int elevate(bool quiet, bool rescan = false) {
     wchar_t executable[32768]; GetModuleFileNameW(nullptr, executable, 32768);
@@ -204,6 +134,8 @@ int WINAPI wWinMain(HINSTANCE, HINSTANCE, PWSTR arguments, int) {
     bool rescan = std::wstring(arguments).find(L"--rescan") != std::wstring::npos;
     if (std::wstring(arguments) == L"--self-test") {
         return setup_device_name(0x3923,0x7618,false,0,"") &&
+            !setup_device_name(0x0957,0x0518,false,0,"") &&
+            setup_device_name(0x0957,0x0718,false,0,"") &&
             !setup_device_name(0x0b21,0x0039,false,0,"USB\\Class_08") &&
             wdi_is_driver_supported(WDI_WINUSB, nullptr) &&
             wdi_is_file_embedded(nullptr, "installer_x64.exe") &&
@@ -240,47 +172,39 @@ int WINAPI wWinMain(HINSTANCE, HINSTANCE, PWSTR arguments, int) {
                 throw std::runtime_error("Windows hardware rescan failed; reconnect the USB devices and retry");
         }
         progress("Enumerating Windows USB devices");
-        DeviceList devices; bool pending = false, agilent = false, boot = false, found = false;
+        DeviceList devices; bool pending = false, boot = false, found = false;
         for (auto* device = devices.head; device; device = device->next) {
+            if (device->vid == 0x0957 && device->pid == 0x0518) { boot = true; continue; }
             if (!name(device)) continue;
             found = true; pending |= !ready(device);
-            agilent |= device->vid == 0x0957 && (device->pid == 0x0518 || device->pid == 0x0718);
-            boot |= device->vid == 0x0957 && device->pid == 0x0518;
         }
         if (!found) {
+            if (boot) {
+                progress("82357B boot mode (0957:0518) is unsupported; obtain authorized initialization separately, then retry without disconnecting adapter power");
+                if (!quiet) MessageBoxW(nullptr,
+                    L"The Agilent 82357B is in boot mode (0957:0518). KohdaLab IV supports only a pre-initialized 82357B (0957:0718). Obtain authorized initialization separately, then retry without disconnecting adapter power.",
+                    L"KohdaLab USB Setup", MB_OK | MB_ICONINFORMATION);
+                return 0;
+            }
             progress("No supported USB instruments found; connect devices and retry Refresh");
             if (!quiet) MessageBoxW(nullptr, L"Connect supported instruments first. GS210 USB must be in TMC mode.", L"KohdaLab USB Setup", MB_OK);
             return 0;
         }
         progress("Checking WinUSB configuration");
         auto directory = data_directory();
-        if (agilent) {
-            std::ifstream input(directory / L"measat_releaseX1.8.hex", std::ios::binary);
-            pending |= !valid_firmware(std::string((std::istreambuf_iterator<char>(input)), {}));
-            pending |= boot && !fs::exists(directory / L"usb-drivers" / L"82357-staged.ok");
-        }
+        if (boot) progress("82357B boot mode (0957:0518) was skipped; other supported USB devices will still be configured");
         if (!pending) {
             progress("Connected devices are already configured");
             if (!quiet) MessageBoxW(nullptr, L"Supported devices are already configured. Open KohdaLab IV and click Refresh.", L"KohdaLab USB Setup", MB_OK);
             return 0;
         }
         if (!administrator()) {
-            // Preserve the launching user's firmware cache even when UAC uses
-            // a different administrator account.
-            if (agilent) { progress("Preparing 82357B firmware"); firmware(directory); }
             progress("Waiting for Windows administrator approval and driver setup");
-            int result = elevate(quiet);
-            if (!result && agilent) {
-                fs::create_directories(directory / L"usb-drivers");
-                std::ofstream(directory / L"usb-drivers" / L"82357-staged.ok") << "0957:0718\n";
-            }
-            return result;
+            return elevate(quiet);
         }
         SetupLock lock;
         auto drivers = directory / L"usb-drivers"; fs::create_directories(drivers);
         wdi_set_log_level(WDI_LOG_LEVEL_WARNING);
-        // Download before changing device drivers; an offline failure leaves them unchanged.
-        if (agilent) { progress("Preparing 82357B firmware"); firmware(directory); }
         std::set<std::string> installed;
         for (auto* device = devices.head; device; device = device->next) {
             auto* model = name(device);
@@ -294,11 +218,6 @@ int WINAPI wWinMain(HINSTANCE, HINSTANCE, PWSTR arguments, int) {
             wdi_options_install_driver options{}; options.pending_install_timeout = 60000;
             check(wdi_install_driver(device, utf8(drivers.wstring()).c_str(), inf_name(device).c_str(), &options), "WinUSB assignment");
             progress("WinUSB installation completed in " + std::to_string(GetTickCount64() - started) + " ms");
-        }
-        if (agilent) {
-            progress("Staging 82357B operational driver");
-            stage_82357_operational(drivers);
-            std::ofstream(drivers / L"82357-staged.ok") << "0957:0718\n";
         }
         progress("Verifying installed USB drivers");
         bool verified = false;

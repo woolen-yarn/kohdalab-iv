@@ -35,3 +35,8 @@ Changes dated 2026-10-07:
 - Record installer phase timing in `driver-install-timing.log` for diagnosis.
 - Preserve the original signed-package staging and exact-instance installation.
   No signature checks, device allowlist rules, or restore settings were relaxed.
+
+Provenance clarification (2026-10-14): the pinned upstream v1.5.0 commit
+itself retains `AC_INIT` version 1.3.1 in configure.ac; its ChangeLog and Windows
+resource metadata identify 1.5.0. We retain that upstream source unchanged
+instead of claiming a different release. The source commit above is authoritative.

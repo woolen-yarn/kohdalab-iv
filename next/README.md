@@ -1,9 +1,8 @@
 # KohdaLab IV Native Desktop
 
-Version 0.4.1 makes overlapping forward/backward sweeps distinct with blue solid
-lines/filled circles and purple dashed lines/open diamonds. Field/Value now
-shows the exact native CSV names, order and saved scientific values. Live
-readouts and plot tooltips retain instrument-resolution display precision.
+Version 0.4.2 removes unverified 82357B firmware acquisition/upload and supplies
+explicit redistribution terms, native licensing evidence and relinking steps.
+Blue/purple forward/backward styles and the CSV-matched inspector are retained.
 
 References: [GS210 manual, section 5.2](https://www.yokogawa.com/pdf/provide/E/GW/IM/0000023941/0/IMGS210-01EN.pdf),
 [34411A SCPI comparison](https://www.keysight.com/us/en/assets/7018-02044/white-papers-archived/5990-3515.pdf).
@@ -57,7 +56,7 @@ The Mac app is ad hoc signed and is not notarized.
    resetting the source level. Existing CSV files are never overwritten.
 6. The status strip shows progress, resistance and conductance. The right log
    remains visible during discovery and measurement. Field / Value toggles the
-   original 15 snapshot fields; hover truncated entries for their full values.
+   exact 14 saved CSV fields; hover truncated entries for their full values.
 7. Config Browse selects a JSON file. Load / Save use the displayed path. The
    Rust desktop config format is native Rust format.
 
@@ -66,9 +65,11 @@ Windows requires the WinUSB assignments used by the existing portable; the
 bundled `support/USB-Setup.exe` can install them. Setup is currently an explicit
 support action in this release, rather than an automatic startup step. Administrator
 approval may be required. The application never changes unrelated devices.
-The supported GPIB adapters are NI GPIB-USB-HS+ and Agilent 82357B. Initial
-82357B firmware acquisition still requires its established setup procedure;
-restricted firmware is not included.
+NI GPIB-USB-HS+ is supported. Agilent 82357B is supported only when already
+initialized (0957:0718) through a separately authorized workflow. Boot ID
+0957:0518 is refused without opening it or replacing its boot driver. This
+release does not download, cache or upload firmware. Do not add a firmware file
+to the portable or source build kit. See REDISTRIBUTION.md for licensing terms.
 
 Simulation is a 1 kOhm circuit and never opens physical devices. CSV contains
 every saved measurement point; the live graph can coalesce updates or reduce
@@ -135,12 +136,16 @@ and the same three point limits as the hardware CLI smoke.
 Rust application code is MIT licensed and forbids unsafe code. Dependencies
 and native OS boundaries have their own memory safety and license properties.
 The native helpers contain GPL components and LGPL libraries. Retain the
-support licenses, dependency notices, and `SOURCE.zip` when redistributing.
+support licenses, dependency notices, `REDISTRIBUTION.md` and `SOURCE.zip` when
+redistributing. The combined GPIB executable is GPLv2, not MIT or GPLv3. Complete
+source and LGPL replacement/relinking instructions are in
+`SOURCE.zip/native/REBUILDING.md`. Windows uses the OS inbox WinUSB rather than
+a bundled Microsoft driver binary.
 SOURCE.zip includes the Rust, helper, shared specification and build sources.
 
 Official downloads are available at
-https://github.com/Kohdalab/kohdalab-iv/releases/tag/portable-v0.4.1 and the
-personal mirror at https://github.com/woolen-yarn/kohdalab-iv/releases/tag/portable-v0.4.1.
+https://github.com/Kohdalab/kohdalab-iv/releases/tag/portable-v0.4.2 and the
+personal mirror at https://github.com/woolen-yarn/kohdalab-iv/releases/tag/portable-v0.4.2.
 Earlier releases remain archived on GitHub. Historical preview validation is
 recorded in `docs/rust_preview.md`; current behavior and limitations are described here.
 

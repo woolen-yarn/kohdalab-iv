@@ -9,6 +9,8 @@ from pathlib import Path
 import tomllib
 from zipfile import ZIP_DEFLATED, ZipFile
 
+from distribution_policy import validate_archive
+
 
 def digest(path: Path) -> str:
     with path.open("rb") as stream:
@@ -54,6 +56,11 @@ def main() -> None:
     with ZipFile(destination) as kit:
         assert len(kit.namelist()) == len(set(kit.namelist()))
         assert kit.testzip() is None
+    try:
+        validate_archive(destination)
+    except Exception:
+        destination.unlink()
+        raise
     destination.with_suffix(".zip.sha256").write_text(
         f"{digest(destination)}  {destination.name}\n"
     )

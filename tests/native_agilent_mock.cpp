@@ -33,7 +33,7 @@ static bool lost_reset_ack = false;
 static unsigned char status_prefix = 1;
 static int status_length = 6;
 static unsigned expected_write_count = 0;
-static unsigned firmware_restarts = 0;
+static unsigned opens = 0, claims = 0, control_calls = 0;
 static std::set<int> listeners{5, 9, 17};
 static std::vector<std::vector<unsigned char>> gpib_messages;
 static std::vector<unsigned char> pending_reply;
@@ -55,7 +55,7 @@ static void reset(std::vector<unsigned short> listed_products = {0x0718}) {
     status_prefix = 1;
     status_length = 6;
     expected_write_count = 0;
-    firmware_restarts = 0;
+    opens = claims = control_calls = 0;
     listeners = {5, 9, 17};
     gpib_messages.clear();
     pending_reply.clear();
@@ -93,10 +93,11 @@ int libusb_get_device_descriptor(libusb_device *, libusb_device_descriptor *desc
     if (enumeration + 1 < products.size()) ++enumeration;
     return 0;
 }
-int libusb_open(libusb_device *, libusb_device_handle **handle) { *handle = new libusb_device_handle; return 0; }
+int libusb_open(libusb_device *, libusb_device_handle **handle) { ++opens; *handle = new libusb_device_handle; return 0; }
 void libusb_close(libusb_device_handle *handle) { delete handle; }
 int libusb_set_auto_detach_kernel_driver(libusb_device_handle *, int enable) { return enable == 1 ? 0 : LIBUSB_ERROR_INVALID_PARAM; }
 int libusb_claim_interface(libusb_device_handle *, int interface) {
+    ++claims;
     if (interface || claimed) return LIBUSB_ERROR_BUSY;
     claimed = true;
     return 0;
@@ -109,13 +110,8 @@ int libusb_release_interface(libusb_device_handle *, int interface) {
 
 int libusb_control_transfer(libusb_device_handle *, uint8_t type, uint8_t request, uint16_t value,
                             uint16_t, unsigned char *buffer, uint16_t length, unsigned timeout) {
+    ++control_calls;
     assert(timeout);
-    // Cypress FX2 firmware RAM uploads during boot-PID initialization.
-    if (type == 0x40 && request == 0xa0) {
-        assert(length);
-        if (value == 0xe600 && buffer[0] == 0) ++firmware_restarts;
-        return length;
-    }
     if (type != 0xc0 || request != 4 || !claimed) return LIBUSB_ERROR_INVALID_PARAM;
     if (value == 0xa0 && length == 2) { buffer[0] = 0x5f; buffer[1] = 0; return 2; }
     if (value == 0xb0 && length == 8) {
@@ -398,16 +394,16 @@ int main() {
         assert(!claimed);
     }
 
-    // 82357B firmware may need two uploads: the first re-enumerates as the boot PID again.
-    reset({0x0518, 0x0518, 0x0718});
+    // Boot mode is deliberately never opened, claimed, or sent USB control traffic,
+    // even when an old cache/override path is present in the environment.
+    reset({0x0518});
     setenv("KOHDALAB_IV_82357B_FIRMWARE",
         "build/agilent-82357/firmware-repo/agilent_82357a/measat_releaseX1.8.hex", 1);
     {
         Agilent82357B driver;
-        driver.open();
-        assert(firmware_restarts == 2);
-        driver.close();
+        expect_throw([&] { driver.open(); }, "pre-initialized 82357B");
+        assert(opens == 0 && claims == 0 && control_calls == 0);
     }
     unsetenv("KOHDALAB_IV_82357B_FIRMWARE");
-    std::puts("82357B mock tests passed: initialization, 30-address scan, SCPI/EOI, cleanup, failures, and two-stage firmware boot.");
+    std::puts("82357B mock tests passed: initialization, 30-address scan, SCPI/EOI, cleanup, failures, and boot-mode refusal.");
 }

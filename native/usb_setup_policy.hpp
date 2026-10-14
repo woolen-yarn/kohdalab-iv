@@ -8,7 +8,9 @@ inline const char* setup_device_name(unsigned vid, unsigned pid, bool composite,
                                      unsigned interface_number, const std::string& compatible) {
     if (composite && interface_number != 0) return nullptr;
     if (vid == 0x3923 && pid == 0x7618) return "NI GPIB-USB-HS+";
-    if (vid == 0x0957 && (pid == 0x0518 || pid == 0x0718)) return "Agilent 82357B";
+    // 0957:0518 is the Cypress boot mode. Never bind it to WinUSB: the native
+    // helper accepts only an already-initialized 0957:0718 adapter.
+    if (vid == 0x0957 && pid == 0x0718) return "Agilent 82357B";
     // The same Yokogawa product ID must never authorize storage-mode replacement.
     std::string ids = compatible;
     std::transform(ids.begin(), ids.end(), ids.begin(), [](unsigned char c) { return char(std::toupper(c)); });

@@ -14,6 +14,8 @@ import subprocess
 import tomllib
 from zipfile import ZIP_DEFLATED, ZipFile
 
+from distribution_policy import validate_archive
+
 ROOT = Path(__file__).resolve().parents[1]
 EXCLUDED = {
     "target",
@@ -57,10 +59,12 @@ def source_archive(path: Path) -> None:
             "native",
             "scripts",
             "docs",
+            "tests",
             "portable/windows",
             "portable/licenses",
             "README.md",
             "LICENSE",
+            "REDISTRIBUTION.md",
             "SAFETY.md",
         ):
             base = ROOT / name
@@ -200,14 +204,13 @@ def main() -> None:
             if digest(helpers / filename) != known[filename]:
                 raise SystemExit(f"Native helper checksum mismatch: {filename}")
             shutil.copy2(helpers / filename, support / filename)
-        shutil.copy2(ROOT / "portable/windows/setup-82357b-firmware.ps1", support)
+        shutil.copy2(ROOT / "portable/windows/DRIVERS.md", support / "DRIVERS.md")
         (support / "NATIVE-SOURCE-HASHES.json").write_text(
             json.dumps(known, indent=2) + "\n"
         )
     else:
         shutil.copy2(ROOT / "build/native-gpib/kohdalab-gpib-helper", support)
         shutil.copy2(ROOT / "build/usbtmc-probe/kohdalab-usbtmc-helper", support)
-        shutil.copy2(ROOT / "scripts/setup-82357b-firmware.command", documentation)
     shutil.copytree(
         ROOT / "native/licenses", documentation / "licenses", dirs_exist_ok=True
     )
@@ -220,6 +223,12 @@ def main() -> None:
         documentation / "licenses/libwdi-LGPL.txt",
     )
     shutil.copy2(ROOT / "LICENSE", documentation / "licenses/KohdaLab-IV-MIT.txt")
+    shutil.copy2(ROOT / "REDISTRIBUTION.md", stage / "REDISTRIBUTION.md")
+    shutil.copy2(ROOT / "native/REBUILDING.md", documentation / "REBUILDING.md")
+    shutil.copy2(
+        ROOT / "portable/licenses/THIRD_PARTY_NOTICES.md",
+        documentation / "THIRD_PARTY_NOTICES.md",
+    )
     shutil.copytree(ROOT / "bindings/python", stage / "python-control", ignore=shutil.ignore_patterns("__pycache__"))
     source_archive(documentation / "SOURCE.zip")
     target = (
@@ -254,6 +263,11 @@ def main() -> None:
         for file in stage.rglob("*"):
             if file.is_file():
                 archive.write(file, Path(name) / file.relative_to(stage))
+    try:
+        validate_archive(archive_path)
+    except Exception:
+        archive_path.unlink()
+        raise
     archive_path.with_suffix(".zip.sha256").write_text(
         f"{digest(archive_path)}  {archive_path.name}\n", encoding="utf-8"
     )

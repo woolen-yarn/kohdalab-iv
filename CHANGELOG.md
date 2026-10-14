@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.4.2 (2026-10-14)
+
+- Remove unverified 82357B firmware acquisition and upload. Only pre-initialized adapters are supported; boot devices are refused without changing their driver.
+- Document component GPL/LGPL terms, standalone GPIB protocol, complete corresponding source and library relinking/replacement.
+- Include current native third-party notices and redistribution instructions outside the app bundle; reject firmware payloads and obsolete downloaders during packaging.
+
 ## 0.4.1 (2026-10-14)
 
 - Distinguish overlapping forward/backward curves with blue solid and purple dashed lines, plus filled-circle/open-diamond markers.
