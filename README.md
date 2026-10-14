@@ -4,11 +4,33 @@
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 ![Python](https://img.shields.io/badge/python-3.13%2B-blue)
 
-KohdaLab IV is a Python toolkit for reproducible DC I-V and V-I measurements from GUI, CLI, and Jupyter Notebook workflows.
+KohdaLab IV provides a native Rust desktop and a Python toolkit for reproducible
+DC I-V and V-I measurements from GUI, CLI, and Jupyter Notebook workflows.
 
 ## Portable desktop downloads
 
-Download the portable ZIP for your computer (v0.2.3):
+Download the native Rust portable ZIP for your computer (**v0.3.0**):
+
+| Platform | Kohdalab download | Personal mirror |
+| --- | --- | --- |
+| macOS — Apple Silicon (arm64) | [Download Mac portable](https://github.com/Kohdalab/kohdalab-iv/releases/download/portable-v0.3.0/kohdalab-iv-0.3.0-macos-arm64-portable.zip) | [Download Mac portable](https://github.com/woolen-yarn/kohdalab-iv/releases/download/portable-v0.3.0/kohdalab-iv-0.3.0-macos-arm64-portable.zip) |
+| Windows — 64-bit (x64) | [Download Windows portable](https://github.com/Kohdalab/kohdalab-iv/releases/download/portable-v0.3.0/kohdalab-iv-0.3.0-windows-x64-portable.zip) | [Download Windows portable](https://github.com/woolen-yarn/kohdalab-iv/releases/download/portable-v0.3.0/kohdalab-iv-0.3.0-windows-x64-portable.zip) |
+
+Extract the entire ZIP and open `KohdaLab IV Next.app` on Mac or
+`kohdalab-iv-next.exe` on Windows. Python, Rust and vendor VISA are not required
+on the instrument PC. On Windows, run `support/USB-Setup.exe` for initial WinUSB
+setup if necessary. The Mac app is ad hoc signed and not notarized.
+This edition supports GS210 and 34411A; it uses a separate config format from
+the Python edition. See [the native desktop guide](next/README.md) for setup,
+build instructions and known limitations.
+
+For source, build kit, checksums and release notes, visit the
+[Kohdalab v0.3.0 release](https://github.com/Kohdalab/kohdalab-iv/releases/tag/portable-v0.3.0)
+or the [personal mirror](https://github.com/woolen-yarn/kohdalab-iv/releases/tag/portable-v0.3.0).
+
+### Previous Python desktop v0.2.3
+
+The Python portable remains available for existing workflows and other models:
 
 The Windows package was updated on 2026-10-07 with NI USB-HS+ initialization
 and driver-removal recovery fixes. Full driver reinstallation took about
@@ -29,6 +51,15 @@ as release assets. See [the portable guide](docs/portable_release.md) for
 setup, supported connections and rebuild instructions.
 
 ## What It Does
+
+A Rust desktop is available in [next/](next/README.md).
+The native edition keeps the established USB/GPIB helpers and introduces a
+responsive GUI and separate measurement engine. See the
+[implementation plan](docs/next_version_plan.md) for its intended release criteria.
+Measured startup, memory, simulation processing and archive sizes are recorded in
+[the Rust and Python comparison](docs/performance_comparison.md).
+The alpha.2 internal optimizations and before/after measurements are in
+[the Rust optimization report](docs/rust_optimization.md).
 
 - Controls supported source and meter instruments through a shared measurement API.
 - Validates sweep targets, source resolution, ranges, NPLC, limits, and compliance before measurement.
@@ -123,6 +154,7 @@ Real hardware operation requires the checks in [Safety notes](SAFETY.md) and the
 - [Hardware smoke test](docs/hardware_smoke_test.md): conservative first-run procedure for real instruments.
 - [Windows setup](docs/windows_setup.md): VISA and instrument-PC preparation.
 - [Standalone apps](docs/standalone.md): build Windows and Mac apps with Python included.
+- [Next version plan](docs/next_version_plan.md): Rust desktop architecture, UI and UX, compatibility, performance targets, and implementation phases.
 - [Roadmap](ROADMAP.md): planned milestones.
 - [Safety notes](SAFETY.md): operator responsibilities and safety assumptions.
 - [Contributing](CONTRIBUTING.md): architecture boundaries and development checks.

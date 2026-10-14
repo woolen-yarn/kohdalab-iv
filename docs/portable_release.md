@@ -1,5 +1,8 @@
 # Portable release and rebuild guide
 
+This guide covers the Python desktop `portable-v0.2.3`. For the native Rust
+`portable-v0.3.0` release, see [the native desktop guide](../next/README.md).
+
 The desktop portable includes Python and its dependencies. Extract the whole
 ZIP and open KohdaLab IV.app (macOS) or KohdaLab IV.exe (Windows). Keep the
 support folder and, on Windows, the _internal folder beside the application.
