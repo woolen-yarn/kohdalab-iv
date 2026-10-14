@@ -93,6 +93,7 @@ static compiler runtime. The packager expects Windows binaries under
 ```sh
 python3 scripts/package_rust_preview.py --platform macos-arm64
 python3 scripts/package_rust_preview.py --platform windows-x64
+python3 scripts/package_rust_build_kit.py
 ```
 
 The source project also contains `next/build-macos.command` and
