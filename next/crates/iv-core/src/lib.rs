@@ -10,6 +10,9 @@ use std::str::FromStr;
 use rust_decimal::Decimal;
 use serde::{Deserialize, Serialize};
 
+mod instrument_specs;
+pub use instrument_specs::{meter_display_queries, source_display_resolution, source_range_query};
+
 /// CSV columns kept byte-for-byte compatible with the established IV export.
 pub const IV_FIELDS: &[&str] = &[
     "timestamp",
@@ -61,7 +64,7 @@ pub const IV_FIELDS: &[&str] = &[
 ];
 
 const MAX_POINTS: usize = 1_000_000;
-const MAX_SECONDS: f64 = 3_600.0;
+pub const MAX_SECONDS: f64 = 3_600.0;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum Mode {
@@ -573,6 +576,13 @@ pub struct Record {
     pub source_set: f64,
     pub source_readback: Option<f64>,
     pub meter_value: f64,
+    /// Display metadata only; CSV always preserves the unrounded SI values.
+    #[serde(default)]
+    pub source_resolution: Option<f64>,
+    #[serde(default)]
+    pub meter_resolution: Option<f64>,
+    #[serde(default)]
+    pub meter_range: Option<f64>,
     pub compliance: bool,
     pub status: String,
     pub instrument_status: String,
@@ -581,9 +591,9 @@ pub struct Record {
 }
 
 fn sci(value: f64) -> String {
-    // Python's `:.12e`, used by the established export, always has a two-digit
-    // exponent. Rust intentionally omits that padding, so normalize it here.
-    let raw = format!("{value:.12e}");
+    // Seventeen significant decimal digits preserve every finite f64 on
+    // readback. Keep the established signed, padded exponent notation.
+    let raw = format!("{value:.16e}");
     let (mantissa, exponent) = raw
         .split_once('e')
         .expect("scientific formatting includes an exponent");
@@ -966,7 +976,7 @@ impl CsvRow {
 
 fn sci_into(buffer: &mut String, value: f64) {
     buffer.clear();
-    write!(buffer, "{value:.12e}").expect("writing to String");
+    write!(buffer, "{value:.16e}").expect("writing to String");
     let exponent_start = buffer
         .find('e')
         .expect("scientific formatting includes exponent");
@@ -1045,6 +1055,13 @@ pub fn simulate_record(config: &RunConfig, point: &SweepPoint, elapsed_s: f64) -
         source_set,
         source_readback,
         meter_value,
+        source_resolution: instrument_specs::simulation_display_precision(config.mode)
+            .ok()
+            .and_then(|p| p.0),
+        meter_resolution: instrument_specs::simulation_display_precision(config.mode)
+            .ok()
+            .and_then(|p| p.1),
+        meter_range: None,
         compliance: false,
         status: "ok".into(),
         instrument_status: String::new(),
@@ -1183,6 +1200,26 @@ mod tests {
     }
 
     #[test]
+    fn all_wait_fields_reject_negative_configs_and_allow_zero() {
+        for field in ["settle_s", "start_settle_s", "ramp_wait_s"] {
+            let mut config = RunConfig::default();
+            let value = match field {
+                "settle_s" => &mut config.settle_s,
+                "start_settle_s" => &mut config.start_settle_s,
+                _ => &mut config.ramp_wait_s,
+            };
+            *value = -0.001;
+            assert!(plan(&config).unwrap_err().contains(field));
+            match field {
+                "settle_s" => config.settle_s = 0.0,
+                "start_settle_s" => config.start_settle_s = 0.0,
+                _ => config.ramp_wait_s = 0.0,
+            }
+            assert!(plan(&config).is_ok());
+        }
+    }
+
+    #[test]
     fn compliance_is_quantized_up_and_software_value_is_retained() {
         let config = RunConfig {
             compliance: 0.0014,
@@ -1195,25 +1232,68 @@ mod tests {
     }
 
     #[test]
+    fn csv_numbers_round_trip_without_losing_f64_bits() {
+        let mut values = vec![
+            0.0,
+            -0.0,
+            0.1,
+            -0.2,
+            1e-12,
+            -1e-15,
+            f64::MIN_POSITIVE,
+            f64::MAX,
+            f64::MIN,
+            f64::from_bits(1),
+            f64::from_bits(0x000f_ffff_ffff_ffff),
+            f64::from_bits(0x3ff0_0000_0000_0001),
+        ];
+        // Exercise varied signs, exponents and mantissas, including subnormals.
+        let mut bits = 0x0123_4567_89ab_cdef_u64;
+        for _ in 0..10_000 {
+            bits ^= bits << 13;
+            bits ^= bits >> 7;
+            bits ^= bits << 17;
+            let value = f64::from_bits(bits);
+            if value.is_finite() {
+                values.push(value);
+            }
+        }
+        let mut buffer = String::new();
+        for value in values {
+            sci_into(&mut buffer, value);
+            assert_eq!(buffer.parse::<f64>().unwrap().to_bits(), value.to_bits());
+            assert_eq!(
+                sci(value).parse::<f64>().unwrap().to_bits(),
+                value.to_bits()
+            );
+        }
+    }
+
+    #[test]
     fn record_columns_and_simulation_are_consistent() {
         let config = RunConfig::default();
         let point = plan(&config).unwrap().points[10].clone();
         let record = simulate_record(&config, &point, 0.25);
         let row = record.csv_values(&config);
+        let mut display_changed = record.clone();
+        display_changed.source_resolution = Some(0.1);
+        display_changed.meter_resolution = Some(1.0);
+        display_changed.meter_range = Some(10.0);
+        assert_eq!(display_changed.csv_values(&config), row);
         assert_eq!(row.len(), IV_FIELDS.len());
         assert_eq!(
             row[IV_FIELDS
                 .iter()
                 .position(|field| *field == "resistance_Ohm")
                 .unwrap()],
-            "1.000000000000e+03"
+            "1.0000000000000001e+03"
         );
         assert_eq!(
             row[IV_FIELDS
                 .iter()
                 .position(|field| *field == "conductance_S")
                 .unwrap()],
-            "1.000000000000e-03"
+            "1.0000000000000000e-03"
         );
         let source = include_str!("../../../../src/kohdalab_iv/api/measurement_rows.py");
         let fields_start = source.find("IV_FIELDS = [").unwrap();
@@ -1279,6 +1359,9 @@ mod tests {
             source_set: -0.0,
             source_readback: None,
             meter_value: -0.0,
+            source_resolution: None,
+            meter_resolution: None,
+            meter_range: None,
             compliance: true,
             status: "ok,\"quoted\"\nvalue".into(),
             instrument_status: "status,\"quoted\"\nvalue".into(),
@@ -1289,7 +1372,7 @@ mod tests {
         let expected_iv = vec![
             "a,\"quoted\"\nvalue",
             "iv",
-            "-0.000000000000e+00",
+            "-0.0000000000000000e+00",
             "dc_iv",
             "custom_list",
             "1",
@@ -1299,24 +1382,24 @@ mod tests {
             "forward,\"quoted\"\nvalue",
             "voltage",
             "dc_current",
-            "-0.000000000000e+00",
+            "-0.0000000000000000e+00",
             "V",
-            "-0.000000000000e+00",
+            "-0.0000000000000000e+00",
             "V",
-            "-0.000000000000e+00",
+            "-0.0000000000000000e+00",
             "",
-            "-0.000000000000e+00",
+            "-0.0000000000000000e+00",
             "",
             "",
             "V",
             "",
             "",
-            "-0.000000000000e+00",
+            "-0.0000000000000000e+00",
             "A",
-            "-0.000000000000e+00",
-            "-0.000000000000e+00",
-            "-0.000000000000e+00",
-            "-0.000000000000e+00",
+            "-0.0000000000000000e+00",
+            "-0.0000000000000000e+00",
+            "-0.0000000000000000e+00",
+            "-0.0000000000000000e+00",
             "source_setpoint",
             "meter",
             "",
@@ -1329,9 +1412,9 @@ mod tests {
             "meter.simulated,\"quoted\"\nvalue",
             "SIMULATED_SOURCE",
             "SIMULATED_METER",
-            "5.000000000000e-01",
-            "2.000000000000e-01",
-            "1.000000000000e+00",
+            "5.0000000000000000e-01",
+            "2.0000000000000001e-01",
+            "1.0000000000000000e+00",
             "1",
         ]
         .into_iter()
@@ -1357,8 +1440,8 @@ mod tests {
             .collect::<Vec<_>>();
         assert_eq!(rows, vec![legacy_iv, legacy_vi]);
         assert_eq!(rows[0][20], "");
-        assert_eq!(rows[0][2], "-0.000000000000e+00");
-        assert_eq!(rows[1][42], "1.250000000000e+00");
+        assert_eq!(rows[0][2], "-0.0000000000000000e+00");
+        assert_eq!(rows[1][42], "1.2500000000000000e+00");
         assert_eq!(rows[1][45], "7");
         fs::remove_file(path).unwrap();
     }

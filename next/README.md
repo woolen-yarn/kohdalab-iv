@@ -1,6 +1,26 @@
 # KohdaLab IV Native Desktop
 
-Version 0.3.0 is the Rust desktop release with the KohdaLab IV app icon. It uses the same
+Version 0.3.4 adds nonnegative timing inputs and automatic engineering units on
+the graph axes, including mV and µA. Zooming also updates the displayed units.
+Plot coordinates and CSV values remain in SI units. CSV numbers now use 17
+significant decimal digits so reading them back preserves the original finite
+64-bit floating-point value, including very small currents. These extra digits
+preserve stored data; they do not imply extra instrument accuracy.
+Screen readings now follow GS210 source-range resolution and the 34411A queried
+DC range/resolution. Autoranging is queried after each reading; averaging uses
+the coarsest resolution encountered and does not add display digits. Graph
+hover labels retain each point's resolution. Unknown resolution is marked
+explicitly. Derived resistance and conductance are not instrument readings and
+are not certified significant figures. CSV values and its 46-column schema
+remain unchanged. Simulation resolution is illustrative, not a hardware claim.
+
+References: [GS210 manual, section 5.2](https://www.yokogawa.com/pdf/provide/E/GW/IM/0000023941/0/IMGS210-01EN.pdf),
+[34411A SCPI comparison](https://www.keysight.com/us/en/assets/7018-02044/white-papers-archived/5990-3515.pdf).
+
+Sweep targets can still be
+negative; the measurement engine continues to validate all limits before a run.
+
+The Rust desktop includes the KohdaLab IV app icon. It uses the same
 egui and eframe GUI foundation as KohdaLab Camera Native, with a separate Rust
 measurement engine and the established USB and GPIB helper processes.
 
@@ -129,7 +149,10 @@ support licenses, dependency notices, and `SOURCE.zip` when redistributing.
 SOURCE.zip includes the Rust, helper, shared specification and build sources.
 
 Official downloads are available at
-https://github.com/Kohdalab/kohdalab-iv/releases/tag/portable-v0.3.0 and the
-personal mirror at https://github.com/woolen-yarn/kohdalab-iv/releases/tag/portable-v0.3.0.
+https://github.com/Kohdalab/kohdalab-iv/releases/tag/portable-v0.3.4 and the
+personal mirror at https://github.com/woolen-yarn/kohdalab-iv/releases/tag/portable-v0.3.4.
 The Python desktop remains available as portable-v0.2.3. Release evidence and
 known limitations are recorded in `docs/rust_preview.md` in the source project.
+
+Per-model display policies, primary sources and audit limitations are documented
+in `docs/instrument_precision.md` and the shared source/meter `specs.toml` files.
