@@ -57,6 +57,7 @@ def source_archive(path: Path) -> None:
             "portable/licenses",
             "README.md",
             "pyproject.toml",
+            "uv.lock",
             "LICENSE",
             "SAFETY.md",
         ):
