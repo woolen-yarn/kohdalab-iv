@@ -51,3 +51,16 @@ jobs:
             export KOHDALAB_IV_EXE="$PWD/next/target/debug/iv-cli"
           fi
           python bindings/python/test_native_client.py
+      - name: Redistribution packaging policy
+        run: python tests/test_distribution_policy.py
+      - name: Native boot-device refusal and driver selection
+        if: runner.os != 'Windows'
+        shell: bash
+        run: |
+          mkdir -p build/native-license-tests/include/libusb-1.0
+          tar -xjf native/vendor/libusb-1.0.30.tar.bz2 -C build/native-license-tests
+          cp build/native-license-tests/libusb-1.0.30/libusb/libusb.h build/native-license-tests/include/libusb-1.0/
+          c++ -std=c++17 -Wall -Wextra -Werror -Inative -Ibuild/native-license-tests/include native/agilent_82357b.cpp tests/native_agilent_mock.cpp -o build/native-license-tests/agilent-mock
+          build/native-license-tests/agilent-mock
+          c++ -std=c++17 -Wall -Wextra -Werror tests/native_usb_setup_policy.cpp -o build/native-license-tests/usb-policy
+          build/native-license-tests/usb-policy

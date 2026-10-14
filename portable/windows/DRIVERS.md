@@ -1,8 +1,9 @@
 # Windows USB setup
 
-Connect supported instruments, then launch `KohdaLab IV.exe`.
-The app automatically checks initial USB setup. If setup is required, approve
-the Windows administrator/driver prompts. Afterwards, click Refresh, select the
+Connect supported instruments. If WinUSB is not already assigned, run
+`support/USB-Setup.exe` and approve any Windows administrator/driver prompts.
+The Rust GUI does not run the setup executable automatically. Afterwards,
+launch `kohdalab-iv-next.exe`, click Refresh, select the
 actual Source and Meter resources and connect them. No separate Python, VISA,
 manufacturer installer or Zadig download is needed for these native connections.
 
@@ -13,14 +14,12 @@ USB on 2026-10-07 (three points, -1 to +1 mV, 1 mA hardware current limit).
 Windows may request publisher/driver confirmation, a reconnect, or a restart.
 A system administrator's policy may prohibit the generated driver package.
 
-Refresh checks USB driver readiness again before instrument discovery. If a
-device was removed in Device Manager, Windows may need a hardware rescan and
-administrator approval. The setup recovers a missing NI communication child
-when its USB parent is present. It verifies device startup and interface GUIDs,
-and waits up to 15 seconds for activation after driver installation. If setup
-fails, discovery is not started. Follow the displayed reconnect/restart message
-and retry Refresh. Initial Windows driver installation can take longer than an
-already-configured check; progress and elapsed time remain visible in the GUI.
+Run `support/USB-Setup.exe` again if a device driver was removed in Device
+Manager. The setup tool can recover a missing NI communication child when its
+USB parent is present. It verifies device startup/interface GUIDs and waits up
+to 15 seconds for activation. Follow its reconnect/restart message if setup
+fails, then retry Refresh in the GUI. Initial driver installation may take
+longer than an already-configured check; installation requires Windows approval.
 
 ## Supported devices
 
@@ -29,7 +28,7 @@ already-configured check; progress and elapsed time remain visible in the GUI.
 | YOKOGAWA GS210 (may appear as GS200) | 0B21:0039 | TMC |
 | Agilent/Keysight 34411A | 0957:0A07 | USBTMC |
 | NI GPIB-USB-HS+ | 3923:7618 | GPIB adapter |
-| Agilent 82357B | 0957:0518 and 0957:0718 | Boot and operational USB IDs |
+| Agilent 82357B | 0957:0718 only | Already initialized under separately obtained firmware rights |
 
 Set GS210 to TMC mode before connecting. Storage-mode devices, nonzero composite
 interfaces and other USB IDs are excluded from this setup's selection. Do not
@@ -48,9 +47,10 @@ models. Secondary addresses and multiple adapters are not supported.
   device-specific package pointing to Windows' own WinUSB driver. It installs
   the generated publisher certificate in the machine certificate stores.
 - Assigns the driver to the selected PnP instance, not every matching device.
-- For 82357B, downloads checksum-verified upstream firmware and stages the
-  operational USB ID's package before firmware re-enumeration. First-time
-  firmware setup requires Internet access; cached firmware works offline.
+- Configures only an already initialized 82357B (0957:0718). It never downloads
+  or uploads firmware, configures boot 0957:0518, or stages a driver for firmware
+  re-enumeration. Other supported devices are still configured if a boot
+  82357B is connected. No Internet connection is needed for these setup steps.
 
 The app and installer do not disable Windows driver-signature enforcement or
 boot security settings. Setup replaces the manufacturer's driver for selected
@@ -60,17 +60,15 @@ restore settings are preserved. No SCPI commands or measurement sweeps are
 sent by USB setup.
 
 Existing WinUSB configurations with an interface GUID are reused. To check or
-retry manually, run `USB-Setup.exe` or `Setup-Instrument-Drivers.cmd` inside
-`support`. Keep `libwdi.dll` beside USB-Setup.exe. This is a one-time
+retry manually, run `USB-Setup.exe` inside `support`. Keep `libwdi.dll` beside USB-Setup.exe. This is a one-time
 USB configuration, not an installation of the KohdaLab application.
 
-## Logs and firmware
+## Logs and excluded firmware
 
-Setup log and firmware are in `%LOCALAPPDATA%\KohdaLab IV`:
+Setup logs are in `%LOCALAPPDATA%\KohdaLab IV`:
 
 ```text
 usb-setup.log
-measat_releaseX1.8.hex
 usb-drivers/
 ```
 
@@ -79,10 +77,13 @@ also records driver installation in its SetupAPI log. Keep exact error messages
 if setup fails. Do not repeatedly start setup while a driver installation is
 still running. Resolve pending Windows installation/restart requests first.
 
-Firmware is not redistributed in the ZIP. The upstream download and expected
-SHA256 are pinned in the included setup source and manual firmware script.
-If first-time download fails, connect to the Internet and retry. No source
-output is enabled during setup. GPIB identification later initializes IFC/REN.
+Firmware rights have not been established. Firmware files, automatic acquisition,
+cache loading and upload are excluded, even if an earlier release left a file
+on the user's PC. A boot adapter is refused with an explanatory message. Obtain
+initialization separately through an appropriately licensed workflow; do not
+add its files to this distribution. See REDISTRIBUTION.md and
+SOURCE.zip/docs/redistribution_audit.md. No source output is enabled during
+setup. GPIB identification later initializes IFC/REN.
 
 ## Instrument checks
 
@@ -94,16 +95,17 @@ GPIB addresses 3 and 7 with the instruments' actual addresses:
 & '.\support\diagnostics\gpib-probe.exe' --idn 3 7
 ```
 
-Choose the probe for your connection. For an 82357B, the first native GPIB open
-loads firmware into RAM and the adapter re-enumerates. If Windows needs more
-installation time, wait, reconnect if requested, and retry. Use the app's Refresh
+Diagnostic probes are rebuilt from the same source, but may be available only
+in the build kit rather than the minimal portable. For an 82357B, an initialized
+0957:0718 device must already be present; this app cannot initialize boot
+0957:0518. Use the app's Refresh
 and select the actual resources rather than retaining example serials/addresses.
 Hardware identification, measurement, Stop and output-off need Windows tests.
 
 ## Source and alternatives
 
 Complete setup/helper/dependency source, licenses and rebuild scripts are in
-`application/native` and `application/scripts` after extracting `support/SOURCE.zip`. The libwdi
+`native` and `scripts` after extracting `support/SOURCE.zip`. The libwdi
 modifications are documented in `native/vendor/libwdi/KOHDALAB-MODIFICATIONS.md`.
 The LGPL DLL can be replaced with a compatible modified build.
 

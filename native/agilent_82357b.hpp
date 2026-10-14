@@ -1,12 +1,13 @@
 // SPDX-License-Identifier: GPL-2.0-only
 // Userspace adaptation of Linux v6.17 drivers/staging/gpib/agilent_82357a
 // and include/tms9914.h, copyright (C) 2002, 2004 Frank Mori Hess.
+// Modified 2026-10-14: retain only the operational 82357B protocol. Firmware
+// acquisition and Cypress FX2 RAM upload were removed from this adaptation.
 // This subset supports one 82357B, controller address 0, primary addressing.
 #pragma once
 #include <libusb-1.0/libusb.h>
 #include <chrono>
 #include <cstdlib>
-#include <fstream>
 #include <iostream>
 #include <initializer_list>
 #include <stdexcept>
@@ -170,7 +171,6 @@ public:
         standby(); // release ATN again; no GPIB data/command bytes.
         std::cout << "82357B controller test passed. No SCPI or GPIB data was sent." << std::endl;
     }
-    static void loadFirmware(libusb_device_handle *handle, const std::string &path);
     void close() noexcept {
         if (initialized_) {
             try { auxiliary(0x10); } catch (...) {} // release REN even after a failed operation

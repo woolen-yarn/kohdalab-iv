@@ -27,7 +27,7 @@ TASK_COMMON=(-O2 -I"$TASK_DRIVER" -I"$TASK_DRIVER/linux-gpib" -Iinclude)
 "$TASK_CXX" "${TASK_COMMON[@]}" -std=gnu++17 -c "$TASK_DRIVER/NiGpibDriver.cpp" -o obj/NiGpibDriver.o
 "$TASK_CXX" "${TASK_COMMON[@]}" -std=gnu++17 -c "$TASK_ROOT/native/agilent_82357b.cpp" -o obj/agilent_82357b.o
 "$TASK_CXX" "${TASK_COMMON[@]}" -std=gnu++17 -c "$TASK_ROOT/native/kohdalab_gpib_helper.cpp" -o obj/main.o
-TASK_LIBS=(libusb-1.0.30/libusb/.libs/libusb-1.0.a -lsetupapi -lcfgmgr32 -ladvapi32 -lole32 -lbcrypt)
+TASK_LIBS=(libusb-1.0.30/libusb/.libs/libusb-1.0.a -lsetupapi -lcfgmgr32 -ladvapi32 -lole32)
 "$TASK_CXX" -static -s obj/*.o "${TASK_LIBS[@]}" -o kohdalab-gpib-helper.exe
 for source in usbtmc_probe usbtmc_helper; do
     name=usbtmc-probe
