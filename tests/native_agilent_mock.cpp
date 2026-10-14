@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-2.0-only
 // In-process fake 82357B for exercising the real userspace driver without hardware.
 #include <libusb-1.0/libusb.h>
+#include <algorithm>
 #include <cassert>
 #include <cstdio>
 #include <cstdlib>
