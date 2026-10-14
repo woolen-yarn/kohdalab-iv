@@ -9,12 +9,12 @@ DC I-V and V-I measurements from GUI, CLI, and Jupyter Notebook workflows.
 
 ## Portable desktop downloads
 
-Download the native Rust portable ZIP for your computer (**v0.3.0**):
+Download the native Rust portable ZIP for your computer (**v0.3.4**):
 
 | Platform | Kohdalab download | Personal mirror |
 | --- | --- | --- |
-| macOS — Apple Silicon (arm64) | [Download Mac portable](https://github.com/Kohdalab/kohdalab-iv/releases/download/portable-v0.3.0/kohdalab-iv-0.3.0-macos-arm64-portable.zip) | [Download Mac portable](https://github.com/woolen-yarn/kohdalab-iv/releases/download/portable-v0.3.0/kohdalab-iv-0.3.0-macos-arm64-portable.zip) |
-| Windows — 64-bit (x64) | [Download Windows portable](https://github.com/Kohdalab/kohdalab-iv/releases/download/portable-v0.3.0/kohdalab-iv-0.3.0-windows-x64-portable.zip) | [Download Windows portable](https://github.com/woolen-yarn/kohdalab-iv/releases/download/portable-v0.3.0/kohdalab-iv-0.3.0-windows-x64-portable.zip) |
+| macOS — Apple Silicon (arm64) | [Download Mac portable](https://github.com/Kohdalab/kohdalab-iv/releases/download/portable-v0.3.4/kohdalab-iv-0.3.4-macos-arm64-portable.zip) | [Download Mac portable](https://github.com/woolen-yarn/kohdalab-iv/releases/download/portable-v0.3.4/kohdalab-iv-0.3.4-macos-arm64-portable.zip) |
+| Windows — 64-bit (x64) | [Download Windows portable](https://github.com/Kohdalab/kohdalab-iv/releases/download/portable-v0.3.4/kohdalab-iv-0.3.4-windows-x64-portable.zip) | [Download Windows portable](https://github.com/woolen-yarn/kohdalab-iv/releases/download/portable-v0.3.4/kohdalab-iv-0.3.4-windows-x64-portable.zip) |
 
 Extract the entire ZIP and open `KohdaLab IV Next.app` on Mac or
 `kohdalab-iv-next.exe` on Windows. Python, Rust and vendor VISA are not required
@@ -24,9 +24,14 @@ This edition supports GS210 and 34411A; it uses a separate config format from
 the Python edition. See [the native desktop guide](next/README.md) for setup,
 build instructions and known limitations.
 
+This update adds nonnegative timing inputs, automatic graph units and
+range/resolution-based screen readings. CSV retains unrounded SI values using
+17-digit scientific notation. Per-model policies and their review limitations
+are documented in [the instrument precision audit](docs/instrument_precision.md).
+
 For source, build kit, checksums and release notes, visit the
-[Kohdalab v0.3.0 release](https://github.com/Kohdalab/kohdalab-iv/releases/tag/portable-v0.3.0)
-or the [personal mirror](https://github.com/woolen-yarn/kohdalab-iv/releases/tag/portable-v0.3.0).
+[Kohdalab v0.3.4 release](https://github.com/Kohdalab/kohdalab-iv/releases/tag/portable-v0.3.4)
+or the [personal mirror](https://github.com/woolen-yarn/kohdalab-iv/releases/tag/portable-v0.3.4).
 
 ### Previous Python desktop v0.2.3
 

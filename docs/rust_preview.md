@@ -1,8 +1,14 @@
 # Rust desktop release and validation
 
-Version: **0.3.0**. This is the native desktop release,
+Version: **0.3.4**. This is the native desktop release,
 separate from the stable Python portable. The full migration plan is in
 [next_version_plan.md](next_version_plan.md).
+
+Version 0.3.4 adds nonnegative timing inputs, automatic engineering units on
+graph axes, and display precision from shared instrument TOML specifications.
+CSV uses 17-digit scientific notation without display rounding. See
+[instrument_precision.md](instrument_precision.md) for reviewed models, sources
+and limitations; literal front-panel matching remains unverified.
 
 Alpha.3 adds the blue/orange I-V application icon to both Windows executables,
 the Mac app bundle and the GUI window. Editable SVG and platform icon assets

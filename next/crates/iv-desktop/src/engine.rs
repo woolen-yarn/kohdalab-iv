@@ -582,6 +582,20 @@ fn set_level(pair: &mut DevicePair, level: f64) -> Result<(), String> {
     pair.write(Role::Source, &format!(":SOUR:LEV:FIX {level:.12e}"))
 }
 
+// Resolve display precision from the shared, reviewed instrument TOML.
+fn source_resolution(mode: Mode, range: f64) -> Option<f64> {
+    iv_core::source_display_resolution("YOKOGAWA_GS210", mode, range)
+        .ok()
+        .flatten()
+}
+
+fn positive_reading(text: &str) -> Option<f64> {
+    text.trim()
+        .parse::<f64>()
+        .ok()
+        .filter(|v| v.is_finite() && *v > 0.0 && *v < 1e30)
+}
+
 fn clean_output(
     pair: Option<&mut DevicePair>,
     state: &mut Snapshot,
@@ -692,6 +706,7 @@ fn execute(
     let mut compliance_hit = false;
     let mut fit = ResistanceFit::default();
     let mut last_progress = Instant::now();
+    let mut actual_source_resolution = None;
     let work = (|| -> Result<(), String> {
         if let Some(device) = pair.as_deref_mut() {
             configure(
@@ -700,6 +715,11 @@ fn execute(
                 planned.source_range,
                 planned.hardware_compliance,
             )?;
+            let range_query = iv_core::source_range_query("YOKOGAWA_GS210")?
+                .ok_or("Reviewed source range query is unavailable")?;
+            let range = device.query(Role::Source, range_query)?;
+            actual_source_resolution =
+                positive_reading(&range).and_then(|range| source_resolution(config.mode, range));
             if control.cancelled() {
                 stopped = true;
                 return Ok(());
@@ -752,6 +772,12 @@ fn execute(
                 state.message.push_str("Reading meter…");
                 publish_progress(latest, state, &mut last_progress);
                 let mut value = 0.0;
+                let mut meter_resolution: Option<f64> = None;
+                let mut meter_range: Option<f64> = None;
+                let mut resolution_known = true;
+                let (range_query, resolution_query) =
+                    iv_core::meter_display_queries("AGILENT_34411A", config.mode)?
+                        .ok_or("Reviewed meter display queries are unavailable")?;
                 for _ in 0..config.average_count {
                     if control.cancelled() {
                         stopped = true;
@@ -766,6 +792,27 @@ fn execute(
                         return Err("Meter reported overload or an invalid reading.".into());
                     }
                     value += measured / config.average_count as f64;
+                    if control.cancelled() {
+                        stopped = true;
+                        break;
+                    }
+                    // Query the range/resolution after READ? so autoranging is
+                    // reflected. Preserve the coarsest resolution when averaging.
+                    let range = device.query(Role::Meter, range_query)?;
+                    if control.cancelled() {
+                        stopped = true;
+                        break;
+                    }
+                    let resolution = device.query(Role::Meter, resolution_query)?;
+                    let resolution = positive_reading(&resolution);
+                    resolution_known &= resolution.is_some();
+                    let range = positive_reading(&range);
+                    if let Some(resolution) = resolution {
+                        meter_resolution = Some(meter_resolution.unwrap_or(0.0).max(resolution));
+                    }
+                    if let Some(range) = range {
+                        meter_range = Some(meter_range.unwrap_or(0.0).max(range));
+                    }
                 }
                 if stopped {
                     break;
@@ -775,6 +822,13 @@ fn execute(
                 record.source_set = level;
                 record.source_readback = readback;
                 record.meter_value = value;
+                record.source_resolution = actual_source_resolution;
+                record.meter_resolution = if resolution_known {
+                    meter_resolution
+                } else {
+                    None
+                };
+                record.meter_range = meter_range;
                 record.source_resource = "source.gs210".into();
                 record.meter_resource = "meter.dmm_34411a".into();
                 record.compliance = value.abs() >= config.compliance;
@@ -871,6 +925,24 @@ fn execute(
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn gs210_resolution_uses_actual_range_and_rejects_unknown_ranges() {
+        assert_eq!(
+            super::source_resolution(iv_core::Mode::Iv, 0.01),
+            Some(1e-7)
+        );
+        assert_eq!(
+            super::source_resolution(iv_core::Mode::Iv, 30.0),
+            Some(1e-3)
+        );
+        assert_eq!(super::source_resolution(iv_core::Mode::Vi, 0.2), Some(1e-6));
+        assert_eq!(super::source_resolution(iv_core::Mode::Iv, 0.2), None);
+        assert_eq!(super::positive_reading("+1.5E-09\n"), Some(1.5e-9));
+        for invalid in ["NaN", "inf", "0", "-1", "9.9e37", "invalid"] {
+            assert_eq!(super::positive_reading(invalid), None);
+        }
+    }
+
     use super::*;
     use crate::protocol::Event;
     fn live_control() -> Control {

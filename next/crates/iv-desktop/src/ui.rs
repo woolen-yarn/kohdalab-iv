@@ -1,7 +1,7 @@
 use crate::client::Client;
 use crate::protocol::{Command, Snapshot};
 use eframe::egui::{self, Color32, RichText, Stroke, Vec2};
-use egui_plot::{Line, Plot, PlotPoint, PlotPoints, Points};
+use egui_plot::{Line, Plot, PlotMemory, PlotPoint, PlotPoints, Points};
 use iv_core::{IV_FIELDS, Mode, Pattern, RunConfig};
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
@@ -37,9 +37,7 @@ const SNAPSHOT_FIELDS: &[&str] = &[
     "total_points",
     "direction",
     "source_target_value",
-    "source_target_unit",
     "source_readback_value",
-    "source_readback_unit",
     "voltage_V",
     "voltage_origin",
     "current_A",
@@ -177,10 +175,93 @@ fn fmt_quantity(value: f64, unit: &str) -> String {
     format!("{:.4} {prefix}{unit}", value / scale)
 }
 
-fn plot_series(samples: &[(f64, f64, String)]) -> [Vec<PlotPoint>; 3] {
+#[derive(Clone, Copy, Debug, PartialEq)]
+struct AxisScale {
+    factor: f64,
+    prefix: &'static str,
+}
+
+impl AxisScale {
+    fn for_magnitude(magnitude: f64) -> Self {
+        if magnitude.is_finite() && magnitude > 0.0 {
+            for (factor, prefix) in [
+                (1e12, "T"),
+                (1e9, "G"),
+                (1e6, "M"),
+                (1e3, "k"),
+                (1.0, ""),
+                (1e-3, "m"),
+                (1e-6, "µ"),
+                (1e-9, "n"),
+                (1e-12, "p"),
+                (1e-15, "f"),
+                (1e-18, "a"),
+            ] {
+                if magnitude >= factor * (1.0 - 1e-12) {
+                    return Self { factor, prefix };
+                }
+            }
+            return Self {
+                factor: 1e-18,
+                prefix: "a",
+            };
+        }
+        Self {
+            factor: 1.0,
+            prefix: "",
+        }
+    }
+
+    fn tick(self, value: f64, spacing: f64) -> String {
+        let step = spacing.abs() / self.factor;
+        let decimals = if step.is_finite() && step > 0.0 {
+            (-step.log10()).ceil().clamp(0.0, 9.0) as usize
+        } else {
+            2
+        };
+        let value = value / self.factor;
+        let value = if value.abs() < 0.5 * 10_f64.powi(-(decimals as i32)) {
+            0.0
+        } else {
+            value
+        };
+        format!("{value:.decimals$}")
+    }
+}
+
+fn extend_plot_extent(extent: &mut [f64; 2], x: f64, y: f64) {
+    for (maximum, value) in extent.iter_mut().zip([x, y]) {
+        if value.is_finite() {
+            *maximum = maximum.max(value.abs());
+        }
+    }
+}
+
+fn display_reading(value: f64, resolution: Option<f64>, unit: &str) -> String {
+    let scale = AxisScale::for_magnitude(value.abs().max(resolution.unwrap_or(0.0)));
+    match resolution.filter(|r| r.is_finite() && *r > 0.0) {
+        Some(resolution) => {
+            // Round the display to a decimal place supported by the instrument.
+            // The original value is never modified for plotting or persistence.
+            let place = (resolution.log10() - 1e-12).ceil();
+            let decimals = (scale.factor.log10() - place).round().clamp(0.0, 15.0) as usize;
+            let step = 10_f64.powf(place);
+            let rounded = (value / step).round() * step;
+            let shown = if rounded == 0.0 {
+                0.0
+            } else {
+                rounded / scale.factor
+            };
+            format!("{shown:.decimals$} {}{unit}", scale.prefix)
+        }
+        None => format!("{value:.6e} {unit} (resolution unknown)"),
+    }
+}
+
+fn plot_series(samples: &[(f64, f64, String, [Option<f64>; 2])]) -> [Vec<PlotPoint>; 3] {
     let mut series = std::array::from_fn(|_| Vec::new());
     let mut previous = None;
-    for (x, y, direction) in samples {
+    for (x, y, direction, _) in samples {
         append_plot_point(&mut series, previous, *x, *y, direction);
         previous = Some(direction.as_str());
     }
@@ -214,8 +295,9 @@ pub struct IvApp {
     previous_log: String,
     state_revision: u64,
     run_id: u64,
-    samples: Vec<(f64, f64, String)>,
+    samples: Vec<(f64, f64, String, [Option<f64>; 2])>,
     plot_series: [Vec<PlotPoint>; 3],
+    plot_extent: [f64; 2],
     table_values: Vec<String>,
     table_run_id: u64,
     table_points: usize,
@@ -308,6 +390,7 @@ impl IvApp {
             run_id: 0,
             samples: vec![],
             plot_series: std::array::from_fn(|_| Vec::new()),
+            plot_extent: [0.0; 2],
             table_values: vec![],
             table_run_id: u64::MAX,
             table_points: usize::MAX,
@@ -386,6 +469,7 @@ impl IvApp {
                 self.run_id = next.run_id;
                 self.samples.clear();
                 self.plot_series.iter_mut().for_each(Vec::clear);
+                self.plot_extent = [0.0; 2];
                 self.notice.clear();
             }
             for (record_run, point) in client.drain_points() {
@@ -395,10 +479,12 @@ impl IvApp {
                 if record_run > self.run_id {
                     self.samples.clear();
                     self.plot_series.iter_mut().for_each(Vec::clear);
+                    self.plot_extent = [0.0; 2];
                     self.run_id = record_run;
                 }
                 let source = point.source_readback.unwrap_or(point.source_set);
                 let xy = (source, point.meter_value);
+                extend_plot_extent(&mut self.plot_extent, xy.0, xy.1);
                 append_plot_point(
                     &mut self.plot_series,
                     self.samples.last().map(|sample| sample.2.as_str()),
@@ -406,7 +492,12 @@ impl IvApp {
                     xy.1,
                     &point.point.direction,
                 );
-                self.samples.push((xy.0, xy.1, point.point.direction));
+                self.samples.push((
+                    xy.0,
+                    xy.1,
+                    point.point.direction,
+                    [point.source_resolution, point.meter_resolution],
+                ));
             }
             if self.samples.len() > 50000 {
                 let mut reduced = Vec::with_capacity(16000);
@@ -467,6 +558,10 @@ impl IvApp {
 
     fn rebuild_plot_series(&mut self) {
         self.plot_series = plot_series(&self.samples);
+        self.plot_extent = [0.0; 2];
+        for (x, y, _, _) in &self.samples {
+            extend_plot_extent(&mut self.plot_extent, *x, *y);
+        }
     }
 
     fn refresh_table_values(&mut self, config_changed: bool, state_changed: bool) {
@@ -483,6 +578,59 @@ impl IvApp {
             .as_ref()
             .map(|record| record.csv_values(&self.settings.config))
             .unwrap_or_default();
+        if let Some(record) = &self.state.last {
+            let source = record.source_readback.unwrap_or(record.source_set);
+            let (voltage, voltage_resolution, current, current_resolution) =
+                if record.mode == Mode::Iv {
+                    (
+                        source,
+                        record.source_resolution,
+                        record.meter_value,
+                        record.meter_resolution,
+                    )
+                } else {
+                    (
+                        record.meter_value,
+                        record.meter_resolution,
+                        source,
+                        record.source_resolution,
+                    )
+                };
+            for (field, value, resolution, unit) in [
+                (
+                    "source_target_value",
+                    record.point.target,
+                    record.source_resolution,
+                    if record.mode == Mode::Iv { "V" } else { "A" },
+                ),
+                (
+                    "source_readback_value",
+                    source,
+                    record.source_resolution,
+                    if record.mode == Mode::Iv { "V" } else { "A" },
+                ),
+                ("voltage_V", voltage, voltage_resolution, "V"),
+                ("current_A", current, current_resolution, "A"),
+            ] {
+                let index = IV_FIELDS
+                    .iter()
+                    .position(|name| *name == field)
+                    .expect("known field");
+                self.table_values[index] = display_reading(value, resolution, unit);
+            }
+            for (field, unit) in [("resistance_Ohm", "Ohm"), ("conductance_S", "S")] {
+                let index = IV_FIELDS
+                    .iter()
+                    .position(|name| *name == field)
+                    .expect("known field");
+                if let Ok(value) = self.table_values[index].parse::<f64>() {
+                    self.table_values[index] = fmt_quantity(value, unit);
+                }
+            }
+            if record.source_readback.is_none() {
+                self.table_values[20] = "Unavailable".into();
+            }
+        }
         self.table_run_id = self.state.run_id;
         self.table_points = self.state.points;
     }
@@ -943,6 +1091,7 @@ impl IvApp {
                         &mut self.settings.units[index],
                         unit,
                         width,
+                        false,
                     );
                     ui.end_row();
                 }
@@ -1056,7 +1205,7 @@ impl IvApp {
                 egui::ScrollArea::vertical().max_height((ctx.content_rect().height() - 150.0).clamp(200.0, 600.0)).show(ui, |ui| {
                     ui.add_enabled_ui(!self.busy(), |ui| {
                         section(ui, "Timing", |ui| {
-                            number(ui, "Wait time (s)", &mut self.settings.config.settle_s, 1.0, "");
+                            number(ui, "Wait time (s)", &mut self.settings.config.settle_s, 1.0, "", 0.0..=iv_core::MAX_SECONDS);
                             ui.horizontal(|ui| { ui.label("Average count"); ui.add(egui::DragValue::new(&mut self.settings.config.average_count).range(1..=1000)); });
                         });
                         ui.add_space(8.0);
@@ -1064,11 +1213,11 @@ impl IvApp {
                             let width = ui.available_width();
                             ui.label("Current limit (V source)");
                             quantity(ui, "current_compliance", &mut self.settings.current_compliance,
-                                &mut self.settings.compliance_units[0], "A", width);
+                                &mut self.settings.compliance_units[0], "A", width, true);
                             ui.add_space(8.0);
                             ui.label("Voltage limit (I source)");
                             quantity(ui, "voltage_compliance", &mut self.settings.voltage_compliance,
-                                &mut self.settings.compliance_units[1], "V", width);
+                                &mut self.settings.compliance_units[1], "V", width, true);
                             self.settings.config.compliance = if self.settings.config.mode == Mode::Iv {
                                 self.settings.current_compliance
                             } else { self.settings.voltage_compliance };
@@ -1077,10 +1226,10 @@ impl IvApp {
                         ui.add_space(8.0);
                         egui::CollapsingHeader::new("Advanced").show(ui, |ui| {
                             let unit = if self.settings.config.mode == Mode::Iv { "mV" } else { "mA" };
-                            number(ui, "Source limit", &mut self.settings.config.source_limit, 0.001, unit);
-                            number(ui, "First wait (s)", &mut self.settings.config.start_settle_s, 1.0, "");
-                            number(ui, "Ramp step", &mut self.settings.config.ramp_step, 0.001, unit);
-                            number(ui, "Ramp wait (s)", &mut self.settings.config.ramp_wait_s, 1.0, "");
+                            number(ui, "Source limit", &mut self.settings.config.source_limit, 0.001, unit, 0.0..=f64::MAX);
+                            number(ui, "First wait (s)", &mut self.settings.config.start_settle_s, 1.0, "", 0.0..=iv_core::MAX_SECONDS);
+                            number(ui, "Ramp step", &mut self.settings.config.ramp_step, 0.001, unit, 0.0..=f64::MAX);
+                            number(ui, "Ramp wait (s)", &mut self.settings.config.ramp_wait_s, 1.0, "", 0.0..=iv_core::MAX_SECONDS);
                             ui.horizontal(|ui| { ui.label("Repeat count"); ui.add(egui::DragValue::new(&mut self.settings.config.repeat).range(1..=1000)); });
                         });
                         if self.settings.config.pattern == Pattern::CustomList {
@@ -1213,7 +1362,13 @@ impl IvApp {
                                                                         );
                                                                     ui.add_sized(
                                                                         [111.0, 24.0],
-                                                                        egui::Label::new(*field)
+                                                                        egui::Label::new(match *field {
+                                                                            "voltage_V" => "Voltage",
+                                                                            "current_A" => "Current",
+                                                                            "source_target_value" => "Source target",
+                                                                            "source_readback_value" => "Source readback",
+                                                                            _ => *field,
+                                                                        })
                                                                             .truncate(),
                                                                     )
                                                                     .on_hover_text(*field);
@@ -1227,6 +1382,19 @@ impl IvApp {
                                                                     )
                                                                     .on_hover_text(value);
                                                                     ui.end_row();
+                                                                }
+                                                                if let Some(record) = &self.state.last {
+                                                                    let source_unit = if record.mode == Mode::Iv { "V" } else { "A" };
+                                                                    let meter_unit = if record.mode == Mode::Iv { "A" } else { "V" };
+                                                                    for (label, value, unit) in [
+                                                                        ("Source resolution", record.source_resolution, source_unit),
+                                                                        ("Meter range", record.meter_range, meter_unit),
+                                                                        ("Meter resolution", record.meter_resolution, meter_unit),
+                                                                    ] {
+                                                                        ui.label(label).on_hover_text("Display resolution, not a measurement uncertainty or accuracy guarantee.");
+                                                                        ui.label(value.map(|v| format!("{v:e} {unit}")).unwrap_or_else(|| "Unknown".into()));
+                                                                        ui.end_row();
+                                                                    }
                                                                 }
                                                             }
                                                         });
@@ -1286,17 +1454,58 @@ impl IvApp {
         });
         ui.add_space(8.0);
         let graph_height = (ui.clip_rect().bottom() - ui.cursor().top() - 2.0).max(320.0);
-        let (x_label, y_label) = if self.settings.config.mode == Mode::Iv {
-            ("Voltage (V)", "Current (A)")
+        let (x_name, x_unit, y_name, y_unit) = if self.settings.config.mode == Mode::Iv {
+            ("Voltage", "V", "Current", "A")
         } else {
-            ("Current (A)", "Voltage (V)")
+            ("Current", "A", "Voltage", "V")
         };
-        Plot::new("iv_plot")
+        let mut extent = self.plot_extent;
+        if self.samples.is_empty() {
+            extent[0] = self
+                .settings
+                .config
+                .start
+                .abs()
+                .max(self.settings.config.stop.abs());
+        }
+        let plot_id = ui.make_persistent_id(egui::Id::new("iv_plot"));
+        if let Some(memory) = PlotMemory::load(ui.ctx(), plot_id) {
+            for (axis, maximum) in extent.iter_mut().enumerate() {
+                if !memory.auto_bounds[axis] {
+                    let visible = memory.bounds().min()[axis]
+                        .abs()
+                        .max(memory.bounds().max()[axis].abs());
+                    if visible.is_finite() && visible > 0.0 {
+                        *maximum = visible;
+                    }
+                }
+            }
+        }
+        let x_scale = AxisScale::for_magnitude(extent[0]);
+        let y_scale = AxisScale::for_magnitude(extent[1]);
+        let samples = &self.samples;
+        let plotted = Plot::new("iv_plot")
+            .id(plot_id)
             .height(graph_height)
             .show_background(false)
             .grid_spacing(8.0..=12000.0)
-            .x_axis_label(x_label)
-            .y_axis_label(y_label)
+            .x_axis_label(format!("{x_name} ({}{x_unit})", x_scale.prefix))
+            .y_axis_label(format!("{y_name} ({}{y_unit})", y_scale.prefix))
+            .x_axis_formatter(move |mark, _| x_scale.tick(mark.value, mark.step_size))
+            .y_axis_formatter(move |mark, _| y_scale.tick(mark.value, mark.step_size))
+            .label_formatter(move |name, point| {
+                let resolution = samples
+                    .iter()
+                    .rev()
+                    .find(|s| s.0 == point.x && s.1 == point.y)
+                    .map(|s| s.3)
+                    .unwrap_or([None; 2]);
+                format!(
+                    "{name}\n{x_name}: {}\n{y_name}: {}",
+                    display_reading(point.x, resolution[0], x_unit),
+                    display_reading(point.y, resolution[1], y_unit)
+                )
+            })
             .allow_boxed_zoom(true)
             .allow_scroll(true)
             .allow_drag(true)
@@ -1323,6 +1532,19 @@ impl IvApp {
                     }
                 }
             });
+        // Zoom/pan bounds are applied during show. If a prefix changed, finish
+        // the label transition on the next frame even after input becomes idle.
+        if let Some(memory) = PlotMemory::load(ui.ctx(), plot_id) {
+            for (axis, scale) in [x_scale, y_scale].into_iter().enumerate() {
+                if !memory.auto_bounds[axis] {
+                    let bounds = plotted.transform.bounds();
+                    let visible = bounds.min()[axis].abs().max(bounds.max()[axis].abs());
+                    if AxisScale::for_magnitude(visible) != scale {
+                        ui.ctx().request_repaint();
+                    }
+                }
+            }
+        }
     }
 }
 
@@ -1469,7 +1691,14 @@ fn style(ctx: &egui::Context) {
     });
 }
 
-fn number(ui: &mut egui::Ui, label: &str, value: &mut f64, scale: f64, unit: &str) {
+fn number(
+    ui: &mut egui::Ui,
+    label: &str,
+    value: &mut f64,
+    scale: f64,
+    unit: &str,
+    range: std::ops::RangeInclusive<f64>,
+) {
     ui.horizontal(|ui| {
         ui.label(label);
         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
@@ -1481,6 +1710,7 @@ fn number(ui: &mut egui::Ui, label: &str, value: &mut f64, scale: f64, unit: &st
                 .add_sized(
                     [100.0, 24.0],
                     egui::DragValue::new(&mut display)
+                        .range((*range.start() / scale)..=(*range.end() / scale))
                         .speed(0.01)
                         .max_decimals(6)
                         .min_decimals(3),
@@ -1500,6 +1730,7 @@ fn quantity(
     unit_index: &mut usize,
     base: &str,
     width: f32,
+    nonnegative: bool,
 ) {
     let scales = [1.0, 1e-3, 1e-6, 1e-9, 1e-12];
     let names = [
@@ -1517,6 +1748,11 @@ fn quantity(
             .add_sized(
                 [(width - 68.0).max(65.0), 24.0],
                 egui::DragValue::new(&mut display)
+                    .range(if nonnegative {
+                        0.0..=f64::MAX
+                    } else {
+                        f64::MIN..=f64::MAX
+                    })
                     .speed(0.01)
                     .min_decimals(3)
                     .max_decimals(6),
@@ -1570,6 +1806,108 @@ mod tests {
     use super::*;
 
     #[test]
+    fn timing_inputs_clamp_negative_values_but_accept_zero() {
+        let context = egui::Context::default();
+        let mut value = -0.25;
+        let _ = context.run(Default::default(), |ctx| {
+            egui::CentralPanel::default().show(ctx, |ui| {
+                number(
+                    ui,
+                    "Wait time",
+                    &mut value,
+                    1.0,
+                    "s",
+                    0.0..=iv_core::MAX_SECONDS,
+                );
+            });
+        });
+        assert_eq!(value, 0.0);
+        value = iv_core::MAX_SECONDS + 1.0;
+        let _ = context.run(Default::default(), |ctx| {
+            egui::CentralPanel::default().show(ctx, |ui| {
+                number(
+                    ui,
+                    "Wait time",
+                    &mut value,
+                    1.0,
+                    "s",
+                    0.0..=iv_core::MAX_SECONDS,
+                );
+            });
+        });
+        assert_eq!(value, iv_core::MAX_SECONDS);
+    }
+
+    #[test]
+    fn limits_reject_negative_ui_values_without_clamping_sweep_targets() {
+        let context = egui::Context::default();
+        let mut target = -0.001;
+        let mut compliance = -0.001;
+        let mut units = [1, 1];
+        let _ = context.run(Default::default(), |ctx| {
+            egui::CentralPanel::default().show(ctx, |ui| {
+                quantity(ui, "target", &mut target, &mut units[0], "V", 200.0, false);
+                quantity(
+                    ui,
+                    "compliance",
+                    &mut compliance,
+                    &mut units[1],
+                    "A",
+                    200.0,
+                    true,
+                );
+            });
+        });
+        assert_eq!(target, -0.001);
+        assert_eq!(compliance, 0.0);
+    }
+
+    #[test]
+    fn engineering_axis_labels_and_ticks_share_the_same_scale() {
+        for (value, expected_factor, prefix) in [
+            (2.0, 1.0, ""),
+            (0.001, 1e-3, "m"),
+            (1e-6, 1e-6, "µ"),
+            (7e-9, 1e-9, "n"),
+            (3e-12, 1e-12, "p"),
+            (5e-15, 1e-15, "f"),
+        ] {
+            let scale = AxisScale::for_magnitude(value);
+            assert_eq!(scale.factor, expected_factor);
+            assert_eq!(scale.prefix, prefix);
+        }
+        let millivolts = AxisScale::for_magnitude(0.001);
+        assert_eq!(millivolts.tick(-0.001, 0.0005), "-1.0");
+        assert_eq!(millivolts.tick(0.0005, 0.0005), "0.5");
+        assert_eq!(millivolts.tick(-0.0, 0.0005), "0.0");
+        let microamps = AxisScale::for_magnitude(1e-6);
+        assert_eq!(microamps.tick(1e-6, 2e-7), "1.0");
+        assert_eq!(microamps.tick(2e-7, 2e-7), "0.2");
+        assert_eq!(AxisScale::for_magnitude(0.0).prefix, "");
+        assert_eq!(AxisScale::for_magnitude(f64::NAN).factor, 1.0);
+        assert_eq!(AxisScale::for_magnitude(1e-6 * (1.0 - 1e-15)).prefix, "µ");
+    }
+
+    #[test]
+    fn axis_extent_ignores_breaks_and_keeps_plot_coordinates_in_si() {
+        let samples = vec![
+            (-0.001, -1e-6, "forward".into(), [None; 2]),
+            (0.001, 1e-6, "backward".into(), [None; 2]),
+        ];
+        let mut extent = [0.0; 2];
+        for (x, y, _, _) in &samples {
+            extend_plot_extent(&mut extent, *x, *y);
+        }
+        extend_plot_extent(&mut extent, f64::NAN, f64::INFINITY);
+        assert_eq!(extent, [0.001, 1e-6]);
+        let plotted = plot_series(&samples);
+        assert_eq!(plotted[0][0], PlotPoint::new(-0.001, -1e-6));
+        assert_eq!(plotted[1][0], PlotPoint::new(0.001, 1e-6));
+        assert_eq!(AxisScale::for_magnitude(extent[0]).prefix, "m");
+        assert_eq!(AxisScale::for_magnitude(extent[1]).prefix, "µ");
+    }
+
+    #[test]
     fn earlier_preview_config_keeps_safe_defaults() {
         let settings: Settings =
             serde_json::from_str(r#"{"filename":"experiment","simulation":true}"#).unwrap();
@@ -1588,11 +1926,11 @@ mod tests {
     #[test]
     fn cached_plot_series_preserves_direction_breaks() {
         let samples = vec![
-            (0.0, 1.0, "forward".into()),
-            (1.0, 2.0, "backward".into()),
-            (2.0, 3.0, "forward".into()),
-            (3.0, 4.0, "custom-a".into()),
-            (4.0, 5.0, "custom-b".into()),
+            (0.0, 1.0, "forward".into(), [None; 2]),
+            (1.0, 2.0, "backward".into(), [None; 2]),
+            (2.0, 3.0, "forward".into(), [None; 2]),
+            (3.0, 4.0, "custom-a".into(), [None; 2]),
+            (4.0, 5.0, "custom-b".into(), [None; 2]),
         ];
         let series = plot_series(&samples);
 
@@ -1609,4 +1947,15 @@ mod tests {
             vec![PlotPoint::new(3.0, 4.0), PlotPoint::new(4.0, 5.0)]
         );
     }
+}
+#[test]
+fn display_digits_follow_resolution_without_modifying_measurement() {
+    let value = 2.123456789e-9_f64;
+    let bits = value.to_bits();
+    assert_eq!(display_reading(value, Some(1e-11), "A"), "2.12 nA");
+    assert_eq!(display_reading(value, Some(1e-10), "A"), "2.1 nA");
+    assert_eq!(display_reading(value, Some(1e-12), "A"), "2.123 nA");
+    assert_eq!(value.to_bits(), bits);
+    assert_eq!(display_reading(-0.0, Some(1e-9), "A"), "0 nA");
+    assert!(display_reading(value, None, "A").contains("resolution unknown"));
 }

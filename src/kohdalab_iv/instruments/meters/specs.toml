@@ -53,3 +53,97 @@ max_input_A = 1.0
 auto_range_required = false
 nplc_min = 0.001
 nplc_max = 100.0
+
+# Display-only metadata. Accuracy, noise and range limits remain separate.
+
+[AGILENT_34401A.display_precision]
+reviewed_on = "2026-10-14"
+method = "scpi_range_resolution_query"
+native_enabled = false
+review_status = "manual_reviewed_hardware_query_pending"
+resolution_kind = "configured_measurement_resolution"
+voltage_range_query = "SENS:VOLT:DC:RANG?"
+current_range_query = "SENS:CURR:DC:RANG?"
+voltage_resolution_query = "SENS:VOLT:DC:RES?"
+current_resolution_query = "SENS:CURR:DC:RES?"
+references = ["https://www.keysight.com/us/en/assets/9018-01063/user-manuals/9018-01063.pdf"]
+reference_sections = ["SCPI range, resolution and NPLC commands"]
+depends_on = ["function", "range", "nplc", "aperture", "model_options"]
+panel_digits_verified = false
+notes = "Query after READ? for autorange. Queries do not change measurement configuration. Configured resolution is not accuracy, returned text length, or an independently verified panel digit count. Averaging does not automatically add display digits."
+
+[AGILENT_34411A.display_precision]
+reviewed_on = "2026-10-14"
+method = "scpi_range_resolution_query"
+native_enabled = true
+review_status = "manual_reviewed_hardware_query_pending"
+resolution_kind = "configured_measurement_resolution"
+voltage_range_query = "SENS:VOLT:DC:RANG?"
+current_range_query = "SENS:CURR:DC:RANG?"
+voltage_resolution_query = "SENS:VOLT:DC:RES?"
+current_resolution_query = "SENS:CURR:DC:RES?"
+references = ["https://www.keysight.com/us/en/assets/7018-02044/white-papers-archived/5990-3515.pdf"]
+reference_sections = ["SCPI range, resolution and NPLC commands"]
+depends_on = ["function", "range", "nplc", "aperture", "model_options"]
+panel_digits_verified = false
+notes = "Query after READ? for autorange. Queries do not change measurement configuration. Configured resolution is not accuracy, returned text length, or an independently verified panel digit count. Averaging does not automatically add display digits."
+datasheet_url = "https://www.keysight.com.cn/cn/zh/assets/7018-01326/data-sheets/5989-3738.pdf"
+
+[KEYSIGHT_34411A.display_precision]
+reviewed_on = "2026-10-14"
+method = "scpi_range_resolution_query"
+native_enabled = true
+review_status = "manual_reviewed_hardware_query_pending"
+resolution_kind = "configured_measurement_resolution"
+voltage_range_query = "SENS:VOLT:DC:RANG?"
+current_range_query = "SENS:CURR:DC:RANG?"
+voltage_resolution_query = "SENS:VOLT:DC:RES?"
+current_resolution_query = "SENS:CURR:DC:RES?"
+references = ["https://www.keysight.com/us/en/assets/7018-02044/white-papers-archived/5990-3515.pdf"]
+reference_sections = ["SCPI range, resolution and NPLC commands"]
+depends_on = ["function", "range", "nplc", "aperture", "model_options"]
+panel_digits_verified = false
+notes = "Query after READ? for autorange. Queries do not change measurement configuration. Configured resolution is not accuracy, returned text length, or an independently verified panel digit count. Averaging does not automatically add display digits."
+same_precision_profile_as = "AGILENT_34411A"
+
+[KEYSIGHT_34465A.display_precision]
+reviewed_on = "2026-10-14"
+method = "scpi_range_resolution_query"
+native_enabled = false
+review_status = "manual_reviewed_options_and_hardware_pending"
+resolution_kind = "configured_measurement_resolution"
+voltage_range_query = "SENS:VOLT:DC:RANG?"
+current_range_query = "SENS:CURR:DC:RANG?"
+voltage_resolution_query = "SENS:VOLT:DC:RES?"
+current_resolution_query = "SENS:CURR:DC:RES?"
+references = ["https://www.keysight.com/us/en/assets/9018-03876/service-manuals/9018-03876.pdf"]
+reference_sections = ["SCPI range, resolution and NPLC commands"]
+depends_on = ["function", "range", "nplc", "aperture", "model_options"]
+panel_digits_verified = false
+notes = "Query after READ? for autorange. Queries do not change measurement configuration. Configured resolution is not accuracy, returned text length, or an independently verified panel digit count. Averaging does not automatically add display digits. Faster NPLC settings depend on DIG option/firmware; legacy nplc_values are not an unconditional capability declaration."
+
+[ADCMT_7461A.display_precision]
+reviewed_on = "2026-10-14"
+method = "unknown"
+native_enabled = false
+review_status = "product_spec_reviewed_programming_manual_pending"
+resolution_kind = "integration_dependent_measurement_resolution"
+references = ["https://www.adcmt.com/en/products/dmm/7451"]
+reference_sections = ["Specifications and variable integration time"]
+depends_on = ["function", "range", "integration_time", "sampling_mode"]
+best_case_voltage_resolution_V = 1e-07
+best_case_current_resolution_A = 1e-09
+panel_digits_verified = false
+notes = "Best-case values are not valid for every range/speed. Official programming manual requires a download form. Do not reuse Keysight RES? syntax or infer digits from the maximum 6.5-digit display."
+
+[SIMULATED_METER.display_precision]
+reviewed_on = "2026-10-14"
+method = "simulation"
+native_enabled = true
+review_status = "simulation_only"
+resolution_kind = "illustrative_increment"
+voltage_resolution_V = 1e-09
+current_resolution_A = 1e-12
+references = []
+reference_sections = []
+notes = "Illustrative simulator resolution; not a hardware or accuracy specification."
