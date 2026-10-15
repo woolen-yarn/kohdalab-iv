@@ -1,5 +1,11 @@
 # Changelog
 
+## 1.0.1 (2026-10-15)
+
+- Include an optional Windows app installer for Program Files placement and a desktop shortcut with a writable user working directory. Keep direct portable use available.
+- Verify files before installation, retain existing installation access controls, and protect settings, measurement data and driver cache during updates.
+- Document install/update steps and include the installer in portable packages and the source build kit.
+
 ## 1.0.0 (2026-10-15)
 
 - Verify real source output OFF and zero before every sweep configuration, including retries after failures. Refuse Start when verification fails.
