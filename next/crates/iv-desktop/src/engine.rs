@@ -1069,6 +1069,9 @@ fn execute(
             "Use two real instruments or two simulated instruments for a measurement.".into(),
         );
     }
+    let requested_config = config;
+    let effective_config = iv_core::prepare_config(config)?;
+    let config = &effective_config;
     let planned = plan(config)?;
     state.phase = "Preparing".into();
     state.message = "Creating the result file before enabling output…".into();
@@ -1085,7 +1088,7 @@ fn execute(
     }
     let mut writer = CsvWriter::create(path)?;
     let manifest = path.with_extension("run.json");
-    let initial_metadata = serde_json::json!({"schema_version":3,"csv_schema":"compact_v2","csv_fields":iv_core::CSV_FIELDS,"csv_numeric_format":"shortest_roundtrip_scientific","application_version":env!("CARGO_PKG_VERSION"),"config":config,"outcome":state,"in_progress":true,
+    let initial_metadata = serde_json::json!({"schema_version":3,"csv_schema":"compact_v2","csv_fields":iv_core::CSV_FIELDS,"csv_numeric_format":"shortest_roundtrip_scientific","application_version":env!("CARGO_PKG_VERSION"),"config":config,"requested_config":requested_config,"outcome":state,"in_progress":true,
         "source_range_setting":planned.source_range,"hardware_compliance_setting":planned.hardware_compliance,"display_settings_changes":[],"simulation":state.simulation,"csv":path.display().to_string()});
     write_json_new(&manifest, &initial_metadata)
         .map_err(|error| format!("Cannot save settings before enabling output: {error}"))?;
@@ -1173,6 +1176,9 @@ fn execute(
                 state.message.push_str("Reading meter…");
                 publish_progress(latest, state, &mut last_progress);
                 let mut value = 0.0;
+                let mut readings_completed = 0_u32;
+                let mut sample_limit_hit = false;
+                let mut trigger_value = 0.0;
                 let mut meter_resolution: Option<f64> = None;
                 let mut meter_range: Option<f64> = None;
                 let mut resolution_known = true;
@@ -1194,6 +1200,14 @@ fn execute(
                         return Err("Meter reported overload or an invalid reading.".into());
                     }
                     value += measured / config.average_count as f64;
+                    readings_completed += 1;
+                    // Do not allow averaging to hide an individual over-limit sample.
+                    if measured.abs() >= config.compliance {
+                        sample_limit_hit = true;
+                        trigger_value = measured;
+                        resolution_known = false;
+                        break;
+                    }
                     if control.cancelled() {
                         stopped = true;
                         break;
@@ -1230,6 +1244,15 @@ fn execute(
                 if stopped {
                     break;
                 }
+                if sample_limit_hit {
+                    value *= config.average_count as f64 / readings_completed as f64;
+                    instrument_status_events.push(serde_json::json!({
+                        "point_index":point.point_index,"event":"averaging_compliance_stop",
+                        "readings_completed":readings_completed,"readings_requested":config.average_count,
+                        "trigger_value":trigger_value,"trigger_unit":if config.mode == Mode::Iv { "A" } else { "V" },
+                        "software_limit":config.compliance
+                    }));
+                }
                 let readback = read_level(device)?;
                 let mut record = simulate_record(config, point, begin.elapsed().as_secs_f64());
                 record.source_set = level;
@@ -1244,7 +1267,7 @@ fn execute(
                 record.meter_range = meter_range;
                 record.source_resource = "source.gs210".into();
                 record.meter_resource = "meter.dmm_34411a".into();
-                record.compliance = value.abs() >= config.compliance;
+                record.compliance = sample_limit_hit || value.abs() >= config.compliance;
                 record
             } else {
                 simulate_record(config, point, begin.elapsed().as_secs_f64())
@@ -1332,7 +1355,7 @@ fn execute(
             format!("{error} · {}", state.error)
         };
     }
-    let metadata = serde_json::json!({"schema_version":3,"csv_schema":"compact_v2","csv_fields":iv_core::CSV_FIELDS,"csv_numeric_format":"shortest_roundtrip_scientific","application_version":env!("CARGO_PKG_VERSION"),"config":config,"outcome":state,"in_progress":false,
+    let metadata = serde_json::json!({"schema_version":3,"csv_schema":"compact_v2","csv_fields":iv_core::CSV_FIELDS,"csv_numeric_format":"shortest_roundtrip_scientific","application_version":env!("CARGO_PKG_VERSION"),"config":config,"requested_config":requested_config,"outcome":state,"in_progress":false,
         "source_range_setting":planned.source_range,"hardware_compliance_setting":planned.hardware_compliance,"display_settings_changes":display_settings_changes,"instrument_status_events":instrument_status_events,"simulation":state.simulation,"csv":path.display().to_string()});
     if let Err(error) = replace_json(&manifest, &metadata) {
         state

@@ -84,6 +84,7 @@ pub struct RunConfig {
     pub stop: f64,
     /// Sweep increment, in SI units. Its sign is ignored; sweep direction is inferred.
     pub step: f64,
+    /// Meter readings averaged at each fixed source target; not sweep repetitions.
     pub repeat: u32,
     pub custom_points: Vec<f64>,
     /// Software maximum absolute source target, in source SI units.
@@ -93,6 +94,7 @@ pub struct RunConfig {
     pub settle_s: f64,
     pub start_settle_s: f64,
     pub nplc: f64,
+    /// Legacy alias for per-point averaging. `repeat` takes precedence when > 1.
     pub average_count: u32,
     pub ramp_step: f64,
     pub ramp_wait_s: f64,
@@ -315,16 +317,23 @@ fn select_range(spec: &SourceSpec, mode: Mode, maximum: f64) -> Result<(f64, f64
         .ok_or_else(|| "source targets exceed the GS210 range.".to_owned())
 }
 
-fn aligned(values: &[Decimal], resolution: f64, label: &str) -> Result<(), String> {
-    let resolution = decimal(resolution, "source resolution")?;
-    for value in values {
-        if !value.is_zero() && (*value / resolution).fract() != Decimal::ZERO {
-            return Err(format!(
-                "{label} {value} is not aligned to source resolution {resolution}."
-            ));
-        }
+// Accept only floating-point conversion noise, never a meaningful fraction of
+// a hardware increment. Snap before building the sweep to avoid accumulating it.
+fn aligned_value(value: f64, resolution: f64, label: &str, unit: &str) -> Result<Decimal, String> {
+    let value_decimal = decimal(value, label)?;
+    let increment = decimal(resolution, "source resolution")?;
+    let nearest = value_decimal
+        .checked_div(increment)
+        .and_then(|ratio| ratio.round().checked_mul(increment))
+        .ok_or_else(|| format!("{label} is too large for the selected source resolution."))?;
+    let residual = (value_decimal - nearest).abs();
+    let tolerance = decimal(value.abs() * f64::EPSILON * 4.0, "alignment tolerance")?;
+    if residual > tolerance {
+        return Err(format!(
+            "{label} ({value:e} {unit}) must be a multiple of {resolution:e} {unit} for the selected source range."
+        ));
     }
-    Ok(())
+    Ok(nearest)
 }
 
 fn quantized_hardware_compliance(
@@ -354,8 +363,78 @@ fn quantized_hardware_compliance(
     Ok((ratio * resolution).min(maximum))
 }
 
+/// Backward-compatible per-point accumulation count. Never multiply the old
+/// average and repeat fields: both describe the same operation now. The legacy
+/// alias is used only when repeat is 1; repeat = 0 remains an invalid count.
+pub fn readings_per_point(config: &RunConfig) -> u32 {
+    if config.repeat != 1 {
+        config.repeat
+    } else {
+        config.average_count
+    }
+}
+
+/// Resolve hardware-dependent source settings without increasing either limit.
+/// Endpoints remain explicit: only representation noise is snapped. The step
+/// magnitude rounds up to the next hardware increment; ramping uses one
+/// percent of the nominal source range or the sweep step, whichever is larger,
+/// capped to the range. No instrument I/O occurs here.
+pub fn prepare_config(config: &RunConfig) -> Result<RunConfig, String> {
+    let mut prepared = config.clone();
+    let readings = readings_per_point(config);
+    if readings == 0 || readings > 10_000 {
+        return Err("Readings per point (Repeat) must be between 1 and 10000.".into());
+    }
+    prepared.repeat = readings;
+    prepared.average_count = readings;
+    let maximum = if config.pattern == Pattern::CustomList {
+        for value in &config.custom_points {
+            decimal(*value, "custom target")?;
+        }
+        config
+            .custom_points
+            .iter()
+            .map(|v| v.abs())
+            .fold(0.0_f64, f64::max)
+    } else {
+        decimal(config.start, "start")?;
+        decimal(config.stop, "stop")?;
+        config.start.abs().max(config.stop.abs())
+    };
+    let (source_range, range_maximum, resolution) = select_range(&gs210()?, config.mode, maximum)?;
+    let increment = decimal(resolution, "source resolution")?;
+    let requested = decimal(config.step, "step")?;
+    if requested.is_zero() {
+        return Err("step must be non-zero.".into());
+    }
+    let magnitude = match aligned_value(config.step.abs(), resolution, "Step", "SI") {
+        Ok(value) => value,
+        Err(_) => requested
+            .abs()
+            .checked_div(increment)
+            .and_then(|ratio| ratio.ceil().checked_mul(increment))
+            .ok_or("Step is too large for the selected source resolution.")?,
+    };
+    let step: f64 = magnitude
+        .to_string()
+        .parse()
+        .map_err(|_| "Invalid effective step")?;
+    prepared.step = step.copysign(config.step);
+    let ramp = (decimal(source_range, "source range")? / Decimal::from(100_u32) / increment).ceil()
+        * increment;
+    prepared.ramp_step = ramp
+        .to_string()
+        .parse::<f64>()
+        .map_err(|_| "Invalid automatic ramp step")?
+        .max(step)
+        .min(range_maximum);
+    Ok(prepared)
+}
+
 /// Validate a GS210 + 34411A run and create its deterministic sweep sequence.
 pub fn plan(config: &RunConfig) -> Result<Plan, String> {
+    let prepared = prepare_config(config)?;
+    let config = &prepared;
     for (value, name) in [
         (config.start, "start"),
         (config.stop, "stop"),
@@ -400,10 +479,46 @@ pub fn plan(config: &RunConfig) -> Result<Plan, String> {
         return Err(format!("34411A does not support nplc={}.", config.nplc));
     }
 
-    let step = decimal(config.step, "step")?;
+    // Check range and increments before allocating a potentially large sweep.
+    let gs210 = gs210()?;
+    let maximum = if config.pattern == Pattern::CustomList {
+        config
+            .custom_points
+            .iter()
+            .map(|v| v.abs())
+            .fold(0.0_f64, f64::max)
+    } else {
+        config.start.abs().max(config.stop.abs())
+    };
+    let (source_range, range_maximum, resolution) = select_range(&gs210, config.mode, maximum)?;
+    let unit = if config.mode == Mode::Vi { "A" } else { "V" };
+    let start = if config.pattern != Pattern::CustomList {
+        aligned_value(config.start, resolution, "Start", unit)?
+    } else {
+        Decimal::ZERO
+    };
+    let stop = if config.pattern != Pattern::CustomList {
+        aligned_value(config.stop, resolution, "End", unit)?
+    } else {
+        Decimal::ZERO
+    };
+    let step = if config.pattern != Pattern::CustomList {
+        aligned_value(config.step, resolution, "Step", unit)?
+    } else {
+        decimal(config.step, "step")?
+    };
     if step.is_zero() {
         return Err("step must be non-zero.".to_owned());
     }
+    if config.ramp_step > range_maximum + f64::EPSILON {
+        return Err("ramp_step exceeds the selected source range.".to_owned());
+    }
+    aligned_value(
+        config.ramp_step,
+        resolution,
+        "Ramp step (Timing / Compliance)",
+        unit,
+    )?;
     let base_points = match config.pattern {
         Pattern::CustomList => {
             if config.custom_points.is_empty() {
@@ -416,24 +531,18 @@ pub fn plan(config: &RunConfig) -> Result<Plan, String> {
                 .custom_points
                 .iter()
                 .enumerate()
-                .map(|(index, value)| decimal(*value, &format!("custom_points[{index}]")))
+                .map(|(index, value)| {
+                    aligned_value(*value, resolution, &format!("custom_points[{index}]"), unit)
+                })
                 .collect::<Result<Vec<_>, _>>()?
         }
-        Pattern::Linear => forward_points(
-            decimal(config.start, "start")?,
-            decimal(config.stop, "stop")?,
-            step,
-        )?,
+        Pattern::Linear => forward_points(start, stop, step)?,
         Pattern::RoundTrip => {
-            let start = decimal(config.start, "start")?;
-            let stop = decimal(config.stop, "stop")?;
             let mut points = forward_points(start, stop, step)?;
             append_joined(&mut points, forward_points(stop, start, step)?);
             points
         }
         Pattern::ZeroCentered => {
-            let start = decimal(config.start, "start")?;
-            let stop = decimal(config.stop, "stop")?;
             let maximum = start.abs().max(stop.abs());
             let mut points = Vec::new();
             append_joined(&mut points, forward_points(Decimal::ZERO, maximum, step)?);
@@ -443,14 +552,11 @@ pub fn plan(config: &RunConfig) -> Result<Plan, String> {
         }
     };
     let base_len = base_points.len();
-    let total = base_len
-        .checked_mul(config.repeat as usize)
-        .ok_or_else(|| "sweep point count overflow.".to_owned())?;
+    let total = base_len;
     if total == 0 || total > MAX_POINTS {
         return Err(format!("sweep must contain 1..={MAX_POINTS} points."));
     }
 
-    let gs210 = gs210()?;
     let hard_limit = match config.mode {
         Mode::Iv => gs210.max_abs_v,
         Mode::Vi => gs210.max_abs_a,
@@ -470,16 +576,6 @@ pub fn plan(config: &RunConfig) -> Result<Plan, String> {
             "source target {max_target} exceeds effective limit {effective_limit}."
         ));
     }
-    let (source_range, range_maximum, resolution) = select_range(&gs210, config.mode, max_target)?;
-    aligned(&base_points, resolution, "target")?;
-    if config.ramp_step > range_maximum + f64::EPSILON {
-        return Err("ramp_step exceeds the selected source range.".to_owned());
-    }
-    aligned(
-        &[decimal(config.ramp_step, "ramp_step")?],
-        resolution,
-        "ramp_step",
-    )?;
     let hardware_compliance =
         quantized_hardware_compliance(&gs210, config.mode, config.compliance)?;
 
@@ -497,8 +593,6 @@ pub fn plan(config: &RunConfig) -> Result<Plan, String> {
     let points = base_points
         .iter()
         .copied()
-        .cycle()
-        .take(total)
         .enumerate()
         .map(|(index, target)| {
             let delta = if index == 0 && total > 1 {
@@ -516,7 +610,7 @@ pub fn plan(config: &RunConfig) -> Result<Plan, String> {
             SweepPoint {
                 target: targets[index % base_len],
                 direction: direction.into(),
-                repeat_index: (index / base_len) as u32 + 1,
+                repeat_index: 1,
                 sweep_index: 1,
                 point_index: index + 1,
                 total_points: total,
@@ -686,6 +780,75 @@ mod tests {
     use super::*;
 
     #[test]
+    fn unit_conversion_noise_is_snapped_before_sweep_generation() {
+        let config = RunConfig {
+            mode: Mode::Vi,
+            pattern: Pattern::Linear,
+            start: -100.0 * 1e-6,
+            stop: 1e-6,
+            step: 0.1 * 1e-6,
+            ramp_step: 0.1 * 1e-6,
+            source_limit: 0.1,
+            compliance: 1.0,
+            ..RunConfig::default()
+        };
+        let result = plan(&config).unwrap();
+        assert_eq!(result.points.len(), 1011);
+        assert_eq!(result.points.first().unwrap().target, -0.0001);
+        assert_eq!(result.points.last().unwrap().target, 1e-6);
+        assert_eq!(result.points[1000].target, 0.0);
+    }
+
+    #[test]
+    fn high_current_settings_resolve_step_and_ramp_without_raising_limits() {
+        let mut config = RunConfig {
+            mode: Mode::Vi,
+            start: -0.1,
+            stop: 0.1,
+            step: 1e-7,
+            ramp_step: 1e-7,
+            source_limit: 0.1,
+            compliance: 1.0,
+            ..RunConfig::default()
+        };
+        let prepared = prepare_config(&config).unwrap();
+        assert_eq!(prepared.step, 1e-6);
+        assert_eq!(prepared.ramp_step, 0.001);
+        assert_eq!(prepared.source_limit, config.source_limit);
+        assert_eq!(prepared.compliance, config.compliance);
+        assert_eq!(plan(&config).unwrap().points.len(), 400001);
+        config.step = 1.5e-6;
+        assert_eq!(prepare_config(&config).unwrap().step, 2e-6);
+        config.step = -100.0 * 1e-6;
+        assert_eq!(prepare_config(&config).unwrap().step, -0.0001);
+        config.step = 1.0;
+        assert_eq!(prepare_config(&config).unwrap().ramp_step, 0.12);
+        config.source_limit = 0.001;
+        assert!(
+            plan(&config)
+                .unwrap_err()
+                .contains("exceeds effective limit")
+        );
+        config.start = -0.1000005;
+        assert!(plan(&config).unwrap_err().starts_with("Start "));
+    }
+
+    #[test]
+    fn alignment_tolerance_rejects_real_sub_resolution_values() {
+        for value in [0.1e-6, 1.5e-6, 1e-20, 1e-6 + 1e-15, 1e28] {
+            assert!(aligned_value(value, 1e-6, "Step", "A").is_err());
+        }
+        assert_eq!(
+            aligned_value(0.0, 1e-6, "Start", "A").unwrap(),
+            Decimal::ZERO
+        );
+        assert_eq!(
+            aligned_value(100.0 * 1e-6, 1e-6, "Start", "A").unwrap(),
+            decimal(1e-4, "expected").unwrap()
+        );
+    }
+
+    #[test]
     fn defaults_create_decimal_zero_centered_order() {
         let plan = plan(&RunConfig::default()).unwrap();
         let targets = plan
@@ -701,7 +864,7 @@ mod tests {
     }
 
     #[test]
-    fn patterns_join_and_repeat_like_python_plan() {
+    fn repeats_average_each_target_without_repeating_the_sweep() {
         let mut config = RunConfig {
             start: 0.0,
             stop: 0.0002,
@@ -717,18 +880,21 @@ mod tests {
                 .iter()
                 .map(|point| point.target)
                 .collect::<Vec<_>>(),
-            vec![
-                0.0, 0.0001, 0.0002, 0.0001, 0.0, 0.0, 0.0001, 0.0002, 0.0001, 0.0
-            ]
+            vec![0.0, 0.0001, 0.0002, 0.0001, 0.0]
         );
-        assert_eq!(sweep_plan.points[5].repeat_index, 2);
-        // A repeated round trip joins at zero, so the zero delta retains the
-        // preceding direction exactly as the established Python planner does.
-        assert_eq!(sweep_plan.points[5].direction, "backward");
+        assert!(sweep_plan.points.iter().all(|p| p.repeat_index == 1));
+        assert_eq!(prepare_config(&config).unwrap().average_count, 2);
+        config.average_count = 5;
+        assert_eq!(prepare_config(&config).unwrap().average_count, 2);
         config.pattern = Pattern::CustomList;
         config.custom_points = vec![0.0, 0.0001, -0.0001];
         config.repeat = 1;
         assert_eq!(plan(&config).unwrap().points.len(), 3);
+        assert_eq!(prepare_config(&config).unwrap().average_count, 5);
+        config.repeat = 0;
+        assert!(plan(&config).is_err());
+        config.repeat = 10001;
+        assert!(plan(&config).is_err());
     }
 
     #[test]
@@ -748,8 +914,6 @@ mod tests {
                 let result = plan(&config).unwrap();
                 let decimals = values
                     .iter()
-                    .cycle()
-                    .take(values.len() * repeat as usize)
                     .map(|value| decimal(*value, "test target").unwrap())
                     .collect::<Vec<_>>();
                 assert_eq!(
@@ -762,7 +926,7 @@ mod tests {
                 );
                 for (index, point) in result.points.iter().enumerate() {
                     assert_eq!(point.target, values[index % values.len()]);
-                    assert_eq!(point.repeat_index as usize, index / values.len() + 1);
+                    assert_eq!(point.repeat_index, 1);
                     assert_eq!(point.point_index, index + 1);
                     assert_eq!(point.total_points, decimals.len());
                 }
