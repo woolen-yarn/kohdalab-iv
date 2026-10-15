@@ -1,5 +1,10 @@
 # Rust desktop release and validation
 
+> Historical reference for an earlier edition. For Rust v1.0.0 operation, use
+> [the current desktop guide](../next/README.md) and `next/specs/`. The current
+> GUI has Start / Stop / Save; output-off remains an engine/API function.
+
+
 Version: **0.3.4**. This is the native desktop release,
 separate from the stable Python portable. The full migration plan is in
 [next_version_plan.md](next_version_plan.md).

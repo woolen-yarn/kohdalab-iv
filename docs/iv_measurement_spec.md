@@ -1,5 +1,10 @@
 # KohdaLab IV Measurement Specification / 測定仕様
 
+> Historical reference for an earlier edition. For Rust v1.0.0 operation, use
+> [the current desktop guide](../next/README.md) and `next/specs/`. The current
+> GUI has Start / Stop / Save; output-off remains an engine/API function.
+
+
 Version: 1.0
 
 ## 日本語

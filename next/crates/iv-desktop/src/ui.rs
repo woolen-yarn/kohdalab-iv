@@ -1169,20 +1169,6 @@ impl IvApp {
                     });
                     ui.end_row();
                 });
-            if source {
-                ui.add_space(4.0);
-                if button(
-                    ui,
-                    "Output Off",
-                    ui.available_width(),
-                    self.state.source_connected,
-                )
-                .on_hover_text("Stop acquisition, return the source to zero and verify output off.")
-                .clicked()
-                {
-                    self.send(Command::OutputOff);
-                }
-            }
             self.live_monitor(ui, source);
         });
     }

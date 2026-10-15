@@ -1073,6 +1073,26 @@ fn execute(
     let effective_config = iv_core::prepare_config(config)?;
     let config = &effective_config;
     let planned = plan(config)?;
+    // Cached UI state is not proof that a real source is safe to reconfigure.
+    // Enforce this here so GUI, CLI and notebook runs share the same preflight.
+    if !state.source_simulation {
+        state.output = "Unknown".into();
+        let device = pair
+            .as_deref_mut()
+            .ok_or("Cannot start: reconnect the source and meter before measuring.")?;
+        let report = device.force_output_off().map_err(|error| {
+            format!("Cannot start: source output OFF verification failed. {error}")
+        })?;
+        if !report.output_off_verified {
+            return Err("Cannot start: source output OFF was not verified. Turn output off on the instrument and reconnect.".into());
+        }
+        state.output = "Off".into();
+        if let Some(warning) = report.zeroing_warning {
+            return Err(format!(
+                "Cannot start: output OFF was verified, but resetting the source level to zero failed. Reconnect before measuring. {warning}"
+            ));
+        }
+    }
     state.phase = "Preparing".into();
     state.message = "Creating the result file before enabling output…".into();
     state.error.clear();
@@ -1270,7 +1290,9 @@ fn execute(
                 record.compliance = sample_limit_hit || value.abs() >= config.compliance;
                 record
             } else {
-                simulate_record(config, point, begin.elapsed().as_secs_f64())
+                let mut record = simulate_record(config, point, begin.elapsed().as_secs_f64());
+                record.compliance = record.meter_value.abs() >= config.compliance;
+                record
             };
             record.timestamp = timestamp();
             record.status = if record.compliance {
