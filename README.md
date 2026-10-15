@@ -4,7 +4,7 @@ A Rust desktop for DC I-V and V-I measurements with GS210 and 34411A over direct
 USB or USB-GPIB. The three-column interface keeps setup on the left, measurement
 and the I-V graph in the center, and detailed values/logs on the right.
 
-## Native version: 1.0.0
+## Native version: 1.0.1
 
 Config stays at the top of the left panel. Source and Meter each contain a compact
 resolution-aware readout, zero-centered level bar and filled time-history trend,
@@ -23,7 +23,7 @@ separate processes with their own licenses and OS boundaries.
 
 ## Published portable downloads
 
-The current published release is **v1.0.0**.
+The current published release is **v1.0.1**.
 
 Run uses **Start / Stop / Save**. Measurements are still saved automatically;
 Save exports a complete CSV copy and its run metadata without overwriting data.
@@ -34,16 +34,23 @@ and invalid Start requests explain the problem in an English dialog.
 
 | Platform | Kohdalab | Personal mirror |
 | --- | --- | --- |
-| macOS Apple Silicon | [Mac portable](https://github.com/Kohdalab/kohdalab-iv/releases/download/portable-v1.0.0/kohdalab-iv-1.0.0-macos-arm64-portable.zip) | [Mac portable](https://github.com/woolen-yarn/kohdalab-iv/releases/download/portable-v1.0.0/kohdalab-iv-1.0.0-macos-arm64-portable.zip) |
-| Windows x64 | [Windows portable](https://github.com/Kohdalab/kohdalab-iv/releases/download/portable-v1.0.0/kohdalab-iv-1.0.0-windows-x64-portable.zip) | [Windows portable](https://github.com/woolen-yarn/kohdalab-iv/releases/download/portable-v1.0.0/kohdalab-iv-1.0.0-windows-x64-portable.zip) |
+| macOS Apple Silicon | [Mac portable](https://github.com/Kohdalab/kohdalab-iv/releases/download/portable-v1.0.1/kohdalab-iv-1.0.1-macos-arm64-portable.zip) | [Mac portable](https://github.com/woolen-yarn/kohdalab-iv/releases/download/portable-v1.0.1/kohdalab-iv-1.0.1-macos-arm64-portable.zip) |
+| Windows x64 | [Windows portable](https://github.com/Kohdalab/kohdalab-iv/releases/download/portable-v1.0.1/kohdalab-iv-1.0.1-windows-x64-portable.zip) | [Windows portable](https://github.com/woolen-yarn/kohdalab-iv/releases/download/portable-v1.0.1/kohdalab-iv-1.0.1-windows-x64-portable.zip) |
 
-[Source build kit (Kohdalab)](https://github.com/Kohdalab/kohdalab-iv/releases/download/portable-v1.0.0/kohdalab-iv-1.0.0-build-kit.zip) ·
-[Source build kit (personal)](https://github.com/woolen-yarn/kohdalab-iv/releases/download/portable-v1.0.0/kohdalab-iv-1.0.0-build-kit.zip) ·
-[SHA-256 checksums](https://github.com/Kohdalab/kohdalab-iv/releases/download/portable-v1.0.0/SHA256SUMS.txt)
+[Source build kit (Kohdalab)](https://github.com/Kohdalab/kohdalab-iv/releases/download/portable-v1.0.1/kohdalab-iv-1.0.1-build-kit.zip) ·
+[Source build kit (personal)](https://github.com/woolen-yarn/kohdalab-iv/releases/download/portable-v1.0.1/kohdalab-iv-1.0.1-build-kit.zip) ·
+[SHA-256 checksums](https://github.com/Kohdalab/kohdalab-iv/releases/download/portable-v1.0.1/SHA256SUMS.txt)
 
-Extract the whole ZIP. Mac: open `KohdaLab IV Next.app`; Windows: open
-`kohdalab-iv-next.exe`. No Python, Rust or manufacturer VISA installation is
-needed to run it. Windows may need the included `support/USB-Setup.exe` for WinUSB.
+Extract the whole ZIP. Mac: open `KohdaLab IV Next.app`. On Windows, double-click
+`Install-Application.cmd`, approve the Windows administrator prompt, then use
+the **KohdaLab IV** desktop shortcut. This places the app in
+`C:\Program Files\Kohdalab\KohdaLab IV`; settings, results and driver data stay
+in your user folders. Rerun the installer from a newer ZIP to update; close IV
+first. The extracted folder can be removed after successful installation.
+You can also run `kohdalab-iv-next.exe` directly without installing it.
+No Python, Rust or manufacturer VISA installation is needed. App installation
+is separate from the included `support/USB-Setup.exe` for WinUSB drivers.
+See [Windows installation and updates](next/README.md#windows-installation-and-updates).
 Mac bundles are ad hoc signed, not Apple-notarized.
 
 82357B is supported only after separate, authorized firmware initialization.

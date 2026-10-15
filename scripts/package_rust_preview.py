@@ -154,6 +154,8 @@ def main() -> None:
         )
         shutil.copy2(binaries / "kohdalab-iv-next.exe", stage / "kohdalab-iv-next.exe")
         shutil.copy2(binaries / "iv-cli.exe", stage / "iv-cli.exe")
+        for filename in ("Install-Application.cmd", "Install-Application.ps1"):
+            shutil.copy2(ROOT / "portable/windows" / filename, stage / filename)
         support = stage / "support"
     else:
         binaries = args.binaries_dir or ROOT / "next/target/release"

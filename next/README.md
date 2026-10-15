@@ -1,6 +1,7 @@
 # KohdaLab IV Native Desktop
 
-Version 1.0.0 keeps Run focused on Start / Stop / Save, with internal output-off
+Version 1.0.1 adds optional Windows Program Files installation and safe updates.
+It keeps Run focused on Start / Stop / Save, with internal output-off
 control and automatic cleanup. It includes complete-data Save, automatic source
 setup and per-point Repeat averaging. It keeps unverified 82357B firmware acquisition/upload excluded and supplies
 explicit redistribution terms, native licensing evidence and relinking steps.
@@ -35,8 +36,10 @@ require MinGW `windres` or Windows SDK `rc.exe`; these are build tools only.
 
 ## Run
 
-Extract the whole ZIP. On Windows open `kohdalab-iv-next.exe`; on Apple Silicon
-open `KohdaLab IV Next.app`. No Python, Rust, or vendor VISA installation is
+Extract the whole ZIP. On Windows run `Install-Application.cmd`, approve the
+administrator prompt, and use the **KohdaLab IV** desktop shortcut. You can also
+open `kohdalab-iv-next.exe` directly for portable use. On Apple Silicon open
+`KohdaLab IV Next.app`. No Python, Rust, or vendor VISA installation is
 required for supported native connections. Keep the support files with the app.
 The Mac app is ad hoc signed and is not notarized.
 
@@ -63,7 +66,7 @@ The Mac app is ad hoc signed and is not notarized.
    match that resolution. Invalid settings show a reason below Start. Limits
    are never increased automatically. Press Start to see an English dialog explaining
    any problem and how to fix it. Every real sweep verifies source output OFF
-   and zero before configuration; a failed verification prevents Start.
+   then resets the source level to zero before configuration; failure prevents Start.
    The run JSON retains both requested and
    effective settings; CSV targets use the effective sweep.
 5. Choose Directory with Browse, enter File, and choose Auto suffix. Run has
@@ -102,6 +105,42 @@ If communication fails, emergency cleanup attempts a fresh source helper and
 verifies the source identity before retrying output off. If output cannot be
 verified, the application reports Unknown: check the source front panel.
 Hardware compliance and physical output controls remain essential.
+
+## Windows installation and updates
+
+1. Extract the complete Windows ZIP to a normal local folder, such as Downloads.
+2. Close every running KohdaLab IV application. Double-click
+   `Install-Application.cmd` and approve the Windows administrator prompt.
+3. Start **KohdaLab IV** from its desktop shortcut. The installer does not start
+   the application with administrator privileges or access any instrument.
+
+The application is installed under `C:\Program Files\Kohdalab\KohdaLab IV`
+(or the Windows Program Files location). The desktop contains a shortcut.
+The shortcut uses `%USERPROFILE%\.kohdalab` as its working folder so relative
+output paths are writable. User files remain separate:
+
+| Content | Location |
+| --- | --- |
+| Settings | `%USERPROFILE%\.kohdalab\config\iv-next.json` |
+| Default measurements | `%USERPROFILE%\.kohdalab\results` |
+| Driver setup/cache | `%LOCALAPPDATA%\KohdaLab IV` |
+| Previous installation backup | `KohdaLab IV\archive` inside your Windows Documents folder |
+
+Existing absolute measurement paths remain unchanged. Installing the app does
+not install/remove instrument drivers, edit the saved configuration or migrate
+measurement files. Updates check the package files against the included `FILES.json`, stage the new files,
+and preserve a verified backup of an existing installation before replacement.
+Existing installation access controls are retained. If setup fails, keep the
+extracted folder and the displayed backup path, and review the English error.
+It does not change the PowerShell execution policy. Use the official GitHub
+download links in the root README. The included hashes check internal file
+consistency; they are not a publisher signature.
+
+To update, download and extract the new ZIP, close IV and run its
+`Install-Application.cmd` again. After success, the extracted folder can be
+deleted; the installed copy owns all required support files. Direct portable
+use remains available without this app installation step. Driver setup may
+still require administrator approval separately.
 
 ## Developer build
 
@@ -166,8 +205,8 @@ a bundled Microsoft driver binary.
 SOURCE.zip includes the Rust, helper, shared specification and build sources.
 
 Official downloads are available at
-https://github.com/Kohdalab/kohdalab-iv/releases/tag/portable-v1.0.0 and the
-personal mirror at https://github.com/woolen-yarn/kohdalab-iv/releases/tag/portable-v1.0.0.
+https://github.com/Kohdalab/kohdalab-iv/releases/tag/portable-v1.0.1 and the
+personal mirror at https://github.com/woolen-yarn/kohdalab-iv/releases/tag/portable-v1.0.1.
 Earlier releases remain archived on GitHub. Historical preview validation is
 recorded in `docs/rust_preview.md`; current behavior and limitations are described here.
 

@@ -53,6 +53,10 @@ jobs:
           python bindings/python/test_native_client.py
       - name: Redistribution packaging policy
         run: python tests/test_distribution_policy.py
+      - name: Windows application installation lifecycle
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: ./tests/windows_install.ps1
       - name: Native boot-device refusal and driver selection
         if: runner.os != 'Windows'
         shell: bash
