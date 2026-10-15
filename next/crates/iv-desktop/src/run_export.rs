@@ -1,0 +1,370 @@
+//! Safe export of an already-completed measurement run.
+//!
+//! The CSV is copied as bytes, rather than being parsed and rewritten, so an
+//! export cannot change numeric formatting or discard fields that are not
+//! currently displayed by the application.
+
+use std::fs::{self, File, OpenOptions};
+use std::io;
+use std::path::Path;
+
+/// Copies a completed run's CSV and its `.run.json` companion to a new path.
+///
+/// Existing destination files are never overwritten.  The source CSV and its
+/// metadata are only read.  If writing either destination file fails, this
+/// function removes only files created by this call.
+pub fn save_run_copy(source: &Path, destination: &Path) -> Result<(), String> {
+    if same_location(source, destination)? {
+        return Err("Choose a different filename when saving a copy of this run.".into());
+    }
+
+    let source_metadata = source.with_extension("run.json");
+    let destination_metadata = destination.with_extension("run.json");
+    if !destination
+        .extension()
+        .is_some_and(|ext| ext.eq_ignore_ascii_case("csv"))
+    {
+        return Err("Choose a .csv filename for the measurement; its settings are saved separately as .run.json.".into());
+    }
+
+    let metadata_bytes = fs::read(&source_metadata).map_err(|error| {
+        format!(
+            "Cannot save a copy because the run metadata file is missing or unreadable ({}): {error}",
+            source_metadata.display()
+        )
+    })?;
+    let mut metadata = parse_completed_metadata(&metadata_bytes, &source_metadata)?;
+
+    if destination.exists() {
+        return Err(format!(
+            "Cannot save a copy because the destination CSV already exists: {}. Choose a new filename.",
+            destination.display()
+        ));
+    }
+    if destination_metadata.exists() {
+        return Err(format!(
+            "Cannot save a copy because the destination metadata file already exists: {}. Choose a new filename.",
+            destination_metadata.display()
+        ));
+    }
+
+    let source_file = File::open(source).map_err(|error| {
+        format!(
+            "Cannot save a copy because the source CSV cannot be read ({}): {error}",
+            source.display()
+        )
+    })?;
+
+    let source_display = source.display().to_string();
+    let destination_display = destination.display().to_string();
+    let outcome = metadata
+        .get_mut("outcome")
+        .and_then(serde_json::Value::as_object_mut)
+        .expect("metadata was validated before mutation");
+    outcome.insert(
+        "path".into(),
+        serde_json::Value::String(destination_display.clone()),
+    );
+    metadata["csv"] = serde_json::Value::String(destination_display);
+    metadata["exported_from"] = serde_json::Value::String(source_display);
+
+    let mut created_csv = false;
+    let mut created_metadata = false;
+    let result = (|| -> Result<(), String> {
+        let mut destination_file = OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(destination)
+            .map_err(|error| {
+                format!(
+                    "Cannot create the destination CSV ({}): {error}. Choose a writable new filename.",
+                    destination.display()
+                )
+            })?;
+        created_csv = true;
+        let mut source_file = source_file;
+        io::copy(&mut source_file, &mut destination_file).map_err(|error| {
+            format!(
+                "Could not copy the complete CSV to {}: {error}",
+                destination.display()
+            )
+        })?;
+        destination_file.sync_all().map_err(|error| {
+            format!(
+                "Could not finish saving the CSV copy ({}): {error}",
+                destination.display()
+            )
+        })?;
+
+        let mut metadata_file = OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&destination_metadata)
+            .map_err(|error| {
+                format!(
+                    "Cannot create the destination metadata file ({}): {error}. A partial CSV copy may have been created.",
+                    destination_metadata.display()
+                )
+            })?;
+        created_metadata = true;
+        serde_json::to_writer_pretty(&mut metadata_file, &metadata).map_err(|error| {
+            format!(
+                "Could not write the destination metadata ({}): {error}",
+                destination_metadata.display()
+            )
+        })?;
+        metadata_file.sync_all().map_err(|error| {
+            format!(
+                "Could not finish saving the metadata copy ({}): {error}",
+                destination_metadata.display()
+            )
+        })?;
+        Ok(())
+    })();
+
+    if let Err(error) = result {
+        let mut cleanup_failures = Vec::new();
+        if created_metadata && let Err(cleanup_error) = fs::remove_file(&destination_metadata) {
+            cleanup_failures.push(format!(
+                "{} ({cleanup_error})",
+                destination_metadata.display()
+            ));
+        }
+        if created_csv && let Err(cleanup_error) = fs::remove_file(destination) {
+            cleanup_failures.push(format!("{} ({cleanup_error})", destination.display()));
+        }
+        if !cleanup_failures.is_empty() {
+            return Err(format!(
+                "{error} Partial export files could not be removed: {}. Remove only these partial files before trying again.",
+                cleanup_failures.join(", ")
+            ));
+        }
+        return Err(error);
+    }
+
+    Ok(())
+}
+
+fn parse_completed_metadata(
+    bytes: &[u8],
+    metadata_path: &Path,
+) -> Result<serde_json::Value, String> {
+    let value: serde_json::Value = serde_json::from_slice(bytes).map_err(|error| {
+        format!(
+            "Cannot save a copy because the run metadata is invalid JSON ({}): {error}",
+            metadata_path.display()
+        )
+    })?;
+    let object = value.as_object().ok_or_else(|| {
+        format!(
+            "Cannot save a copy because the run metadata is invalid ({}): expected an object.",
+            metadata_path.display()
+        )
+    })?;
+    let completed = object
+        .get("in_progress")
+        .and_then(serde_json::Value::as_bool)
+        .map(|in_progress| !in_progress)
+        .unwrap_or(false);
+    let valid = completed
+        && object
+            .get("csv")
+            .and_then(serde_json::Value::as_str)
+            .is_some_and(|value| !value.is_empty())
+        && object
+            .get("config")
+            .is_some_and(serde_json::Value::is_object)
+        && object
+            .get("requested_config")
+            .is_some_and(serde_json::Value::is_object)
+        && object
+            .get("outcome")
+            .and_then(serde_json::Value::as_object)
+            .and_then(|outcome| outcome.get("path"))
+            .and_then(serde_json::Value::as_str)
+            .is_some_and(|value| !value.is_empty());
+    if !valid {
+        return Err(format!(
+            "Cannot save a copy because the run metadata is incomplete or the run is still in progress ({}). Wait for the run to finish, then try again.",
+            metadata_path.display()
+        ));
+    }
+    Ok(value)
+}
+
+fn same_location(source: &Path, destination: &Path) -> Result<bool, String> {
+    if source == destination {
+        return Ok(true);
+    }
+    let source_canonical = fs::canonicalize(source).map_err(|error| {
+        format!(
+            "Cannot save a copy because the source CSV cannot be resolved ({}): {error}",
+            source.display()
+        )
+    })?;
+    let destination_location = if destination.exists() {
+        fs::canonicalize(destination).map_err(|error| {
+            format!(
+                "Cannot resolve the destination CSV ({}): {error}",
+                destination.display()
+            )
+        })?
+    } else {
+        let parent = destination
+            .parent()
+            .filter(|path| !path.as_os_str().is_empty())
+            .unwrap_or_else(|| Path::new("."));
+        let parent = fs::canonicalize(parent).map_err(|error| {
+            format!(
+                "Cannot resolve the destination folder ({}): {error}",
+                parent.display()
+            )
+        })?;
+        parent.join(destination.file_name().ok_or_else(|| {
+            format!(
+                "Choose a filename for the destination CSV: {}",
+                destination.display()
+            )
+        })?)
+    };
+    Ok(source_canonical == destination_location)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::save_run_copy;
+    use std::fs;
+    use std::path::{Path, PathBuf};
+    use std::time::{SystemTime, UNIX_EPOCH};
+
+    fn temp_dir(name: &str) -> PathBuf {
+        let stamp = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let path = std::env::temp_dir().join(format!("kohdalab-iv-run-export-{name}-{stamp}"));
+        fs::create_dir_all(&path).unwrap();
+        path
+    }
+
+    fn write_run(csv: &Path) -> Vec<u8> {
+        let bytes = b"voltage_V,current_A\n1.2345678901234567e-6,-2.0e-9\n".to_vec();
+        fs::write(csv, &bytes).unwrap();
+        let metadata = serde_json::json!({
+            "schema_version": 3,
+            "in_progress": false,
+            "csv": csv.display().to_string(),
+            "config": {"mode": "Vi"},
+            "requested_config": {"mode": "Vi", "step": 1e-6},
+            "outcome": {"path": csv.display().to_string(), "phase": "Completed"},
+            "points": [{"voltage_V": 1.2345678901234567e-6}]
+        });
+        fs::write(
+            csv.with_extension("run.json"),
+            serde_json::to_vec_pretty(&metadata).unwrap(),
+        )
+        .unwrap();
+        bytes
+    }
+
+    #[test]
+    fn rejects_non_csv_destinations_before_creating_any_files() {
+        let directory = temp_dir("sidecar-collision");
+        let source = directory.join("source.csv");
+        let destination = directory.join("copy.run.json");
+        let original = write_run(&source);
+        assert!(
+            save_run_copy(&source, &destination)
+                .unwrap_err()
+                .contains("Choose a .csv filename")
+        );
+        assert!(!destination.exists());
+        assert_eq!(fs::read(&source).unwrap(), original);
+        fs::remove_dir_all(directory).unwrap();
+    }
+
+    #[test]
+    fn exports_exact_csv_bytes_and_updates_only_export_locations() {
+        let directory = temp_dir("exact");
+        let source = directory.join("source.csv");
+        let destination = directory.join("saved-copy.csv");
+        let bytes = write_run(&source);
+
+        save_run_copy(&source, &destination).unwrap();
+
+        assert_eq!(fs::read(&destination).unwrap(), bytes);
+        let metadata: serde_json::Value =
+            serde_json::from_slice(&fs::read(destination.with_extension("run.json")).unwrap())
+                .unwrap();
+        assert_eq!(metadata["csv"], destination.display().to_string());
+        assert_eq!(
+            metadata["outcome"]["path"],
+            destination.display().to_string()
+        );
+        assert_eq!(metadata["exported_from"], source.display().to_string());
+        assert_eq!(metadata["requested_config"]["step"], 1e-6);
+        assert_eq!(fs::read(&source).unwrap(), bytes);
+        fs::remove_dir_all(directory).unwrap();
+    }
+
+    #[test]
+    fn preserves_preexisting_destination_csv_and_sidecar() {
+        let directory = temp_dir("existing");
+        let source = directory.join("source.csv");
+        let destination = directory.join("saved-copy.csv");
+        write_run(&source);
+
+        fs::write(&destination, b"existing csv").unwrap();
+        let error = save_run_copy(&source, &destination).unwrap_err();
+        assert!(error.contains("destination CSV already exists"));
+        assert_eq!(fs::read(&destination).unwrap(), b"existing csv");
+
+        fs::remove_file(&destination).unwrap();
+        fs::write(destination.with_extension("run.json"), b"existing metadata").unwrap();
+        let error = save_run_copy(&source, &destination).unwrap_err();
+        assert!(error.contains("destination metadata file already exists"));
+        assert_eq!(
+            fs::read(destination.with_extension("run.json")).unwrap(),
+            b"existing metadata"
+        );
+        assert!(!destination.exists());
+        fs::remove_dir_all(directory).unwrap();
+    }
+
+    #[test]
+    fn rejects_same_path_and_missing_or_invalid_metadata() {
+        let directory = temp_dir("invalid");
+        let source = directory.join("source.csv");
+        write_run(&source);
+
+        let error = save_run_copy(&source, &source).unwrap_err();
+        assert!(error.contains("different filename"));
+
+        fs::remove_file(source.with_extension("run.json")).unwrap();
+        let error = save_run_copy(&source, &directory.join("copy.csv")).unwrap_err();
+        assert!(error.contains("metadata file is missing"));
+
+        fs::write(source.with_extension("run.json"), b"{not json").unwrap();
+        let error = save_run_copy(&source, &directory.join("copy.csv")).unwrap_err();
+        assert!(error.contains("invalid JSON"));
+
+        fs::write(
+            source.with_extension("run.json"),
+            br#"{"in_progress":false,"csv":"source.csv"}"#,
+        )
+        .unwrap();
+        let error = save_run_copy(&source, &directory.join("copy.csv")).unwrap_err();
+        assert!(error.contains("incomplete"));
+        fs::remove_dir_all(directory).unwrap();
+    }
+
+    #[test]
+    fn accepts_a_plain_relative_destination_path_for_location_checks() {
+        let directory = temp_dir("relative");
+        let source = directory.join("source.csv");
+        write_run(&source);
+
+        assert!(!super::same_location(&source, Path::new("copy.csv")).unwrap());
+        fs::remove_dir_all(directory).unwrap();
+    }
+}

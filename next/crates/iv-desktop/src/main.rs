@@ -4,6 +4,7 @@
 mod client;
 mod engine;
 mod protocol;
+mod run_export;
 mod ui;
 
 use protocol::Command;

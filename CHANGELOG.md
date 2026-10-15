@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.4.3 (2026-10-15)
+
+- Use Start / Stop / Save in Run. Save exports the complete, exact CSV and companion run settings after cleanup; keep automatic recording and move Output Off into Source.
+- Treat Repeat as N meter readings averaged at each fixed source target, with one settling wait and one CSV row per target. Preserve legacy average_count as a fallback rather than multiplying counts.
+- Check software compliance after every conversion and preserve the triggering reading, unit and partial acquisition count on early stop.
+- Correct unit-conversion alignment noise, resolve hardware step/ramp settings automatically, and explain blocked Start requests in actionable English dialogs without raising limits.
+- Avoid unnecessary intermediate ramp steps between adjacent sweep targets. Retain explicit settling, NPLC and protection settings.
+
 ## 0.4.2 (2026-10-14)
 
 - Remove unverified 82357B firmware acquisition and upload. Only pre-initialized adapters are supported; boot devices are refused without changing their driver.

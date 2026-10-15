@@ -1,6 +1,7 @@
 # KohdaLab IV Native Desktop
 
-Version 0.4.2 removes unverified 82357B firmware acquisition/upload and supplies
+Version 0.4.3 adds complete-data Save, automatic source setup and per-point
+Repeat averaging. It keeps unverified 82357B firmware acquisition/upload excluded and supplies
 explicit redistribution terms, native licensing evidence and relinking steps.
 Blue/purple forward/backward styles and the CSV-matched inspector are retained.
 
@@ -19,7 +20,7 @@ IV and VI modes, linear, round trip, zero centered and custom sweeps, limits,
 settling, averaging, NPLC, streamed CSV, run metadata, and an explicit simulator.
 Hardware accuracy and all firmware variants are not certified by this release.
 
-This update reuses CSV formatting buffers, builds repeated sweep plans without
+This update reuses CSV formatting buffers, builds sweep plans without
 duplicate intermediate arrays, updates display state only when needed, and
 appends to cached graph series. CSV still flushes every point; settling, NPLC,
 limits and verified output shutdown are unchanged. See
@@ -49,11 +50,25 @@ The Mac app is ad hoc signed and is not notarized.
    incompatible instrument. Only one GPIB adapter may be attached; both roles
    share its session. Disconnecting the source verifies output OFF first.
 4. Review Mode, Sweep and Start / End / Step in Measurement. Each quantity has
-   its own unit. Timing / Compliance opens a dialog with OK / Cancel; additional
-   ramp, range and repeat settings are under Advanced. NPLC stays under Meter.
-5. Choose Directory with Browse, enter File, and choose Auto suffix. Start runs
-   the measurement; Stop requests cleanup; Output Off requests shutdown before
-   resetting the source level. Existing CSV files are never overwritten.
+   its own unit. Timing / Compliance opens a dialog with OK / Cancel;
+   extra timing settings and Readings per point (Repeat) are under Advanced.
+   Repeat holds each source target, averages N meter readings and saves one
+   CSV row; it does not repeat the sweep. NPLC stays under Meter.
+   Source range and ramp step are automatic. Ramp step is the larger of the
+   sweep step and 1% of the nominal source range, capped to the selected range.
+   The requested Step magnitude rounds
+   up to a whole source-resolution increment (1 uA for GS210 sweeps reaching
+   100 mA); the effective step and ramp are shown below Start. Start / End must
+   match that resolution. Invalid settings show a reason below Start. Limits
+   are never increased automatically. Press Start to see an English dialog explaining
+   any problem and how to fix it. The run JSON retains both requested and
+   effective settings; CSV targets use the effective sweep.
+5. Choose Directory with Browse, enter File, and choose Auto suffix. Run has
+   Start / Stop / Save. Measurements are automatically saved as they are acquired.
+   After completion or Stop cleanup, Save opens a file picker for a complete CSV
+   copy and companion .run.json. It never exports a decimated graph or overwrites
+   existing files. Source > Output Off remains available during acquisition to
+   return the source to zero and verify output off.
 6. The status strip shows progress, resistance and conductance. The right log
    remains visible during discovery and measurement. Field / Value toggles the
    exact 14 saved CSV fields; hover truncated entries for their full values.
@@ -144,8 +159,8 @@ a bundled Microsoft driver binary.
 SOURCE.zip includes the Rust, helper, shared specification and build sources.
 
 Official downloads are available at
-https://github.com/Kohdalab/kohdalab-iv/releases/tag/portable-v0.4.2 and the
-personal mirror at https://github.com/woolen-yarn/kohdalab-iv/releases/tag/portable-v0.4.2.
+https://github.com/Kohdalab/kohdalab-iv/releases/tag/portable-v0.4.3 and the
+personal mirror at https://github.com/woolen-yarn/kohdalab-iv/releases/tag/portable-v0.4.3.
 Earlier releases remain archived on GitHub. Historical preview validation is
 recorded in `docs/rust_preview.md`; current behavior and limitations are described here.
 
@@ -216,3 +231,24 @@ measurement function. Output OFF and zero are verified before the switch; zero
 is verified again for the new function. Live history clears on a GUI Mode change.
 Voltage is amber, current is teal, and forward/backward curves are blue/purple
 with a legend. Mode changes never enable output.
+
+### Sweep speed
+
+Start with Repeat = 1. Reduce Wait time only as far as your circuit can settle;
+First wait and Ramp wait are independent and still apply. Lower NPLC gives
+faster conversions at the cost of resolution and mains-noise rejection (see
+[34410A/34411A User's Guide](https://www.keysight.com/us/en/assets/9018-05586/user-manuals/9018-05586.pdf), Integration Time and Resolution).
+At 50 Hz, 1 PLC is 20 ms and 0.2 PLC is 4 ms of integration, before autozero,
+autoranging and communication overhead. The default 0.2 s per-point wait alone
+limits the sweep to fewer than 5 points/s. Defaults are not reduced silently.
+Per-point repeats share one source-setting operation and one settling wait.
+Each individual conversion is checked against the software limit, so averaging
+cannot hide an over-limit reading; partial accumulation is recorded on cutoff.
+Legacy `average_count` is accepted when `repeat` is 1; otherwise `repeat` wins.
+`repeat_index` remains 1 in the CSV; requested/effective counts are in run JSON.
+
+Planning benchmark note: `repeat` now controls per-point accumulation. The
+`benchmark_plan` example therefore builds 10,001 source targets with 99 readings
+per target (990,099 meter conversions), not 990,099 source targets. Historical
+planning timings in the optimization report used the earlier sweep-repeat
+meaning and are not directly comparable to this corrected benchmark.

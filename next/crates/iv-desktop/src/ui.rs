@@ -359,6 +359,8 @@ pub struct IvApp {
     timing_before: Option<(Settings, String)>,
     config_path: String,
     notice: String,
+    start_error: Option<String>,
+    save_notice: Option<String>,
     logs: Vec<String>,
     started: Instant,
     phase_start: Instant,
@@ -455,6 +457,8 @@ impl IvApp {
             timing_before: None,
             config_path: settings_path().display().to_string(),
             notice: String::new(),
+            start_error: None,
+            save_notice: None,
             logs: vec![],
             started: Instant::now(),
             phase_start: Instant::now(),
@@ -596,6 +600,15 @@ impl IvApp {
                 self.phase_start = Instant::now();
                 self.previous_phase = next.phase.clone();
             }
+            if !next.error.is_empty()
+                && next.error != self.state.error
+                && (self.pending_run || self.active())
+            {
+                self.start_error = Some(format!(
+                    "{}\n\nCheck the log and instrument connections. Verify output is off before trying again.",
+                    next.error
+                ));
+            }
             let log = if next.error.is_empty() {
                 next.message.clone()
             } else {
@@ -649,13 +662,21 @@ impl IvApp {
         if self.pending_run {
             return;
         }
-        if let Err(error) = iv_core::plan(&self.settings.config) {
-            self.report(error);
+        if let Some(reason) = start_block_reason(
+            &self.settings.config,
+            self.state.connected,
+            self.state.source_simulation == self.state.meter_simulation,
+        ) {
+            self.report(reason.clone());
+            self.start_error = Some(reason);
             return;
         }
         let name = self.settings.filename.trim();
         if name.is_empty() || name.contains(['/', '\\']) {
-            self.report("Use a file name without path separators.".into());
+            let reason =
+                "Enter a file name without / or \\ characters in Output > File.".to_owned();
+            self.report(reason.clone());
+            self.start_error = Some(reason);
             return;
         }
         let directory = PathBuf::from(&self.settings.output_dir);
@@ -674,6 +695,7 @@ impl IvApp {
             config: self.settings.config.clone(),
             path: path.display().to_string(),
         }) {
+            self.start_error = Some("The measurement request could not be sent. Check the log and reconnect the instruments before trying again.".into());
             return;
         }
         self.pending_run = true;
@@ -1147,6 +1169,20 @@ impl IvApp {
                     });
                     ui.end_row();
                 });
+            if source {
+                ui.add_space(4.0);
+                if button(
+                    ui,
+                    "Output Off",
+                    ui.available_width(),
+                    self.state.source_connected,
+                )
+                .on_hover_text("Stop acquisition, return the source to zero and verify output off.")
+                .clicked()
+                {
+                    self.send(Command::OutputOff);
+                }
+            }
             self.live_monitor(ui, source);
         });
     }
@@ -1363,19 +1399,82 @@ impl IvApp {
         });
     }
 
+    fn save_measurement(&mut self) {
+        if self.busy() || self.pending_run {
+            self.save_notice = Some(
+                "Stop the measurement and wait for output cleanup before saving a copy.".into(),
+            );
+            return;
+        }
+        if self.state.points == 0 || self.state.path.is_empty() {
+            self.save_notice = Some("No measurement data to save. Start a measurement first. Live monitor readings are not saved as sweep data.".into());
+            return;
+        }
+        let source = PathBuf::from(&self.state.path);
+        let stem = source
+            .file_stem()
+            .and_then(|name| name.to_str())
+            .unwrap_or("iv_run");
+        let Some(destination) = rfd::FileDialog::new()
+            .set_title("Save measurement copy")
+            .add_filter("CSV measurement", &["csv"])
+            .set_directory(&self.settings.output_dir)
+            .set_file_name(format!("{stem}_copy.csv"))
+            .save_file()
+        else {
+            return;
+        };
+        let destination = if destination
+            .extension()
+            .is_some_and(|ext| ext.eq_ignore_ascii_case("csv"))
+        {
+            destination
+        } else {
+            destination.with_extension("csv")
+        };
+        match crate::run_export::save_run_copy(&source, &destination) {
+            Ok(()) => {
+                let message = format!(
+                    "Saved {} points to {}\nThe companion .run.json contains the measurement settings.",
+                    self.state.points,
+                    destination.display()
+                );
+                self.report(message.clone());
+                self.save_notice = Some(message);
+            }
+            Err(error) => {
+                self.report(format!("Save failed: {error}"));
+                self.save_notice = Some(format!(
+                    "Could not save the measurement copy.\n\n{error}\n\nThe original measurement files are unchanged."
+                ));
+            }
+        }
+    }
+
+    fn save_dialog(&mut self, ctx: &egui::Context) {
+        let Some(message) = self.save_notice.clone() else {
+            return;
+        };
+        let response = egui::Modal::new(egui::Id::new("save_measurement")).show(ctx, |ui| {
+            ui.set_width(400.0);
+            ui.heading("Save measurement");
+            ui.add_space(8.0);
+            ui.label(message);
+            ui.add_space(12.0);
+            if button(ui, "OK", 80.0, true).clicked() {
+                ui.close();
+            }
+        });
+        if response.should_close() {
+            self.save_notice = None;
+        }
+    }
+
     fn run_controls(&mut self, ui: &mut egui::Ui) {
-        let ready = self.state.connected
-            && !self.busy()
-            && self.preview.is_ok()
-            && self.state.source_simulation == self.state.meter_simulation;
         let width = (ui.available_width() - 16.0) / 3.0;
         ui.horizontal(|ui| {
-            if button(ui, "Start", width, ready)
-                .on_disabled_hover_text(
-                    self.preview.as_ref().err().map(String::as_str).unwrap_or(
-                        "Connect two real instruments or two simulated instruments first.",
-                    ),
-                )
+            if button(ui, "Start", width, !self.busy() && !self.pending_run)
+                .on_disabled_hover_text("Wait for the current operation to finish, or use Stop.")
                 .clicked()
             {
                 self.start_run();
@@ -1385,10 +1484,63 @@ impl IvApp {
                     "Stop requested. Waiting for the current I/O and output cleanup.".into(),
                 );
             }
-            if button(ui, "Output Off", width, self.state.source_connected).clicked() {
-                self.send(Command::OutputOff);
+            if button(ui, "Save", width, !self.busy() && !self.pending_run)
+                .on_hover_text("Save a complete copy of the acquired CSV and run settings.")
+                .on_disabled_hover_text(
+                    "Stop the measurement and wait for cleanup before saving a copy.",
+                )
+                .clicked()
+            {
+                self.save_measurement();
             }
         });
+        if self.preview.is_ok()
+            && let Ok(effective) = iv_core::prepare_config(&self.settings.config)
+        {
+            let unit = if effective.mode == Mode::Vi { "A" } else { "V" };
+            ui.label(
+                RichText::new(format!(
+                    "Auto: step {:e} {unit} · ramp {:e} {unit}",
+                    effective.step.abs(),
+                    effective.ramp_step
+                ))
+                .small()
+                .color(MUTED),
+            );
+        }
+        if let Err(reason) = &self.preview {
+            ui.add_space(4.0);
+            ui.label(
+                RichText::new(format!("Cannot start: {reason}"))
+                    .small()
+                    .color(ORANGE),
+            );
+        }
+    }
+
+    fn start_error_dialog(&mut self, ctx: &egui::Context) {
+        let Some(reason) = self.start_error.clone() else {
+            return;
+        };
+        let response = egui::Modal::new(egui::Id::new("start_error")).show(ctx, |ui| {
+            ui.set_width(380.0);
+            ui.heading("Measurement needs attention");
+            ui.add_space(8.0);
+            ui.label(reason);
+            ui.add_space(8.0);
+            ui.label(
+                RichText::new("Review the settings, then press Start again.")
+                    .small()
+                    .color(MUTED),
+            );
+            ui.add_space(12.0);
+            if button(ui, "OK", 80.0, true).clicked() {
+                ui.close();
+            }
+        });
+        if response.should_close() {
+            self.start_error = None;
+        }
     }
 
     fn timing_dialog(&mut self, ctx: &egui::Context) {
@@ -1406,7 +1558,7 @@ impl IvApp {
                     ui.add_enabled_ui(!self.busy(), |ui| {
                         section(ui, "Timing", |ui| {
                             number(ui, "Wait time (s)", &mut self.settings.config.settle_s, 1.0, "", 0.0..=iv_core::MAX_SECONDS);
-                            ui.horizontal(|ui| { ui.label("Average count"); ui.add(egui::DragValue::new(&mut self.settings.config.average_count).range(1..=1000)); });
+
                         });
                         ui.add_space(8.0);
                         section(ui, "Compliance", |ui| {
@@ -1421,16 +1573,24 @@ impl IvApp {
                             self.settings.config.compliance = if self.settings.config.mode == Mode::Iv {
                                 self.settings.current_compliance
                             } else { self.settings.voltage_compliance };
-                            ui.label("Stop when |measured value| ≥ limit.\nApplied after each averaged reading.");
+                            ui.label("Stop when |measured value| ≥ limit.\nChecked after every individual meter reading.");
                         });
                         ui.add_space(8.0);
                         egui::CollapsingHeader::new("Advanced").show(ui, |ui| {
                             let unit = if self.settings.config.mode == Mode::Iv { "mV" } else { "mA" };
                             number(ui, "Source limit", &mut self.settings.config.source_limit, 0.001, unit, 0.0..=f64::MAX);
                             number(ui, "First wait (s)", &mut self.settings.config.start_settle_s, 1.0, "", 0.0..=iv_core::MAX_SECONDS);
-                            number(ui, "Ramp step", &mut self.settings.config.ramp_step, 0.001, unit, 0.0..=f64::MAX);
+                            ui.label("Ramp step: automatic (at least the sweep step)");
                             number(ui, "Ramp wait (s)", &mut self.settings.config.ramp_wait_s, 1.0, "", 0.0..=iv_core::MAX_SECONDS);
-                            ui.horizontal(|ui| { ui.label("Repeat count"); ui.add(egui::DragValue::new(&mut self.settings.config.repeat).range(1..=1000)); });
+                            ui.horizontal(|ui| {
+                                ui.label("Readings per point (Repeat)");
+                                let mut count = iv_core::readings_per_point(&self.settings.config);
+                                if ui.add(egui::DragValue::new(&mut count).range(1..=10000)).changed() {
+                                    self.settings.config.repeat = count;
+                                    self.settings.config.average_count = 1;
+                                }
+                            });
+                            ui.label("Hold the source constant, average N meter readings, then save one point. The sweep runs once.");
                         });
                         if self.settings.config.pattern == Pattern::CustomList {
                             ui.add_space(8.0);
@@ -1768,6 +1928,8 @@ impl eframe::App for IvApp {
                     .show(ui, |ui| self.main_view(ui));
             });
         self.timing_dialog(ctx);
+        self.start_error_dialog(ctx);
+        self.save_dialog(ctx);
         if self.busy() || self.state.connected {
             ctx.request_repaint_after(Duration::from_millis(33));
         }
@@ -1963,6 +2125,29 @@ fn quantity(
                 }
             });
     });
+}
+
+fn start_block_reason(config: &RunConfig, connected: bool, matching_modes: bool) -> Option<String> {
+    if !connected {
+        return Some("Connect both Source and Meter before starting. Click Refresh, select the correct resources, then click All Connect.".into());
+    }
+    if !matching_modes {
+        return Some("Source and Meter must both use real instruments, or both use simulation. Check the Device selections and reconnect.".into());
+    }
+    iv_core::plan(config).err().map(|reason| {
+        let help = if reason.contains("exceeds effective limit") {
+            "Reduce Start / End, or review Source limit in Timing / Compliance > Advanced. Increase a limit only when it is safe for your setup."
+        } else if reason.contains("must be a multiple") {
+            "Set Start / End to whole multiples of the source resolution stated in the error. Step and ramp are adjusted automatically."
+        } else if reason.contains("points") {
+            "Increase Step or reduce the sweep span."
+        } else if reason.contains("GS210 range") {
+            "Reduce Start / End to values supported by the selected source."
+        } else {
+            "Check Measurement and Timing / Compliance for an invalid value."
+        };
+        format!("{reason}\n\n{help}")
+    })
 }
 
 fn mode_name(mode: Mode) -> &'static str {
@@ -2173,6 +2358,36 @@ mod tests {
         assert_eq!(plotted[1][1], PlotPoint::new(0.001, 1e-6));
         assert_eq!(AxisScale::for_magnitude(extent[0]).prefix, "m");
         assert_eq!(AxisScale::for_magnitude(extent[1]).prefix, "µ");
+    }
+
+    #[test]
+    fn start_failures_explain_connection_limits_and_resolution() {
+        let mut config = RunConfig::default();
+        assert!(
+            start_block_reason(&config, false, true)
+                .unwrap()
+                .contains("All Connect")
+        );
+        assert!(
+            start_block_reason(&config, true, false)
+                .unwrap()
+                .contains("both use simulation")
+        );
+        config.source_limit = 0.0001;
+        assert!(
+            start_block_reason(&config, true, true)
+                .unwrap()
+                .contains("Increase a limit only when it is safe")
+        );
+        config.source_limit = 0.001;
+        config.start = -0.00100005;
+        assert!(
+            start_block_reason(&config, true, true)
+                .unwrap()
+                .contains("whole multiples")
+        );
+        config.start = -0.001;
+        assert!(start_block_reason(&config, true, true).is_none());
     }
 
     #[test]

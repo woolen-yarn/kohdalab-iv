@@ -168,6 +168,13 @@ fn native_mock_idle_monitor_uses_actual_source_mode_and_never_enables_output() {
         ),
     );
     script = script.replace(" response=''\n", &format!(" response=''\n if [ \"$op\" = WRITE ]; then\n case \"$address:$payload\" in\n '3:{}') level='{}';;\n '3:{}') function='{}';;\n '3:{}') function='{}';;\n esac\n fi\n", hex(":SOUR:LEV:FIX 0\n"), hex("0"), hex(":SOUR:FUNC VOLT\n"), hex("VOLT"), hex(":SOUR:FUNC CURR\n"), hex("CURR")));
+    // Enable a controlled safe/safe/over-limit sequence only during the last
+    // sweep. Idle monitoring must not consume the sequence.
+    let limit_marker = directory.join("mixed-limit-readings");
+    script = script.replace(" response=''\n", &format!(
+        " response=''\n if [ \"$op\" = WRITE ] && [ \"$payload\" = '{}' ]; then output_on=1; conversion=0; fi\n if [ \"$op\" = WRITE ] && [ \"$payload\" = '{}' ]; then output_on=0; fi\n",
+        hex(":OUTP ON\n"), hex(":OUTP OFF\n")
+    ));
     for (address, command, response) in [
         (3, "*IDN?", "YOKOGAWA,GS210,MOCK,2.0"),
         (7, "*IDN?", "Agilent Technologies,34411A,MOCK,2.0"),
@@ -201,6 +208,10 @@ fn native_mock_idle_monitor_uses_actual_source_mode_and_never_enables_output() {
             "response=\"$function\";;",
         );
     script.push_str(" *) printf 'KIV\\tERR\\t756e6578706563746564207175657279\\n'; continue;;\n esac\n fi\n printf 'KIV\\tOK\\t%s\\n' \"$response\"\n [ \"$op\" = EXIT ] && break\ndone\n");
+    script = script.replace(" printf 'KIV\\tOK\\t%s\\n'", &format!(
+        " if [ \"$op\" = QUERY ] && [ \"$address\" = 7 ] && [ \"$payload\" = '{}' ] && [ \"$output_on\" = 1 ] && [ -f '{}' ]; then conversion=$((conversion + 1)); if [ \"$conversion\" -le 2 ]; then response='{}'; fi; fi\n printf 'KIV\\tOK\\t%s\\n'",
+        hex("READ?\n"), limit_marker.display(), hex("0")
+    ));
     for name in ["kohdalab-gpib-helper", "kohdalab-usbtmc-helper"] {
         let path = directory.join(name);
         std::fs::write(&path, &script).unwrap();
@@ -289,6 +300,88 @@ fn native_mock_idle_monitor_uses_actual_source_mode_and_never_enables_output() {
     assert_eq!(completed["last"]["meter_value"].as_f64().unwrap(), expected);
     let commands = std::fs::read_to_string(&log).unwrap();
     assert!(commands.matches(&hex("READ?\n")).count() > 9);
+    // Repeat is per-point accumulation, not another traversal of the source.
+    // Use zero settling so the command trace contains only the saved conversions.
+    let repeat_config = iv_core::RunConfig {
+        mode: iv_core::Mode::Vi,
+        pattern: iv_core::Pattern::Linear,
+        start: 1e-6,
+        stop: 1e-6,
+        step: 1e-6,
+        source_limit: 1e-6,
+        repeat: 4,
+        average_count: 1,
+        compliance: 1.0,
+        settle_s: 0.0,
+        start_settle_s: 0.0,
+        ramp_wait_s: 0.0,
+        ..Default::default()
+    };
+    let repeat_path = directory.join("repeat.csv");
+    let offset = std::fs::read_to_string(&log).unwrap().len();
+    engine.send(json!({"command":"run","config":repeat_config,"path":repeat_path}));
+    let repeated = engine.wait(|s| s["phase"] == "Completed" && s["run_id"] != completed["run_id"]);
+    assert_eq!(repeated["points"], 1);
+    assert_eq!(repeated["output"], "Off");
+    assert_eq!(csv_reader(&repeat_path).len(), 2);
+    let commands = std::fs::read_to_string(&log).unwrap();
+    let trace = &commands[offset..];
+    let target = format!("WRITE 3 {}", hex(":SOUR:LEV:FIX 1.000000000000e-6\n"));
+    assert_eq!(trace.matches(&target).count(), 1);
+    let at_target = trace.split_once(&target).unwrap().1;
+    let conversions = at_target
+        .split_once(&format!("QUERY 3 {}", hex(":SOUR:LEV?\n")))
+        .unwrap()
+        .0;
+    assert_eq!(
+        conversions
+            .matches(&format!("QUERY 7 {}", hex("READ?\n")))
+            .count(),
+        4
+    );
+    assert!(
+        !conversions.contains("WRITE 3 "),
+        "source must stay fixed during accumulation"
+    );
+    let metadata: Value =
+        serde_json::from_slice(&std::fs::read(repeat_path.with_extension("run.json")).unwrap())
+            .unwrap();
+    assert_eq!(metadata["config"]["repeat"], 4);
+    assert_eq!(metadata["config"]["average_count"], 4);
+
+    // A single conversion above the software limit stops the accumulation early.
+    std::fs::write(&limit_marker, "enable mixed readings").unwrap();
+    let limited_path = directory.join("repeat-limit.csv");
+    let limited = iv_core::RunConfig {
+        compliance: 0.0001,
+        ..repeat_config
+    };
+    engine.send(json!({"command":"run","config":limited,"path":limited_path}));
+    let cutoff = engine.wait(|s| s["phase"] == "Compliance stop");
+    assert_eq!(cutoff["points"], 1);
+    assert_eq!(cutoff["output"], "Off");
+    let partial_mean = cutoff["last"]["meter_value"].as_f64().unwrap();
+    assert!((partial_mean - 0.000212 / 3.0).abs() < 1e-19);
+    assert!(
+        partial_mean < 0.0001,
+        "the trigger sample must be retained even when the mean is below the limit"
+    );
+    let metadata: Value =
+        serde_json::from_slice(&std::fs::read(limited_path.with_extension("run.json")).unwrap())
+            .unwrap();
+    assert_eq!(
+        metadata["instrument_status_events"][0]["readings_completed"],
+        3
+    );
+    assert_eq!(
+        metadata["instrument_status_events"][0]["readings_requested"],
+        4
+    );
+    assert_eq!(
+        metadata["instrument_status_events"][0]["trigger_value"],
+        0.000212
+    );
+    assert_eq!(metadata["instrument_status_events"][0]["trigger_unit"], "V");
     for (mode, source_command) in [
         ("dc_iv", ":SOUR:FUNC VOLT\n"),
         ("dc_vi", ":SOUR:FUNC CURR\n"),
@@ -305,8 +398,8 @@ fn native_mock_idle_monitor_uses_actual_source_mode_and_never_enables_output() {
         assert!(commands.contains(&hex(source_command)));
         assert_eq!(
             commands.matches(&hex(":OUTP ON\n")).count(),
-            1,
-            "only the explicit sweep may enable output"
+            3,
+            "only the explicit sweeps may enable output"
         );
     }
     drop(engine);
@@ -350,6 +443,50 @@ fn settling_live_updates_without_saving_points_and_stop_remains_responsive() {
     let metadata: Value =
         serde_json::from_slice(&std::fs::read(path.with_extension("run.json")).unwrap()).unwrap();
     assert_eq!(metadata["in_progress"], false);
+    drop(engine);
+    std::fs::remove_dir_all(directory).unwrap();
+}
+
+#[test]
+fn automatic_settings_are_applied_and_preserve_requested_values_in_metadata() {
+    let mut engine = Engine::start();
+    engine.send(json!({"command":"connect","simulation":true,"source":"","meter":""}));
+    engine.wait(|s| s["connected"] == true);
+    let directory = std::env::temp_dir().join(format!(
+        "iv-auto-settings-{}-{}",
+        std::process::id(),
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos()
+    ));
+    std::fs::create_dir(&directory).unwrap();
+    let path = directory.join("sweep.csv");
+    let config = iv_core::RunConfig {
+        mode: iv_core::Mode::Vi,
+        pattern: iv_core::Pattern::Linear,
+        start: 0.0,
+        stop: 2e-8,
+        step: 1e-9,
+        source_limit: 1e-6,
+        compliance: 1.0,
+        ramp_step: 1e-9,
+        start_settle_s: 0.0,
+        settle_s: 0.0,
+        ..Default::default()
+    };
+    engine.send(json!({"command":"run","config":config,"path":path}));
+    let finished = engine.wait(|s| s["phase"] == "Completed");
+    assert_eq!(finished["points"], 3);
+    assert_eq!(finished["output"], "Off");
+    let metadata: Value =
+        serde_json::from_slice(&std::fs::read(path.with_extension("run.json")).unwrap()).unwrap();
+    assert_eq!(metadata["config"]["step"], 1e-8);
+    assert_eq!(metadata["config"]["ramp_step"], 1e-5);
+    assert_eq!(metadata["requested_config"]["step"], 1e-9);
+    assert_eq!(metadata["config"]["source_limit"], config.source_limit);
+    assert_eq!(metadata["in_progress"], false);
+    assert_eq!(csv_reader(&path).len(), 4);
     drop(engine);
     std::fs::remove_dir_all(directory).unwrap();
 }
