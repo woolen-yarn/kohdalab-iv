@@ -45,6 +45,12 @@ impl Engine {
         self.input.flush().unwrap();
     }
     fn wait(&mut self, predicate: impl Fn(&Value) -> bool) -> Value {
+        self.wait_state(|state| {
+            assert!(state["error"].as_str().unwrap().is_empty(), "{state}");
+            predicate(state)
+        })
+    }
+    fn wait_state(&mut self, predicate: impl Fn(&Value) -> bool) -> Value {
         let deadline = Instant::now() + Duration::from_secs(8);
         loop {
             assert!(Instant::now() < deadline, "Engine state timed out");
@@ -53,7 +59,6 @@ impl Engine {
                 && event["event"] == "state"
             {
                 let state = event["data"].clone();
-                assert!(state["error"].as_str().unwrap().is_empty(), "{state}");
                 if predicate(&state) {
                     return state;
                 }
@@ -171,6 +176,7 @@ fn native_mock_idle_monitor_uses_actual_source_mode_and_never_enables_output() {
     // Enable a controlled safe/safe/over-limit sequence only during the last
     // sweep. Idle monitoring must not consume the sequence.
     let limit_marker = directory.join("mixed-limit-readings");
+    let off_failure = directory.join("cannot-verify-off");
     script = script.replace(" response=''\n", &format!(
         " response=''\n if [ \"$op\" = WRITE ] && [ \"$payload\" = '{}' ]; then output_on=1; conversion=0; fi\n if [ \"$op\" = WRITE ] && [ \"$payload\" = '{}' ]; then output_on=0; fi\n",
         hex(":OUTP ON\n"), hex(":OUTP OFF\n")
@@ -211,6 +217,10 @@ fn native_mock_idle_monitor_uses_actual_source_mode_and_never_enables_output() {
     script = script.replace(" printf 'KIV\\tOK\\t%s\\n'", &format!(
         " if [ \"$op\" = QUERY ] && [ \"$address\" = 7 ] && [ \"$payload\" = '{}' ] && [ \"$output_on\" = 1 ] && [ -f '{}' ]; then conversion=$((conversion + 1)); if [ \"$conversion\" -le 2 ]; then response='{}'; fi; fi\n printf 'KIV\\tOK\\t%s\\n'",
         hex("READ?\n"), limit_marker.display(), hex("0")
+    ));
+    script = script.replace(" printf 'KIV\\tOK\\t%s\\n'", &format!(
+        " if [ \"$op\" = QUERY ] && [ \"$address\" = 3 ] && [ \"$payload\" = '{}' ] && [ -f '{}' ]; then response='{}'; fi\n printf 'KIV\\tOK\\t%s\\n'",
+        hex(":OUTP?\n"), off_failure.display(), hex("1")
     ));
     for name in ["kohdalab-gpib-helper", "kohdalab-usbtmc-helper"] {
         let path = directory.join(name);
@@ -326,6 +336,12 @@ fn native_mock_idle_monitor_uses_actual_source_mode_and_never_enables_output() {
     assert_eq!(csv_reader(&repeat_path).len(), 2);
     let commands = std::fs::read_to_string(&log).unwrap();
     let trace = &commands[offset..];
+    let off_query = format!("QUERY 3 {}", hex(":OUTP?\n"));
+    let configuration = format!("WRITE 3 {}", hex(":SOUR:FUNC CURR\n"));
+    assert!(
+        trace.find(&off_query).unwrap() < trace.find(&configuration).unwrap(),
+        "each sweep must verify output OFF before changing source configuration"
+    );
     let target = format!("WRITE 3 {}", hex(":SOUR:LEV:FIX 1.000000000000e-6\n"));
     assert_eq!(trace.matches(&target).count(), 1);
     let at_target = trace.split_once(&target).unwrap().1;
@@ -402,6 +418,29 @@ fn native_mock_idle_monitor_uses_actual_source_mode_and_never_enables_output() {
             "only the explicit sweeps may enable output"
         );
     }
+    // Even when the last cached state is Off, a fresh verification failure
+    // must reject a run before configuration, level changes or file creation.
+    std::fs::write(&off_failure, "source does not confirm OFF").unwrap();
+    let rejected_path = directory.join("must-not-start.csv");
+    let offset = std::fs::read_to_string(&log).unwrap().len();
+    engine.send(json!({"command":"run","config":limited,"path":rejected_path}));
+    let rejected = engine.wait_state(|s| s["phase"] == "Failed");
+    assert_eq!(rejected["output"], "Unknown");
+    assert!(
+        rejected["error"]
+            .as_str()
+            .unwrap()
+            .contains("Cannot start: source output OFF verification failed")
+    );
+    assert!(!rejected_path.exists());
+    let commands = std::fs::read_to_string(&log).unwrap();
+    for line in commands[offset..]
+        .lines()
+        .filter(|line| line.starts_with("WRITE "))
+    {
+        assert_eq!(line, format!("WRITE 3 {}", hex(":OUTP OFF\n")));
+    }
+    std::fs::remove_file(&off_failure).unwrap();
     drop(engine);
     std::fs::remove_dir_all(directory).unwrap();
 }

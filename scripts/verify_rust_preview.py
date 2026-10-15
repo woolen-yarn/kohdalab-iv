@@ -135,15 +135,25 @@ def main() -> None:
         stopped = wait_state(lambda s: s["run_id"] == 2 and s["phase"] == "Stopped")
         assert stopped["output"] == "Off" and stopped["points"] == 0
         results.append(f"Stop: output Off in {time.monotonic() - begin:.3f} s")
+        # Output-off stays callable through IPC after removing the GUI button.
+        send("run", config=long_config,
+             path=str((args.output_dir / "output-off.csv").resolve()))
+        wait_state(lambda s: s["run_id"] == 3 and s["phase"] == "Running")
+        begin = time.monotonic()
+        send("output_off")
+        off = wait_state(lambda s: s["run_id"] == 3 and s["phase"] == "Ready"
+                         and s["message"] == "Output off verified.")
+        assert off["output"] == "Off" and off["points"] == 0 and not off["error"]
+        results.append(f"output_off IPC: output Off in {time.monotonic() - begin:.3f} s")
         send(
             "run",
             config=long_config,
             path=str((args.output_dir / "lease.csv").resolve()),
         )
-        wait_state(lambda s: s["run_id"] == 3 and s["phase"] == "Running")
+        wait_state(lambda s: s["run_id"] == 4 and s["phase"] == "Running")
         begin = time.monotonic()
         lost = wait_state(
-            lambda s: s["run_id"] == 3 and not s["connected"], heartbeat=False
+            lambda s: s["run_id"] == 4 and not s["connected"], heartbeat=False
         )
         assert lost["output"] == "Off" and lost["points"] == 0
         results.append(

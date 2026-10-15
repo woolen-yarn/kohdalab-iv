@@ -116,7 +116,7 @@ class NativeIV:
         self._send("run", path=str(Path(path).resolve()), config=values)
         try:
             return self.wait(lambda s: s.get("run_id", 0) > previous and
-                s.get("phase") in ("Completed", "Stopped", "Failed"), timeout)
+                s.get("phase") in ("Completed", "Stopped", "Compliance stop", "Failed"), timeout)
         except BaseException:
             # Queued stop and OFF are processed by the Rust engine even if a
             # caller timeout/interrupt prevents waiting for its response here.

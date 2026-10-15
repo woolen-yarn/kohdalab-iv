@@ -39,6 +39,35 @@ class ClientTests(unittest.TestCase):
             metadata = json.loads(path.with_suffix('.run.json').read_text())
             self.assertFalse(metadata['in_progress'])
 
+    def test_run_returns_after_software_compliance_stop(self):
+        """A verified safety stop is terminal, rather than a client timeout."""
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / 'compliance-stop.csv'
+            with NativeIV() as iv:
+                iv.connect(simulation=True)
+                state = iv.run(path, {
+                    'pattern': 'linear',
+                    'start': -0.001,
+                    'stop': -0.001,
+                    'step': 0.001,
+                    # The simulation is a 1 kOhm reference, so -1 mV
+                    # produces -1 uA and must trip this 0.5 uA limit.
+                    'compliance': 0.5e-6,
+                    'settle_s': 0.0,
+                    'start_settle_s': 0.0,
+                    'ramp_wait_s': 0.0,
+                }, timeout=5)
+                self.assertEqual(state['phase'], 'Compliance stop')
+                self.assertEqual(state['output'], 'Off')
+                self.assertEqual(state['points'], 1)
+
+            with path.open(newline='') as stream:
+                rows = list(csv.DictReader(stream))
+            self.assertEqual(len(rows), 1)
+            self.assertEqual(rows[0]['software_limit_hit'], 'true')
+            metadata = json.loads(path.with_suffix('.run.json').read_text())
+            self.assertFalse(metadata['in_progress'])
+
 
 if __name__ == '__main__':
     unittest.main()

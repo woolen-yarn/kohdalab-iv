@@ -1,5 +1,13 @@
 # Changelog
 
+## 1.0.0 (2026-10-15)
+
+- Verify real source output OFF and zero before every sweep configuration, including retries after failures. Refuse Start when verification fails.
+- Return compliance-stop results promptly to Python/Notebook callers instead of waiting for a timeout.
+
+- Hide the separate Output Off button. Retain output_off IPC, priority handling, and automatic source cleanup on Stop, disconnect and shutdown.
+- Publish matching Mac and Windows portable applications and the source build kit, retaining complete-data Save, automatic source setup, per-point Repeat averaging and exact scientific CSV output.
+
 ## 0.4.3 (2026-10-15)
 
 - Use Start / Stop / Save in Run. Save exports the complete, exact CSV and companion run settings after cleanup; keep automatic recording and move Output Off into Source.

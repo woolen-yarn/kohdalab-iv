@@ -1,7 +1,8 @@
 # KohdaLab IV Native Desktop
 
-Version 0.4.3 adds complete-data Save, automatic source setup and per-point
-Repeat averaging. It keeps unverified 82357B firmware acquisition/upload excluded and supplies
+Version 1.0.0 keeps Run focused on Start / Stop / Save, with internal output-off
+control and automatic cleanup. It includes complete-data Save, automatic source
+setup and per-point Repeat averaging. It keeps unverified 82357B firmware acquisition/upload excluded and supplies
 explicit redistribution terms, native licensing evidence and relinking steps.
 Blue/purple forward/backward styles and the CSV-matched inspector are retained.
 
@@ -61,14 +62,20 @@ The Mac app is ad hoc signed and is not notarized.
    100 mA); the effective step and ramp are shown below Start. Start / End must
    match that resolution. Invalid settings show a reason below Start. Limits
    are never increased automatically. Press Start to see an English dialog explaining
-   any problem and how to fix it. The run JSON retains both requested and
+   any problem and how to fix it. Every real sweep verifies source output OFF
+   and zero before configuration; a failed verification prevents Start.
+   The run JSON retains both requested and
    effective settings; CSV targets use the effective sweep.
 5. Choose Directory with Browse, enter File, and choose Auto suffix. Run has
    Start / Stop / Save. Measurements are automatically saved as they are acquired.
    After completion or Stop cleanup, Save opens a file picker for a complete CSV
    copy and companion .run.json. It never exports a decimated graph or overwrites
-   existing files. Source > Output Off remains available during acquisition to
-   return the source to zero and verify output off.
+   existing files. There is no separate Output Off button. Stop and shutdown
+   retain the source cleanup and output-off verification. The output_off IPC
+   command remains available to CLI and Python/Notebook clients. If cleanup
+   reports Failed or output Unknown, check the instrument front panel and use
+   Disconnect to retry cleanup before reconnecting; do not treat an unverified
+   output state as safe.
 6. The status strip shows progress, resistance and conductance. The right log
    remains visible during discovery and measurement. Field / Value toggles the
    exact 14 saved CSV fields; hover truncated entries for their full values.
@@ -159,8 +166,8 @@ a bundled Microsoft driver binary.
 SOURCE.zip includes the Rust, helper, shared specification and build sources.
 
 Official downloads are available at
-https://github.com/Kohdalab/kohdalab-iv/releases/tag/portable-v0.4.3 and the
-personal mirror at https://github.com/woolen-yarn/kohdalab-iv/releases/tag/portable-v0.4.3.
+https://github.com/Kohdalab/kohdalab-iv/releases/tag/portable-v1.0.0 and the
+personal mirror at https://github.com/woolen-yarn/kohdalab-iv/releases/tag/portable-v1.0.0.
 Earlier releases remain archived on GitHub. Historical preview validation is
 recorded in `docs/rust_preview.md`; current behavior and limitations are described here.
 
