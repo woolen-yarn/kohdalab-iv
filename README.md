@@ -26,6 +26,20 @@ by calling the same Rust engine; no measurement logic is duplicated.
 Reviewed instrument profiles live in `next/specs/`. Native USB/GPIB helpers remain
 separate processes with their own licenses and OS boundaries.
 
+## Supported instruments
+
+The v1.2.0 Rust desktop and automation engine support these instruments in both DC modes (source V / measure I and source I / measure V):
+
+| Role | Instrument | Connection |
+| --- | --- | --- |
+| Source | Yokogawa GS210 | Direct USB in communication mode, or GPIB |
+| Meter | Agilent / Keysight 34411A | Direct USB, or GPIB |
+| Simulation | Built-in source and meter | No hardware required |
+
+Supported USB-GPIB adapters are **NI GPIB-USB-HS+** and **Agilent 82357B**. The 82357B must already be initialized using separately authorized firmware/software; the distribution does not acquire or upload firmware. Windows can use an available official 64-bit VISA runtime or supported native WinUSB devices. Native USB/GPIB is available on macOS Apple Silicon. Multiple simultaneous GPIB controllers are not supported.
+
+Yokogawa 7651 / GS200, Agilent 34401A, Keysight 34465A and ADCMT 7461A are **not implemented as instrument drivers in this Rust release**. Some have retained specification metadata or disabled UI entries; that does not provide measurement support. Refresh discovery alone does not establish model compatibility. See [instrument precision and limitations](docs/instrument_precision.md).
+
 ## Downloads
 
 The current published release is **v1.2.0**.

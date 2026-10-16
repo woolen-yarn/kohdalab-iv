@@ -1776,6 +1776,9 @@ done
     #[test]
     fn usb_helper_exit_uses_address_zero() {
         use std::os::unix::fs::PermissionsExt;
+        // Share the helper-fixture lock with tests that fork while creating scripts.
+        // A concurrent fork can temporarily retain a writable script descriptor.
+        let _guard = GPIB_TEST_LOCK.lock().unwrap();
         let unique = format!("kohdalab-usb-exit-test-{}", std::process::id());
         let directory = std::env::temp_dir().join(unique);
         fs::create_dir_all(&directory).unwrap();
