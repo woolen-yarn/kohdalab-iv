@@ -71,3 +71,32 @@ executables, or replace their files in portable `support/` after closing the
 application. In PowerShell, use `$env:KOHDALAB_IV_HELPER_DIR = "C:\path\to\helpers"`.
 The distributor's FILES.json records original files; locally modified builds
 are expected to have different hashes.
+
+## VISA helper test (Windows only)
+
+`visa_helper.cpp` dynamically loads an already installed official 64-bit VISA
+runtime from Windows System32. It does not need, import, or package a VISA SDK.
+For a reproducible protocol test without a VISA installation or an instrument,
+build the fake DLL and a separate test helper with an absolute DLL path:
+
+```sh
+x86_64-w64-mingw32-g++ -std=c++17 -Wall -Wextra -Werror -static \
+  -shared native/tests/windows_visa_mock.cpp -o C:/kohdalab-visa-test/windows_visa_mock.dll
+x86_64-w64-mingw32-g++ -std=c++17 -Wall -Wextra -Werror -static \
+  '-DKOHDALAB_VISA_TEST_DLL=L"C:\\kohdalab-visa-test\\windows_visa_mock.dll"' \
+  native/visa_helper.cpp -o C:/kohdalab-visa-test/visa_helper_mock.exe
+```
+
+The `KOHDALAB_VISA_TEST_DLL` macro is test-only; do not define it for a
+portable release. It is a compile-time absolute path, not an environment
+variable or a production DLL search path. Run the test alongside a normal
+production helper:
+
+```powershell
+$script = [IO.File]::ReadAllText((Resolve-Path native/tests/windows_visa_helper.ps1))
+& ([ScriptBlock]::Create($script)) `
+  -ProductionHelper C:\path\to\kohdalab-visa-helper.exe `
+  -MockHelper C:\kohdalab-visa-test\visa_helper_mock.exe
+```
+
+The script changes no driver bindings and sends no commands to real instruments.

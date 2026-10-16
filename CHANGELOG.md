@@ -1,5 +1,15 @@
 # Changelog
 
+## 1.2.0 (2026-10-16)
+
+- Add a graphical Windows Setup.exe, shared desktop/Start-menu shortcuts and Windows Installed apps registration, while keeping portable distribution.
+- Verify updates and preserve configuration, measurements and instrument drivers during uninstall; retain a verified archive of app-local files.
+- Make the thin Python client pip/uv-installable, with automatic discovery of the installed Windows Rust engine.
+
+- Prefer installed Windows 64-bit VISA per USB/GPIB resource, keeping WinUSB for other devices.
+- Keep vendor DLLs outside the distribution and load them in a separate bounded helper process.
+- Preserve existing manufacturer/third-party driver assignments during USB setup. Do not switch backends or replay commands after a VISA failure.
+
 ## 1.1.0 (2026-10-16)
 
 - Refresh the existing three-column UI with neutral charcoal cards, restrained borders and clearer text hierarchy.

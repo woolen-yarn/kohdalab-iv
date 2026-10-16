@@ -36,5 +36,7 @@ for source in usbtmc_probe usbtmc_helper; do
         -Ilibusb-1.0.30/libusb "$TASK_ROOT/native/$source.cpp" \
         "${TASK_LIBS[@]}" -o "$name.exe"
 done
+"$TASK_CXX" -std=c++17 -O2 -Wall -Wextra -Werror -static -s \
+    "$TASK_ROOT/native/visa_helper.cpp" -o kohdalab-visa-helper.exe
 cp kohdalab-gpib-helper.exe gpib-probe.exe
 echo "Built Windows helpers in $TASK_BUILD"

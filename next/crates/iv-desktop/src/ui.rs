@@ -197,6 +197,9 @@ fn path_summary(value: &str) -> String {
 }
 
 fn resource_summary(value: &str) -> String {
+    if let Some(native) = value.strip_prefix("VISA::") {
+        return format!("VISA · {}", resource_summary(native));
+    }
     let parts: Vec<_> = value.split("::").collect();
     if value.starts_with("GPIB") && parts.len() >= 2 {
         format!("GPIB · {}", parts[1])

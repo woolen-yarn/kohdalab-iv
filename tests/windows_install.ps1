@@ -86,6 +86,11 @@ try {
  $shortcut=(New-Object -ComObject WScript.Shell).CreateShortcut((Join-Path $testRoot 'Desktop\KohdaLab IV.lnk'))
  Assert-True ($shortcut.TargetPath -eq $exe) 'Rollback lost the working shortcut'
  foreach($f in $protected | Where-Object path -ne $userFile){Assert-True ((Get-FileHash $f.path).Hash -eq $f.hash) 'Rollback changed user data'}
+ New-Package 'callback failure'
+ $failed=$false
+ try{& ([ScriptBlock]::Create([IO.File]::ReadAllText($installer))) -PackageDirectory $package -TestRoot $testRoot -AfterInstall { param($path) throw 'simulated registration failure' }}catch{$failed=$true}
+ Assert-True $failed 'Installer accepted a registration callback failure'
+ Assert-True ((Get-FileHash $exe).Hash -eq $before) 'Registration failure did not restore the old executable'
  Write-Host 'PASS: fresh install, repeat, update, backup preservation, shortcuts, user data, tamper/traversal refusal and failed-update rollback.'
 } finally {
  Remove-Item -LiteralPath $directory -Recurse -Force

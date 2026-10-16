@@ -2,6 +2,17 @@
 #include "../native/usb_setup_policy.hpp"
 #include <cassert>
 int main() {
+    assert(setup_self_test_request(L"--self-test"));
+    assert(setup_self_test_request(L"--self-test "));
+    assert(setup_self_test_request(L" \t--self-test\r\n"));
+    assert(!setup_self_test_request(L"--install"));
+    assert(!setup_self_test_request(L"--self-test --install"));
+    assert(setup_preserves_driver("NiViUsbK"));
+    assert(setup_preserves_driver("AgilentUsb"));
+    assert(setup_preserves_driver("libusbK"));
+    assert(!setup_preserves_driver("WinUSB"));
+    assert(!setup_preserves_driver("winusb"));
+    assert(!setup_preserves_driver(""));
     assert(setup_device_name(0x3923, 0x7618, false, 0, ""));
     assert(!setup_device_name(0x0957, 0x0518, false, 0, ""));
     assert(setup_device_name(0x0957, 0x0718, false, 0, ""));

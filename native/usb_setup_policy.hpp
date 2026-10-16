@@ -20,3 +20,19 @@ inline const char* setup_device_name(unsigned vid, unsigned pid, bool composite,
     if (vid == 0x0957 && pid == 0x0a07) return "Agilent 34411A USBTMC";
     return nullptr;
 }
+
+// Never replace an assigned manufacturer/third-party driver implicitly. A
+// missing driver may be configured with WinUSB; an existing WinUSB may be fixed.
+inline bool setup_preserves_driver(const std::string& driver) {
+    if (driver.empty()) return false;
+    std::string service = driver;
+    std::transform(service.begin(), service.end(), service.begin(), [](unsigned char c) { return char(std::toupper(c)); });
+    return service != "WINUSB";
+}
+
+inline bool setup_self_test_request(std::wstring arguments) {
+    auto first = arguments.find_first_not_of(L" \t\r\n");
+    if (first == std::wstring::npos) return false;
+    auto last = arguments.find_last_not_of(L" \t\r\n");
+    return arguments.substr(first, last - first + 1) == L"--self-test";
+}

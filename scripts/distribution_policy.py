@@ -14,6 +14,7 @@ SOURCE_FILES = (
     "native/kohdalab_gpib_helper.cpp",
     "native/agilent_82357b.cpp",
     "native/usbtmc_helper.cpp",
+    "native/visa_helper.cpp",
     "native/windows_usb_setup.cpp",
     "native/vendor/ni-gpib/linux-gpib/COPYING",
     "native/vendor/libusb-1.0.30.tar.bz2",

@@ -129,10 +129,16 @@ struct SetupLock {
     }
     ~SetupLock() { ReleaseMutex(handle); CloseHandle(handle); }
 };
+static bool preserve_driver(wdi_device_info* device) {
+    return setup_preserves_driver(device->driver ? device->driver : "");
+}
+static bool configured_device(wdi_device_info* device) {
+    return ready(device) || preserve_driver(device);
+}
 int WINAPI wWinMain(HINSTANCE, HINSTANCE, PWSTR arguments, int) {
     bool quiet = std::wstring(arguments).find(L"--ensure") != std::wstring::npos;
     bool rescan = std::wstring(arguments).find(L"--rescan") != std::wstring::npos;
-    if (std::wstring(arguments) == L"--self-test") {
+    if (setup_self_test_request(arguments)) {
         return setup_device_name(0x3923,0x7618,false,0,"") &&
             !setup_device_name(0x0957,0x0518,false,0,"") &&
             setup_device_name(0x0957,0x0718,false,0,"") &&
@@ -148,20 +154,21 @@ int WINAPI wWinMain(HINSTANCE, HINSTANCE, PWSTR arguments, int) {
         // alone cannot reinstall a missing devnode; re-enumerate hardware first.
         {
             DeviceList initial(true);
-            bool ni_parent = false, ni_communication = false;
+            bool ni_parent = false, ni_communication = false, ni_vendor_parent = false;
             bool supported = false, configured = true;
             for (auto* device = initial.head; device; device = device->next) {
                 bool parent = device->vid == 0x3923 && device->pid == 0x7618 &&
                     device->device_id && std::string(device->device_id).find("&MI_") == std::string::npos;
-                if (!parent && name(device)) { supported = true; configured &= ready(device); }
+                if (!parent && name(device)) { supported = true; configured &= configured_device(device); }
                 if (device->vid != 0x3923 || device->pid != 0x7618) continue;
                 ni_parent |= parent;
+                ni_vendor_parent |= parent && preserve_driver(device);
                 ni_communication |= !parent && name(device) != nullptr;
             }
             // A normal Refresh must not prompt for administrator access when
             // all visible communication devices are already operational.
             if (supported && configured && !administrator()) rescan = false;
-            rescan |= ni_parent && !ni_communication;
+            rescan |= ni_parent && !ni_communication && !ni_vendor_parent;
         }
         if (rescan) {
             progress("Re-detecting removed USB devices");
@@ -176,7 +183,8 @@ int WINAPI wWinMain(HINSTANCE, HINSTANCE, PWSTR arguments, int) {
         for (auto* device = devices.head; device; device = device->next) {
             if (device->vid == 0x0957 && device->pid == 0x0518) { boot = true; continue; }
             if (!name(device)) continue;
-            found = true; pending |= !ready(device);
+            found = true; pending |= !configured_device(device);
+            if (preserve_driver(device)) progress(std::string("Preserving assigned driver for ") + name(device) + "; use installed 64-bit VISA.");
         }
         if (!found) {
             if (boot) {
@@ -194,8 +202,8 @@ int WINAPI wWinMain(HINSTANCE, HINSTANCE, PWSTR arguments, int) {
         auto directory = data_directory();
         if (boot) progress("82357B boot mode (0957:0518) was skipped; other supported USB devices will still be configured");
         if (!pending) {
-            progress("Connected devices are already configured");
-            if (!quiet) MessageBoxW(nullptr, L"Supported devices are already configured. Open KohdaLab IV and click Refresh.", L"KohdaLab USB Setup", MB_OK);
+            progress("Existing driver assignments were preserved; WinUSB devices are ready and other assignments require a working official 64-bit VISA runtime.");
+            if (!quiet) MessageBoxW(nullptr, L"Existing drivers were preserved. Open KohdaLab IV and click Refresh. Manufacturer drivers require an installed 64-bit VISA runtime.", L"KohdaLab USB Setup", MB_OK);
             return 0;
         }
         if (!administrator()) {
@@ -208,7 +216,7 @@ int WINAPI wWinMain(HINSTANCE, HINSTANCE, PWSTR arguments, int) {
         std::set<std::string> installed;
         for (auto* device = devices.head; device; device = device->next) {
             auto* model = name(device);
-            if (!model || ready(device) || !device->device_id || !installed.insert(device->device_id).second) continue;
+            if (!model || configured_device(device) || !device->device_id || !installed.insert(device->device_id).second) continue;
             log_text += std::string("Configuring ") + model + ": " + device->device_id +
                 "; previous driver=" + (device->driver ? device->driver : "none") + "\n";
             progress(std::string("Installing WinUSB for ") + model);
@@ -229,7 +237,7 @@ int WINAPI wWinMain(HINSTANCE, HINSTANCE, PWSTR arguments, int) {
             bool pending_device = false;
             for (auto* device = refreshed.head; device; device = device->next) {
                 if (!name(device)) continue;
-                pending_device |= !ready(device);
+                pending_device |= !configured_device(device);
                 if (ready(device) && device->device_id) active.insert(device->device_id);
             }
             verified = !pending_device &&

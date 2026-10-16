@@ -1,5 +1,24 @@
 # KohdaLab IV Native Desktop
 
+Version **1.2.0** adds a Windows Setup.exe installer and per-device official VISA preference
+on Windows.
+
+Windows discovery first asks the installed 64-bit system VISA runtime for USB0
+and GPIB0 instruments. These entries appear as `VISA::<resource>` in the app;
+`VISA::` is an app routing prefix, not part of the vendor VISA resource string.
+Old saved resource strings automatically choose VISA when it exposes the same
+device. Other devices use the existing native WinUSB route. No runtime is
+downloaded or bundled, and the app never replaces a driver during Refresh.
+A selected VISA connection does not silently fall back after a lock/timeout/error.
+Manufacturer drivers without a usable 64-bit VISA runtime are retained and need
+their vendor runtime configured. The updated USB setup preserves all existing
+non-WinUSB assignments, including third-party drivers.
+USB0 and GPIB0 primary-address resources are supported. GPIB0 uses one backend
+at a time: when VISA owns it, native controller probing is skipped and saved
+GPIB0 addresses also use VISA. Multiple simultaneous GPIB controllers are not
+supported. Official-VISA and native direct-USB instruments may be mixed.
+
+
 Version 1.1.0 refreshes the existing three-column interface with quiet charcoal
 cards, distinct input fields and action buttons, aligned sweep controls, readable
 path/resource summaries, and explicit connection/output states. Paths and resource
@@ -90,7 +109,7 @@ The Mac app is ad hoc signed and is not notarized.
    Rust desktop config format is native Rust format.
 
 Direct USB requires GS210 TMC mode (0B21:0039) or 34411A (0957:0A07).
-Windows requires the WinUSB assignments used by the existing portable; the
+Native USB/GPIB connections require the WinUSB assignments used by the existing portable; the
 bundled `support/USB-Setup.exe` can install them. Setup is currently an explicit
 support action in this release, rather than an automatic startup step. Administrator
 approval may be required. The application never changes unrelated devices.
@@ -209,8 +228,8 @@ a bundled Microsoft driver binary.
 SOURCE.zip includes the Rust, helper, shared specification and build sources.
 
 Official downloads are available at
-https://github.com/Kohdalab/kohdalab-iv/releases/tag/portable-v1.1.0 and the
-personal mirror at https://github.com/woolen-yarn/kohdalab-iv/releases/tag/portable-v1.1.0.
+https://github.com/Kohdalab/kohdalab-iv/releases/tag/portable-v1.2.0 and the
+personal mirror at https://github.com/woolen-yarn/kohdalab-iv/releases/tag/portable-v1.2.0.
 Earlier releases remain archived on GitHub. Historical preview validation is
 recorded in `docs/rust_preview.md`; current behavior and limitations are described here.
 
@@ -302,3 +321,35 @@ Planning benchmark note: `repeat` now controls per-point accumulation. The
 per target (990,099 meter conversions), not 990,099 source targets. Historical
 planning timings in the optimization report used the earlier sweep-repeat
 meaning and are not directly comparable to this corrected benchmark.
+
+## Windows Setup.exe distribution
+
+The installer edition and portable ZIP contain the same Rust application.
+Run `kohdalab-iv-<version>-windows-x64-Setup.exe`, approve Windows administrator
+permission, and follow the English setup wizard. It installs into
+`C:\Program Files\Kohdalab\KohdaLab IV`, creates all-user desktop/Start-menu
+shortcuts, and registers Windows Settings > Apps > Installed apps.
+Run a newer Setup.exe to update. Close the GUI and any Python/Notebook engine
+before updating or removing the app. Setup never changes instrument drivers.
+
+Uninstall through Windows Installed apps or `Uninstall.exe`. Settings, results,
+USB driver assignments and driver cache remain intact. A verified backup of the
+application tree, including any user-added files, is retained under
+`Documents\KohdaLab IV\archive`. Failed activation/registration rolls back.
+The GUI selects the launching user's `.kohdalab` directory even from a shared
+shortcut; it does not write measurement results under Program Files or Windows.
+
+The portable ZIP remains available for direct use without app installation.
+Do not use its legacy Install-Application.cmd to update a Setup-installed app;
+use Setup.exe for that update, or run the portable executable separately.
+
+Build an installer after producing the Windows portable directory:
+
+```sh
+python scripts/build_windows_installer.py --payload-dir next/dist/<windows-directory> --version <version> --output next/dist/KohdaLab-IV-Setup.exe
+```
+
+The pinned NSIS compiler is a build tool only. Its zlib notices and the complete
+installer scripts are included in the build kit. Downloaded tool archives are
+checked against the source-pinned SHA-256 before use. Python is only required
+on this build machine, not on an end user's Windows PC.
