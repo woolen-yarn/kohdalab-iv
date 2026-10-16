@@ -13,6 +13,10 @@ A selected VISA connection does not silently fall back after a lock/timeout/erro
 Manufacturer drivers without a usable 64-bit VISA runtime are retained and need
 their vendor runtime configured. The updated USB setup preserves all existing
 non-WinUSB assignments, including third-party drivers.
+USB0 and GPIB0 primary-address resources are supported. GPIB0 uses one backend
+at a time: when VISA owns it, native controller probing is skipped and saved
+GPIB0 addresses also use VISA. Multiple simultaneous GPIB controllers are not
+supported. Official-VISA and native direct-USB instruments may be mixed.
 
 
 Version 1.1.0 refreshes the existing three-column interface with quiet charcoal
@@ -105,7 +109,7 @@ The Mac app is ad hoc signed and is not notarized.
    Rust desktop config format is native Rust format.
 
 Direct USB requires GS210 TMC mode (0B21:0039) or 34411A (0957:0A07).
-Windows requires the WinUSB assignments used by the existing portable; the
+Native USB/GPIB connections require the WinUSB assignments used by the existing portable; the
 bundled `support/USB-Setup.exe` can install them. Setup is currently an explicit
 support action in this release, rather than an automatic startup step. Administrator
 approval may be required. The application never changes unrelated devices.
