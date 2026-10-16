@@ -67,6 +67,13 @@ fn run() -> Result<(), String> {
         println!("KohdaLab IV Next {}", env!("CARGO_PKG_VERSION"));
         return Ok(());
     }
+    if cfg!(windows) {
+        let home = std::env::var_os("USERPROFILE").ok_or("Windows user profile was not found")?;
+        let working = std::path::PathBuf::from(home).join(".kohdalab");
+        std::fs::create_dir_all(&working)
+            .map_err(|e| format!("Create user data directory: {e}"))?;
+        std::env::set_current_dir(working).map_err(|e| format!("Open user data directory: {e}"))?;
+    }
     let hardware_smoke = args.iter().any(|a| a == "--gui-hardware-smoke");
     let hardware = if hardware_smoke {
         if !args.iter().any(|a| a == "--confirm-open-circuit") {

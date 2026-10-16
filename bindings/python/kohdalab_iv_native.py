@@ -5,8 +5,54 @@ import os
 from pathlib import Path
 import shutil
 import subprocess
+import sys
 import threading
 import time
+
+
+def _existing_executable(value, source):
+    """Return a verified executable path with an actionable installation error."""
+    path = Path(value).expanduser()
+    if not path.is_file():
+        raise FileNotFoundError(
+            f"{source} points to '{path}', but iv-cli was not found there. "
+            "Install KohdaLab IV first, or pass the full path to iv-cli(.exe)."
+        )
+    return str(path.resolve())
+
+
+def resolve_executable(executable=None):
+    """Find the Rust engine without bundling or rebuilding it in Python.
+
+    Resolution is deliberate: an explicit argument wins, then
+    ``KOHDALAB_IV_EXE``, then an existing ``iv-cli`` on ``PATH``, and finally
+    the standard Windows installer location. Pass an explicit path when more
+    than one KohdaLab IV installation is present.
+    """
+    if executable:
+        return _existing_executable(executable, "The executable argument")
+
+    configured = os.environ.get("KOHDALAB_IV_EXE")
+    if configured:
+        return _existing_executable(configured, "KOHDALAB_IV_EXE")
+
+    for name in ("iv-cli", "iv-cli.exe"):
+        from_path = shutil.which(name)
+        if from_path:
+            return _existing_executable(from_path, f"{name} on PATH")
+
+    if sys.platform == "win32":
+        program_files = Path(os.environ.get("ProgramFiles", r"C:\\Program Files"))
+        installed = program_files / "Kohdalab" / "KohdaLab IV" / "iv-cli.exe"
+        if installed.is_file():
+            return str(installed.resolve())
+
+    raise FileNotFoundError(
+        "KohdaLab IV's Rust engine (iv-cli) was not found. Install the "
+        "KohdaLab IV desktop application, then create NativeIV(), or pass "
+        "the full path with NativeIV(executable=...). Installing this Python "
+        "client does not install or build the measurement engine."
+    )
 
 
 class NativeIV:
@@ -17,10 +63,7 @@ class NativeIV:
     """
 
     def __init__(self, executable=None):
-        executable = executable or os.environ.get("KOHDALAB_IV_EXE") or shutil.which("iv-cli")
-        if not executable:
-            raise FileNotFoundError("Pass the portable package's iv-cli executable path")
-        self.executable = str(Path(executable).resolve())
+        self.executable = resolve_executable(executable)
         self.default_config = json.loads(subprocess.check_output(
             [self.executable, "--default-config"], text=True, timeout=10))
         self._condition = threading.Condition()

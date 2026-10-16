@@ -2,6 +2,7 @@
 param(
     [Parameter(Mandatory = $true)]
     [string]$PackageDirectory,
+    [scriptblock]$AfterInstall,
     [string]$TestRoot,
     [switch]$Elevated,
     # Filled in before UAC elevation so an alternate administrator account never
@@ -313,6 +314,11 @@ $installPath = Join-Path $vendorRoot 'KohdaLab IV'
 $archiveDirectory = Join-Path (Join-Path $documents 'KohdaLab IV') 'archive'
 $shortcutPath = Join-Path $desktop 'KohdaLab IV.lnk'
 
+if ((Test-Path -LiteralPath (Join-Path $installPath 'installer-state.json')) -and
+    -not (Test-Path -LiteralPath (Join-Path $package 'Uninstall.exe'))) {
+    throw 'This app was installed with Setup.exe. Use Setup.exe to update it, or run the portable executable separately. No files were changed.'
+}
+
 New-Directory $vendorRoot
 New-Directory $desktop
 New-Directory $userData
@@ -363,6 +369,8 @@ try {
     if ($hadPrevious -and (Test-Path -LiteralPath $previous)) {
         Assert-TreeHashes $previous $previousBackup.Hashes 'The previous installation'
     }
+    # Installer registration belongs to the same rollback boundary as files.
+    if ($AfterInstall) { & $AfterInstall $installPath }
     $committed = $true
     if ($hadPrevious -and (Test-Path -LiteralPath $previous)) {
         try { Remove-Item -LiteralPath $previous -Recurse -Force } catch {

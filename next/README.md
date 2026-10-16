@@ -1,6 +1,6 @@
 # KohdaLab IV Native Desktop
 
-Development preview: **1.2.0-alpha.1** adds per-device official VISA preference
+Development preview: **1.2.0-rc.1** adds a Windows Setup.exe installer and per-device official VISA preference
 on Windows. The published v1.1.0 behavior described below remains archived.
 
 Windows discovery first asks the installed 64-bit system VISA runtime for USB0
@@ -321,3 +321,35 @@ Planning benchmark note: `repeat` now controls per-point accumulation. The
 per target (990,099 meter conversions), not 990,099 source targets. Historical
 planning timings in the optimization report used the earlier sweep-repeat
 meaning and are not directly comparable to this corrected benchmark.
+
+## Windows Setup.exe distribution
+
+The installer edition and portable ZIP contain the same Rust application.
+Run `kohdalab-iv-<version>-windows-x64-Setup.exe`, approve Windows administrator
+permission, and follow the English setup wizard. It installs into
+`C:\Program Files\Kohdalab\KohdaLab IV`, creates all-user desktop/Start-menu
+shortcuts, and registers Windows Settings > Apps > Installed apps.
+Run a newer Setup.exe to update. Close the GUI and any Python/Notebook engine
+before updating or removing the app. Setup never changes instrument drivers.
+
+Uninstall through Windows Installed apps or `Uninstall.exe`. Settings, results,
+USB driver assignments and driver cache remain intact. A verified backup of the
+application tree, including any user-added files, is retained under
+`Documents\KohdaLab IV\archive`. Failed activation/registration rolls back.
+The GUI selects the launching user's `.kohdalab` directory even from a shared
+shortcut; it does not write measurement results under Program Files or Windows.
+
+The portable ZIP remains available for direct use without app installation.
+Do not use its legacy Install-Application.cmd to update a Setup-installed app;
+use Setup.exe for that update, or run the portable executable separately.
+
+Build an installer after producing the Windows portable directory:
+
+```sh
+python scripts/build_windows_installer.py --payload-dir next/dist/<windows-directory> --version <version> --output next/dist/KohdaLab-IV-Setup.exe
+```
+
+The pinned NSIS compiler is a build tool only. Its zlib notices and the complete
+installer scripts are included in the build kit. Downloaded tool archives are
+checked against the source-pinned SHA-256 before use. Python is only required
+on this build machine, not on an end user's Windows PC.

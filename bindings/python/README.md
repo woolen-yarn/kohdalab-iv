@@ -1,20 +1,49 @@
 # Python / Notebook control
 
 The application and instrument engine are Rust. This optional client uses Python
-3.10+ and its standard library to control the portable `iv-cli` executable over
-JSON lines. It does not need PyVISA, NumPy, or the former Python application.
+3.10+ and its standard library to control the installed or portable `iv-cli`
+executable over JSON lines. It does not need PyVISA, NumPy, or the former Python
+application.
 
-Copy `kohdalab_iv_native.py` beside your script, or add this directory to
-`sys.path`. Set `KOHDALAB_IV_EXE` to the absolute path of `iv-cli` (`iv-cli.exe`
-on Windows). Keep the executable inside its portable folder so native helpers
-can be found. Close the GUI before connecting to the same instruments.
+## Install the client
+
+Install the Windows or macOS KohdaLab IV application first. This package is only
+a client: it never downloads, builds, or replaces the Rust measurement engine.
+
+For a checked-out repository:
+
+```text
+python -m pip install ./bindings/python
+uv pip install ./bindings/python
+```
+
+After this client is merged and a release tag containing it is published, pip can
+install directly from GitHub by replacing `<release-tag>`:
+
+```text
+python -m pip install "kohdalab-iv-native @ git+https://github.com/woolen-yarn/kohdalab-iv.git@<release-tag>#subdirectory=bindings/python"
+uv add "kohdalab-iv-native @ git+https://github.com/woolen-yarn/kohdalab-iv.git@<release-tag>#subdirectory=bindings/python"
+```
+
+Until a branch is merged and tagged, use the local clone commands above. The
+client resolves `iv-cli` in this order:
+
+1. The explicit `NativeIV(executable=...)` argument.
+2. `KOHDALAB_IV_EXE`.
+3. An `iv-cli` or `iv-cli.exe` already on `PATH`.
+4. On Windows, `C:\\Program Files\\Kohdalab\\KohdaLab IV\\iv-cli.exe` from the
+   desktop installer.
+
+Use an explicit path if several installations exist. On macOS, pass the portable
+`iv-cli` path or set `KOHDALAB_IV_EXE`. Keep a portable executable in its package
+folder so its native helpers can be found. Close the GUI before connecting to the
+same hardware.
 
 ```python
-import os
 from pathlib import Path
 from kohdalab_iv_native import NativeIV
 
-with NativeIV(os.environ["KOHDALAB_IV_EXE"]) as iv:
+with NativeIV() as iv:  # Finds the Windows desktop installation automatically.
     iv.connect(simulation=True)
     print(iv.live())  # no output enabled, no CSV created
     result = iv.run(Path("example.csv"), {

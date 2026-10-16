@@ -1,6 +1,12 @@
 # Changelog
 
-## 1.2.0-alpha.1 (unreleased)
+## 1.2.0-rc.1 (unreleased)
+
+- Add a graphical Windows Setup.exe, shared desktop/Start-menu shortcuts and Windows Installed apps registration, while keeping portable distribution.
+- Verify updates and preserve configuration, measurements and instrument drivers during uninstall; retain a verified archive of app-local files.
+- Make the thin Python client pip/uv-installable, with automatic discovery of the installed Windows Rust engine.
+
+## 1.2.0-alpha.1 (development)
 
 - Prefer installed Windows 64-bit VISA per USB/GPIB resource, keeping WinUSB for other devices.
 - Keep vendor DLLs outside the distribution and load them in a separate bounded helper process.

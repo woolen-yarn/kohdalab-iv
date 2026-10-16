@@ -63,9 +63,10 @@ This release never downloads or uploads its firmware; NI HS+ and direct USB
 remain supported. See [redistribution terms](REDISTRIBUTION.md) and the
 [licensing evidence](docs/redistribution_audit.md).
 
-## Development: official VISA preference on Windows
+## Development: Windows installer and official VISA preference
 
-The next development preview prefers an installed 64-bit NI/Keysight-compatible
+The next development preview adds an English Setup.exe with Windows app registration,
+updates and data-preserving removal, while retaining the portable ZIP. It prefers an installed 64-bit NI/Keysight-compatible
 VISA runtime for each resource it enumerates. Existing WinUSB devices continue
 through the native USB/GPIB helpers. VISA selection is retained for the lifetime
 of a connection: busy devices, timeouts and identity failures do not trigger a
@@ -132,3 +133,13 @@ Forward curves are blue solid lines with filled circles; backward curves are
 purple dashed lines with open diamonds, so overlapping curves remain distinct.
 Field/Value shows the exact 14-column CSV schema and saved values; live readouts
 and plot tooltips continue using instrument-resolution display precision.
+
+## Python and Jupyter
+
+Install the desktop/portable Rust application first. In a checkout containing the
+new client packaging, run `python -m pip install ./bindings/python` (or
+`uv pip install ./bindings/python`). On Windows, `NativeIV()` finds the installed
+Program Files engine automatically. For portable use or macOS, pass the
+`iv-cli` path explicitly or set `KOHDALAB_IV_EXE`. The Python package contains
+only a small client; Git clone alone does not install the Rust application.
+See [Python/Notebook instructions](bindings/python/README.md).
