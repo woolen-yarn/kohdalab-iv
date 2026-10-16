@@ -17,16 +17,14 @@ python -m pip install ./bindings/python
 uv pip install ./bindings/python
 ```
 
-After this client is merged and a release tag containing it is published, pip can
-install directly from GitHub by replacing `<release-tag>`:
+Install directly from the matching GitHub release:
 
 ```text
-python -m pip install "kohdalab-iv-native @ git+https://github.com/woolen-yarn/kohdalab-iv.git@<release-tag>#subdirectory=bindings/python"
-uv add "kohdalab-iv-native @ git+https://github.com/woolen-yarn/kohdalab-iv.git@<release-tag>#subdirectory=bindings/python"
+python -m pip install "kohdalab-iv-native @ git+https://github.com/woolen-yarn/kohdalab-iv.git@portable-v1.2.0#subdirectory=bindings/python"
+uv add "kohdalab-iv-native @ git+https://github.com/woolen-yarn/kohdalab-iv.git@portable-v1.2.0#subdirectory=bindings/python"
 ```
 
-Until a branch is merged and tagged, use the local clone commands above. The
-client resolves `iv-cli` in this order:
+The client resolves `iv-cli` in this order:
 
 1. The explicit `NativeIV(executable=...)` argument.
 2. `KOHDALAB_IV_EXE`.

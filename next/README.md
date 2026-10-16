@@ -1,7 +1,7 @@
 # KohdaLab IV Native Desktop
 
-Development preview: **1.2.0-rc.1** adds a Windows Setup.exe installer and per-device official VISA preference
-on Windows. The published v1.1.0 behavior described below remains archived.
+Version **1.2.0** adds a Windows Setup.exe installer and per-device official VISA preference
+on Windows.
 
 Windows discovery first asks the installed 64-bit system VISA runtime for USB0
 and GPIB0 instruments. These entries appear as `VISA::<resource>` in the app;
@@ -228,8 +228,8 @@ a bundled Microsoft driver binary.
 SOURCE.zip includes the Rust, helper, shared specification and build sources.
 
 Official downloads are available at
-https://github.com/Kohdalab/kohdalab-iv/releases/tag/portable-v1.1.0 and the
-personal mirror at https://github.com/woolen-yarn/kohdalab-iv/releases/tag/portable-v1.1.0.
+https://github.com/Kohdalab/kohdalab-iv/releases/tag/portable-v1.2.0 and the
+personal mirror at https://github.com/woolen-yarn/kohdalab-iv/releases/tag/portable-v1.2.0.
 Earlier releases remain archived on GitHub. Historical preview validation is
 recorded in `docs/rust_preview.md`; current behavior and limitations are described here.
 

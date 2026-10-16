@@ -4,7 +4,7 @@ A Rust desktop for DC I-V and V-I measurements with GS210 and 34411A over direct
 USB or USB-GPIB. The three-column interface keeps setup on the left, measurement
 and the I-V graph in the center, and detailed values/logs on the right.
 
-## Native version: 1.1.0
+## Native version: 1.2.0
 
 The refreshed charcoal interface preserves the original three-column layout,
 with aligned sweep controls, distinct inputs and actions, readable path/resource
@@ -26,9 +26,9 @@ by calling the same Rust engine; no measurement logic is duplicated.
 Reviewed instrument profiles live in `next/specs/`. Native USB/GPIB helpers remain
 separate processes with their own licenses and OS boundaries.
 
-## Published portable downloads
+## Downloads
 
-The current published release is **v1.1.0**.
+The current published release is **v1.2.0**.
 
 Run uses **Start / Stop / Save**. Measurements are still saved automatically;
 Save exports a complete CSV copy and its run metadata without overwriting data.
@@ -39,23 +39,18 @@ and invalid Start requests explain the problem in an English dialog.
 
 | Platform | Kohdalab | Personal mirror |
 | --- | --- | --- |
-| macOS Apple Silicon | [Mac portable](https://github.com/Kohdalab/kohdalab-iv/releases/download/portable-v1.1.0/kohdalab-iv-1.1.0-macos-arm64-portable.zip) | [Mac portable](https://github.com/woolen-yarn/kohdalab-iv/releases/download/portable-v1.1.0/kohdalab-iv-1.1.0-macos-arm64-portable.zip) |
-| Windows x64 | [Windows portable](https://github.com/Kohdalab/kohdalab-iv/releases/download/portable-v1.1.0/kohdalab-iv-1.1.0-windows-x64-portable.zip) | [Windows portable](https://github.com/woolen-yarn/kohdalab-iv/releases/download/portable-v1.1.0/kohdalab-iv-1.1.0-windows-x64-portable.zip) |
+| macOS Apple Silicon | [Mac portable](https://github.com/Kohdalab/kohdalab-iv/releases/download/portable-v1.2.0/kohdalab-iv-1.2.0-macos-arm64-portable.zip) | [Mac portable](https://github.com/woolen-yarn/kohdalab-iv/releases/download/portable-v1.2.0/kohdalab-iv-1.2.0-macos-arm64-portable.zip) |
+| Windows x64 installer | [Windows Setup](https://github.com/Kohdalab/kohdalab-iv/releases/download/portable-v1.2.0/kohdalab-iv-1.2.0-windows-x64-Setup.exe) | [Windows Setup](https://github.com/woolen-yarn/kohdalab-iv/releases/download/portable-v1.2.0/kohdalab-iv-1.2.0-windows-x64-Setup.exe) |
+| Windows x64 | [Windows portable](https://github.com/Kohdalab/kohdalab-iv/releases/download/portable-v1.2.0/kohdalab-iv-1.2.0-windows-x64-portable.zip) | [Windows portable](https://github.com/woolen-yarn/kohdalab-iv/releases/download/portable-v1.2.0/kohdalab-iv-1.2.0-windows-x64-portable.zip) |
 
-[Source build kit (Kohdalab)](https://github.com/Kohdalab/kohdalab-iv/releases/download/portable-v1.1.0/kohdalab-iv-1.1.0-build-kit.zip) ·
-[Source build kit (personal)](https://github.com/woolen-yarn/kohdalab-iv/releases/download/portable-v1.1.0/kohdalab-iv-1.1.0-build-kit.zip) ·
-[SHA-256 checksums](https://github.com/Kohdalab/kohdalab-iv/releases/download/portable-v1.1.0/SHA256SUMS.txt)
+[Source build kit (Kohdalab)](https://github.com/Kohdalab/kohdalab-iv/releases/download/portable-v1.2.0/kohdalab-iv-1.2.0-build-kit.zip) ·
+[Source build kit (personal)](https://github.com/woolen-yarn/kohdalab-iv/releases/download/portable-v1.2.0/kohdalab-iv-1.2.0-build-kit.zip) ·
+[SHA-256 checksums](https://github.com/Kohdalab/kohdalab-iv/releases/download/portable-v1.2.0/SHA256SUMS.txt)
 
-Extract the whole ZIP. Mac: open `KohdaLab IV Next.app`. On Windows, double-click
-`Install-Application.cmd`, approve the Windows administrator prompt, then use
-the **KohdaLab IV** desktop shortcut. This places the app in
-`C:\Program Files\Kohdalab\KohdaLab IV`; settings, results and driver data stay
-in your user folders. Rerun the installer from a newer ZIP to update; close IV
-first. The extracted folder can be removed after successful installation.
-You can also run `kohdalab-iv-next.exe` directly without installing it.
-No Python, Rust or manufacturer VISA installation is needed. App installation
-is separate from the included `support/USB-Setup.exe` for WinUSB drivers.
-See [Windows installation and updates](next/README.md#windows-installation-and-updates).
+Windows: run **Setup.exe**, approve administrator access, then start **KohdaLab IV** from the desktop or Start menu. It installs to `C:\Program Files\Kohdalab\KohdaLab IV`. Run a newer Setup to update; uninstall from Windows Settings. Close IV and automation clients first. Settings, results and instrument drivers are retained.
+
+For portable use, extract the whole ZIP. Mac: open `KohdaLab IV Next.app`. Windows: run `kohdalab-iv-next.exe` directly. No Python or Rust installation is needed. Instrument communication uses an available official 64-bit VISA runtime or the native WinUSB helpers. App installation does not change drivers; `support/USB-Setup.exe` is a separate action for devices that need WinUSB.
+See [Windows Setup distribution](next/README.md#windows-setupexe-distribution).
 Mac bundles are ad hoc signed, not Apple-notarized.
 
 82357B is supported only after separate, authorized firmware initialization.
@@ -63,9 +58,9 @@ This release never downloads or uploads its firmware; NI HS+ and direct USB
 remain supported. See [redistribution terms](REDISTRIBUTION.md) and the
 [licensing evidence](docs/redistribution_audit.md).
 
-## Development: Windows installer and official VISA preference
+## Windows installer and official VISA preference
 
-The next development preview adds an English Setup.exe with Windows app registration,
+Version 1.2.0 adds an English Setup.exe with Windows app registration,
 updates and data-preserving removal, while retaining the portable ZIP. It prefers an installed 64-bit NI/Keysight-compatible
 VISA runtime for each resource it enumerates. Existing WinUSB devices continue
 through the native USB/GPIB helpers. VISA selection is retained for the lifetime
@@ -73,7 +68,7 @@ of a connection: busy devices, timeouts and identity failures do not trigger a
 silent retry through a different backend. No manufacturer runtime is bundled.
 The USB setup tool preserves already assigned non-WinUSB drivers; only missing
 drivers or an incomplete existing WinUSB assignment are configured.
-The published v1.1.0 downloads above retain their original behavior.
+
 
 ## Build and validation
 
