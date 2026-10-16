@@ -1,6 +1,10 @@
 # KohdaLab IV Native Desktop
 
-Version 1.0.1 adds optional Windows Program Files installation and safe updates.
+Version 1.1.0 refreshes the existing three-column interface with quiet charcoal
+cards, distinct input fields and action buttons, aligned sweep controls, readable
+path/resource summaries, and explicit connection/output states. Paths and resource
+strings remain editable: click a summary to edit the full value, or hover to view it.
+Windows Program Files installation and safe updates remain available.
 It keeps Run focused on Start / Stop / Save, with internal output-off
 control and automatic cleanup. It includes complete-data Save, automatic source
 setup and per-point Repeat averaging. It keeps unverified 82357B firmware acquisition/upload excluded and supplies
@@ -205,8 +209,8 @@ a bundled Microsoft driver binary.
 SOURCE.zip includes the Rust, helper, shared specification and build sources.
 
 Official downloads are available at
-https://github.com/Kohdalab/kohdalab-iv/releases/tag/portable-v1.0.1 and the
-personal mirror at https://github.com/woolen-yarn/kohdalab-iv/releases/tag/portable-v1.0.1.
+https://github.com/Kohdalab/kohdalab-iv/releases/tag/portable-v1.1.0 and the
+personal mirror at https://github.com/woolen-yarn/kohdalab-iv/releases/tag/portable-v1.1.0.
 Earlier releases remain archived on GitHub. Historical preview validation is
 recorded in `docs/rust_preview.md`; current behavior and limitations are described here.
 

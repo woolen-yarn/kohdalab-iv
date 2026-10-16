@@ -1,5 +1,13 @@
 # Changelog
 
+## 1.1.0 (2026-10-16)
+
+- Refresh the existing three-column UI with neutral charcoal cards, restrained borders and clearer text hierarchy.
+- Distinguish editable settings from action buttons, align Mode/Sweep and quantity-unit right edges, and keep the central measurement view fixed.
+- Show compact path/resource summaries with full-value hover and click-to-edit behavior; make connection and output states explicit.
+- Reduce plot grid/legend emphasis and replace full-height panel toggles with compact controls. Keep Data and Log visible together.
+- Preserve the measurement engine, scientific CSV output, device communication and output safety behavior.
+
 ## 1.0.1 (2026-10-15)
 
 - Include an optional Windows app installer for Program Files placement and a desktop shortcut with a writable user working directory. Keep direct portable use available.
