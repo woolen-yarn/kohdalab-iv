@@ -133,7 +133,9 @@ fn role_name(role: Role) -> &'static str {
 fn gpib_address(kind: &ResourceKind) -> Result<u8, String> {
     match kind {
         ResourceKind::Gpib { address, .. } => Ok(*address),
-        ResourceKind::Usb { .. } => Err("Internal transport resource mismatch.".into()),
+        ResourceKind::Usb { .. } | ResourceKind::Visa { .. } => {
+            Err("Internal transport resource mismatch.".into())
+        }
     }
 }
 
@@ -150,9 +152,94 @@ pub struct OutputOffReport {
 /// not discard results from the other backend; callers can display `warnings`.
 pub fn discover_resources(paths: &HelperPaths) -> Discovery {
     let started = Instant::now();
-    let mut result = discover_usb(paths);
+    let mut result = discover_preferred(paths);
     discover_gpib_with_new_session(paths, &mut result, started);
     result
+}
+
+// VISA stays isolated in a helper process; no vendor DLL enters the Rust engine.
+fn visa_helper(paths: &HelperPaths) -> Option<PathBuf> {
+    if !cfg!(any(windows, test)) {
+        return None;
+    }
+    let helper = paths
+        .gpib
+        .parent()?
+        .join(executable_name("kohdalab-visa-helper"));
+    helper.is_file().then_some(helper)
+}
+
+fn discover_visa(paths: &HelperPaths) -> Discovery {
+    let mut result = Discovery::default();
+    let Some(helper) = visa_helper(paths) else {
+        return result;
+    };
+    match run_oneshot(&helper, &["--list"], Duration::from_secs(8))
+        .and_then(|line| parse_kiv(&line)?.into_payload())
+        .and_then(|payload| {
+            payload
+                .lines()
+                .filter(|line| !line.trim().is_empty())
+                .map(|line| {
+                    let native = line.split('\t').next().unwrap_or_default().trim();
+                    let resource = format!("VISA::{native}");
+                    ResourceKind::parse(&resource)?;
+                    Ok(ResourceInfo {
+                        label: format!("Official VISA · {native}"),
+                        resource,
+                    })
+                })
+                .collect::<Result<Vec<_>, String>>()
+        }) {
+        Ok(resources) => result.resources = resources,
+        Err(error) => result
+            .warnings
+            .push(format!("Official VISA discovery: {error}")),
+    }
+    result
+}
+
+fn discover_preferred(paths: &HelperPaths) -> Discovery {
+    let mut result = discover_visa(paths);
+    let native = discover_usb(paths);
+    result.warnings.extend(native.warnings);
+    for resource in native.resources {
+        let duplicate = result.resources.iter().any(|official| {
+            match (
+                ResourceKind::parse(&official.resource),
+                ResourceKind::parse(&resource.resource),
+            ) {
+                (Ok(left), Ok(right)) => left.same_physical(&right),
+                _ => false,
+            }
+        });
+        if !duplicate {
+            result.resources.push(resource);
+        }
+    }
+    result
+}
+
+fn preferred_kind(paths: &HelperPaths, resource: &str) -> Result<ResourceKind, String> {
+    let native = ResourceKind::parse(resource)?;
+    if matches!(native, ResourceKind::Visa { .. }) {
+        return Ok(native);
+    }
+    // Also route previously saved native resource strings through official VISA
+    // when it now owns that device. Once selected, never retry I/O on another backend.
+    for official in discover_visa(paths).resources {
+        let official = ResourceKind::parse(&official.resource)?;
+        if official.same_physical(&native) {
+            return Ok(official);
+        }
+        if native.is_gpib() && official.is_gpib() {
+            return Ok(ResourceKind::Visa {
+                resource: format!("VISA::{}", native.resource()),
+                native: Box::new(native),
+            });
+        }
+    }
+    Ok(native)
 }
 
 fn discover_usb(paths: &HelperPaths) -> Discovery {
@@ -177,6 +264,15 @@ fn discover_usb(paths: &HelperPaths) -> Discovery {
 }
 
 fn discover_gpib_with_new_session(paths: &HelperPaths, result: &mut Discovery, started: Instant) {
+    // Do not open/reset a native GPIB bridge when VISA already exposes its bus.
+    if result
+        .resources
+        .iter()
+        .any(|r| r.resource.starts_with("VISA::GPIB"))
+    {
+        result.warnings.push("GPIB0 is owned by official VISA. Native USB-GPIB probing was skipped to avoid resetting another controller. Only one GPIB controller/backend is supported at a time.".into());
+        return;
+    }
     let remaining = Duration::from_secs(30).saturating_sub(started.elapsed());
     if remaining.is_zero() {
         result.warnings.push(
@@ -286,7 +382,7 @@ impl DevicePair {
 
     /// Connects one role, validating its identity before it becomes usable.
     pub fn connect(&mut self, role: Role, resource: &str) -> Result<(), String> {
-        let kind = ResourceKind::parse(resource)?;
+        let kind = preferred_kind(&self.paths, resource)?;
         if let Some(current) = self.kind_option(role) {
             if current.same_physical(&kind) {
                 return Ok(());
@@ -299,6 +395,14 @@ impl DevicePair {
             && kind.same_physical(other)
         {
             return Err("Source and meter must use different physical resources.".into());
+        }
+        if let Some(other) = self.kind_option(other_role(role))
+            && kind.is_gpib()
+            && other.is_gpib()
+            && matches!(&kind, ResourceKind::Visa { .. })
+                != matches!(other, ResourceKind::Visa { .. })
+        {
+            return Err("GPIB0 cannot mix official VISA and native WinUSB sessions. Disconnect both instruments, configure one GPIB backend, then click Refresh and reconnect.".into());
         }
         let shared = self
             .endpoint_option(other_role(role))
@@ -421,7 +525,7 @@ impl DevicePair {
     /// call this while a run is active.
     pub fn discover(&mut self, paths: &HelperPaths) -> Discovery {
         let started = Instant::now();
-        let mut result = discover_usb(paths);
+        let mut result = discover_preferred(paths);
         let bridge = self
             .source
             .as_ref()
@@ -540,40 +644,44 @@ impl DevicePair {
                 .is_some_and(|endpoint| Arc::ptr_eq(&endpoint.session, session))
     }
     fn open_single_endpoint(&self, kind: &ResourceKind) -> Result<Endpoint, String> {
-        let lease = DeviceLease::acquire(&kind.lock_key())?;
-        match kind {
-            ResourceKind::Gpib { resource, address } => Ok(Endpoint {
-                resource: resource.clone(),
-                address: *address,
-                session: Arc::new(Mutex::new(HelperSession::spawn_with_lease(
-                    &self.paths.gpib,
-                    STARTUP_TIMEOUT,
-                    lease,
-                )?)),
-            }),
-            ResourceKind::Usb {
-                resource,
-                serial,
-                vid,
-                pid,
-            } => {
-                let args = vec![
-                    serial.clone(),
-                    format!("0x{vid:04x}"),
-                    format!("0x{pid:04x}"),
-                ];
-                Ok(Endpoint {
-                    resource: resource.clone(),
-                    address: 0,
-                    session: Arc::new(Mutex::new(HelperSession::spawn_usb_with_lease(
-                        &self.paths.usbtmc,
-                        &args,
-                        STARTUP_TIMEOUT,
-                        lease,
-                    )?)),
-                })
+        let lease = if kind.is_gpib() {
+            let existing = self
+                .source
+                .as_ref()
+                .filter(|_| self.source_kind.as_ref().is_some_and(ResourceKind::is_gpib))
+                .or_else(|| {
+                    self.meter
+                        .as_ref()
+                        .filter(|_| self.meter_kind.as_ref().is_some_and(ResourceKind::is_gpib))
+                });
+            if let Some(existing) = existing {
+                lock_session(&existing.session)?
+                    .lease
+                    .clone()
+                    .ok_or_else(|| {
+                        "GPIB adapter lease is missing; disconnect and reconnect.".to_owned()
+                    })?
+            } else {
+                DeviceLease::acquire("gpib-adapter")?
             }
-        }
+        } else {
+            DeviceLease::acquire(&kind.lock_key())?
+        };
+        Ok(Endpoint {
+            resource: kind.resource().to_owned(),
+            address: match kind {
+                ResourceKind::Gpib { address, .. } => *address,
+                _ => 0,
+            },
+            session: Arc::new(Mutex::new(
+                spawn_for_resource(&self.paths, kind, lease, Instant::now() + STARTUP_TIMEOUT)
+                    .map_err(|error| {
+                        if cfg!(windows) && !matches!(kind, ResourceKind::Visa { .. }) {
+                            format!("{error} If this device uses a manufacturer driver, install/configure its official 64-bit VISA runtime and click Refresh. Existing manufacturer drivers are preserved; WinUSB setup is only for unassigned devices.")
+                        } else { error }
+                    })?,
+            )),
+        })
     }
 
     fn ensure_usable(&self) -> Result<(), String> {
@@ -724,6 +832,17 @@ fn spawn_for_resource(
         return Err("Transport recovery deadline expired before helper restart.".into());
     }
     match kind {
+        ResourceKind::Visa { native, .. } => {
+            let helper = visa_helper(paths).ok_or_else(|| {
+                "Official VISA helper was not found. Reinstall the complete application.".to_owned()
+            })?;
+            HelperSession::spawn_usb_with_lease(
+                &helper,
+                &[native.resource().to_owned()],
+                remaining.min(STARTUP_TIMEOUT),
+                lease,
+            )
+        }
         ResourceKind::Gpib { .. } => {
             HelperSession::spawn_with_lease(&paths.gpib, remaining.min(STARTUP_TIMEOUT), lease)
         }
@@ -747,6 +866,10 @@ fn spawn_for_resource(
 
 #[derive(Clone, Debug)]
 enum ResourceKind {
+    Visa {
+        resource: String,
+        native: Box<ResourceKind>,
+    },
     Gpib {
         resource: String,
         address: u8,
@@ -761,6 +884,16 @@ enum ResourceKind {
 
 impl ResourceKind {
     fn parse(value: &str) -> Result<Self, String> {
+        if let Some(inner) = value.strip_prefix("VISA::") {
+            if inner.starts_with("VISA::") {
+                return Err("Nested VISA resource is invalid.".into());
+            }
+            let native = Box::new(Self::parse(inner)?);
+            return Ok(Self::Visa {
+                resource: value.to_owned(),
+                native,
+            });
+        }
         let fields: Vec<_> = value.split("::").collect();
         if fields.len() == 3
             && fields[0].eq_ignore_ascii_case("GPIB0")
@@ -803,8 +936,25 @@ impl ResourceKind {
         ))
     }
 
+    fn is_gpib(&self) -> bool {
+        match self {
+            Self::Gpib { .. } => true,
+            Self::Visa { native, .. } => native.is_gpib(),
+            Self::Usb { .. } => false,
+        }
+    }
+
+    fn resource(&self) -> &str {
+        match self {
+            Self::Visa { resource, .. }
+            | Self::Gpib { resource, .. }
+            | Self::Usb { resource, .. } => resource,
+        }
+    }
+
     fn lock_key(&self) -> String {
         match self {
+            Self::Visa { native, .. } => native.lock_key(),
             Self::Gpib { .. } => "gpib-adapter".into(),
             Self::Usb {
                 serial, vid, pid, ..
@@ -814,6 +964,8 @@ impl ResourceKind {
 
     fn same_physical(&self, other: &Self) -> bool {
         match (self, other) {
+            (Self::Visa { native, .. }, other) => native.same_physical(other),
+            (this, Self::Visa { native, .. }) => this.same_physical(native),
             (Self::Gpib { address: left, .. }, Self::Gpib { address: right, .. }) => left == right,
             (
                 Self::Usb {
@@ -876,8 +1028,12 @@ fn normalize_identity(identity: &str) -> String {
         .join(",")
 }
 
+#[derive(Clone)]
 struct DeviceLease {
-    file: File,
+    // One OS file handle owns the lock until the last helper lease is dropped.
+    // The parent serializes all per-device VISA requests; another application
+    // cannot acquire any address on this GPIB controller during the session.
+    _file: Arc<File>,
 }
 
 impl DeviceLease {
@@ -911,13 +1067,9 @@ impl DeviceLease {
         file.try_lock_exclusive().map_err(|_| {
             format!("Device is already in use: {key}. Close the other KohdaLab IV instance.")
         })?;
-        Ok(Self { file })
-    }
-}
-
-impl Drop for DeviceLease {
-    fn drop(&mut self) {
-        let _ = self.file.unlock();
+        Ok(Self {
+            _file: Arc::new(file),
+        })
     }
 }
 
@@ -1408,6 +1560,126 @@ mod tests {
             normalize_identity("YOKOGAWA,GS210,91N1,2.01"),
             normalize_identity("YOKOGAWA,GS210,91N2,2.01")
         );
+    }
+
+    #[test]
+    fn visa_resources_share_physical_identity_but_retain_the_backend() {
+        let native = ResourceKind::parse("USB0::0x0957::0x0A07::SERIAL::INSTR").unwrap();
+        let official = ResourceKind::parse("VISA::USB0::0x0957::0x0A07::SERIAL::INSTR").unwrap();
+        assert!(official.same_physical(&native));
+        assert!(native.same_physical(&official));
+        assert_eq!(native.lock_key(), official.lock_key());
+        assert!(ResourceKind::parse("VISA::VISA::GPIB0::3::INSTR").is_err());
+        assert!(ResourceKind::parse("VISA::GPIB0::0::INSTR").is_err());
+        assert!(ResourceKind::parse("VISA::TCPIP0::host::INSTR").is_err());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn official_route_wins_deduplicates_and_never_retries_a_busy_device_on_native() {
+        use std::os::unix::fs::PermissionsExt;
+        let _guard = GPIB_TEST_LOCK.lock().unwrap();
+        let directory =
+            std::env::temp_dir().join(format!("iv-visa-routing-{}", std::process::id()));
+        fs::create_dir_all(&directory).unwrap();
+        let log = directory.join("calls.log");
+        let busy = directory.join("busy");
+        let _ = fs::remove_file(&log);
+        let _ = fs::remove_file(&busy);
+        let no_visa = directory.join("no-visa");
+        let _ = fs::remove_file(&no_visa);
+        let listing =
+            "GPIB0::3::INSTR\tOfficial VISA\nUSB0::0x0957::0x0A07::METER::INSTR\tOfficial VISA\n";
+        let visa = format!(
+            r#"#!/bin/sh
+if [ "$1" = --list ]; then
+ if [ -f '{}' ]; then printf 'KIV\tOK\t\n'; else printf 'KIV\tOK\t{}\n'; fi
+ exit
+fi
+printf 'VISA %s\n' "$1" >> '{}'
+if [ -f '{}' ]; then printf 'KIV\tERR\t62757379\n'; exit 1; fi
+resource="$1"
+printf 'KIV\tOK\t\n'
+while read op address timeout payload; do
+ if [ "$op" = QUERY ] && [ "$payload" = 2a49444e3f0a ]; then
+  if [ "$resource" = 'GPIB0::3::INSTR' ]; then printf 'KIV\tOK\t{}\n'; else printf 'KIV\tOK\t{}\n'; fi
+ elif [ "$op" = QUERY ]; then printf 'KIV\tOK\t300a\n'
+ else printf 'KIV\tOK\t\n'; fi
+ if [ "$op" = EXIT ]; then exit; fi
+done
+"#,
+            no_visa.display(),
+            hex(listing.as_bytes()),
+            log.display(),
+            busy.display(),
+            hex(b"YOKOGAWA,GS210,SOURCE,1\n"),
+            hex(b"Agilent,34411A,METER,1\n")
+        );
+        let native = format!(
+            r#"#!/bin/sh
+if [ "$1" = --list ]; then printf 'KIV\tOK\t{}\n'; exit; fi
+printf 'NATIVE\n' >> '{}'
+exit 1
+"#,
+            hex(b"USB0::0x0957::0x0A07::METER::INSTR\n"),
+            log.display()
+        );
+        let paths = HelperPaths {
+            gpib: directory.join("native-gpib"),
+            usbtmc: directory.join("native-usb"),
+            setup: None,
+        };
+        let visa_path = directory.join(executable_name("kohdalab-visa-helper"));
+        for (path, contents) in [
+            (&visa_path, visa.as_str()),
+            (&paths.gpib, native.as_str()),
+            (&paths.usbtmc, native.as_str()),
+        ] {
+            fs::write(path, contents).unwrap();
+            fs::set_permissions(path, fs::Permissions::from_mode(0o700)).unwrap();
+        }
+        let found = discover_resources(&paths);
+        assert_eq!(found.resources.len(), 2);
+        assert!(
+            found
+                .resources
+                .iter()
+                .all(|r| r.resource.starts_with("VISA::"))
+        );
+        assert_eq!(found.warnings.len(), 1);
+        assert!(found.warnings[0].contains("GPIB0 is owned by official VISA"));
+        let mut pair = DevicePair::new(&paths);
+        // Old saved strings are routed automatically as well as explicit VISA selections.
+        pair.connect(Role::Source, "GPIB0::3::INSTR").unwrap();
+        pair.connect(Role::Meter, "GPIB0::7::INSTR").unwrap();
+        assert!(DeviceLease::acquire("gpib-adapter").is_err());
+        assert!(
+            DevicePair::new(&paths)
+                .connect(Role::Source, "VISA::GPIB0::8::INSTR")
+                .is_err()
+        );
+        assert!(pair.force_output_off().unwrap().output_off_verified);
+        pair.disconnect(Role::Meter).unwrap();
+        assert!(DeviceLease::acquire("gpib-adapter").is_err());
+        fs::write(&no_visa, b"runtime unavailable").unwrap();
+        assert!(
+            pair.connect(Role::Meter, "GPIB0::7::INSTR")
+                .unwrap_err()
+                .contains("cannot mix")
+        );
+        fs::remove_file(&no_visa).unwrap();
+        pair.close().unwrap();
+        drop(DeviceLease::acquire("gpib-adapter").unwrap());
+        fs::write(&busy, b"busy").unwrap();
+        assert!(
+            DevicePair::new(&paths)
+                .connect(Role::Source, "GPIB0::3::INSTR")
+                .unwrap_err()
+                .contains("busy")
+        );
+        let calls = fs::read_to_string(&log).unwrap();
+        assert!(!calls.contains("NATIVE"), "{calls}");
+        fs::remove_dir_all(directory).unwrap();
     }
 
     #[test]

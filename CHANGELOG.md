@@ -1,5 +1,11 @@
 # Changelog
 
+## 1.2.0-alpha.1 (unreleased)
+
+- Prefer installed Windows 64-bit VISA per USB/GPIB resource, keeping WinUSB for other devices.
+- Keep vendor DLLs outside the distribution and load them in a separate bounded helper process.
+- Preserve existing manufacturer/third-party driver assignments during USB setup. Do not switch backends or replay commands after a VISA failure.
+
 ## 1.1.0 (2026-10-16)
 
 - Refresh the existing three-column UI with neutral charcoal cards, restrained borders and clearer text hierarchy.

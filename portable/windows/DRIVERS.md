@@ -1,6 +1,11 @@
 # Windows USB setup
 
-Connect supported instruments. If WinUSB is not already assigned, run
+The development preview first uses an installed 64-bit official VISA runtime
+for instruments it enumerates. Manufacturer driver packages alone are not a
+VISA runtime. Existing WinUSB devices use the native helpers as before. A busy
+or failed VISA connection is reported; it is never retried through native I/O.
+
+Connect supported instruments. If a device has no assigned driver, run
 `support/USB-Setup.exe` and approve any Windows administrator/driver prompts.
 The Rust GUI does not run the setup executable automatically. Afterwards,
 launch `kohdalab-iv-next.exe`, click Refresh, select the
@@ -42,6 +47,8 @@ models. Secondary addresses and multiple adapters are not supported.
 ## What initial setup does
 
 - Checks the fixed supported-device allowlist and existing WinUSB interface GUID.
+- Preserves every existing non-WinUSB driver assignment. It does not decide that
+  a vendor driver is disposable merely because VISA cannot currently see it.
 - Requests administrator privileges only when configuration is required.
 - Uses a bundled, replaceable libwdi DLL to generate, sign and install a small
   device-specific package pointing to Windows' own WinUSB driver. It installs
@@ -53,9 +60,9 @@ models. Secondary addresses and multiple adapters are not supported.
   82357B is connected. No Internet connection is needed for these setup steps.
 
 The app and installer do not disable Windows driver-signature enforcement or
-boot security settings. Setup replaces the manufacturer's driver for selected
-native devices; vendor VISA tools may no longer access those devices. To use
-those tools later, restore the manufacturer's driver. The original system
+boot security settings. Setup does not replace an existing manufacturer driver. Older native-only
+releases could assign WinUSB in its place; restore the manufacturer driver
+manually if you want those devices to use official VISA. The original system
 restore settings are preserved. No SCPI commands or measurement sweeps are
 sent by USB setup.
 

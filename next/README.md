@@ -1,5 +1,20 @@
 # KohdaLab IV Native Desktop
 
+Development preview: **1.2.0-alpha.1** adds per-device official VISA preference
+on Windows. The published v1.1.0 behavior described below remains archived.
+
+Windows discovery first asks the installed 64-bit system VISA runtime for USB0
+and GPIB0 instruments. These entries appear as `VISA::<resource>` in the app;
+`VISA::` is an app routing prefix, not part of the vendor VISA resource string.
+Old saved resource strings automatically choose VISA when it exposes the same
+device. Other devices use the existing native WinUSB route. No runtime is
+downloaded or bundled, and the app never replaces a driver during Refresh.
+A selected VISA connection does not silently fall back after a lock/timeout/error.
+Manufacturer drivers without a usable 64-bit VISA runtime are retained and need
+their vendor runtime configured. The updated USB setup preserves all existing
+non-WinUSB assignments, including third-party drivers.
+
+
 Version 1.1.0 refreshes the existing three-column interface with quiet charcoal
 cards, distinct input fields and action buttons, aligned sweep controls, readable
 path/resource summaries, and explicit connection/output states. Paths and resource

@@ -200,6 +200,7 @@ def main() -> None:
         for filename in (
             "kohdalab-gpib-helper.exe",
             "kohdalab-usbtmc-helper.exe",
+            "kohdalab-visa-helper.exe",
             "USB-Setup.exe",
             "libwdi.dll",
         ):

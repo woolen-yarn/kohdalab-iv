@@ -63,6 +63,17 @@ This release never downloads or uploads its firmware; NI HS+ and direct USB
 remain supported. See [redistribution terms](REDISTRIBUTION.md) and the
 [licensing evidence](docs/redistribution_audit.md).
 
+## Development: official VISA preference on Windows
+
+The next development preview prefers an installed 64-bit NI/Keysight-compatible
+VISA runtime for each resource it enumerates. Existing WinUSB devices continue
+through the native USB/GPIB helpers. VISA selection is retained for the lifetime
+of a connection: busy devices, timeouts and identity failures do not trigger a
+silent retry through a different backend. No manufacturer runtime is bundled.
+The USB setup tool preserves already assigned non-WinUSB drivers; only missing
+drivers or an incomplete existing WinUSB assignment are configured.
+The published v1.1.0 downloads above retain their original behavior.
+
 ## Build and validation
 
 Install the Rust toolchain declared in `next/rust-toolchain.toml`.

@@ -37,3 +37,17 @@ the helper's licensing boundary. A compatible implementation can be selected
 through `KOHDALAB_IV_HELPER_DIR` by providing a compatible
 `kohdalab-gpib-helper[.exe]` alongside the USBTMC helper. All helper source/build instructions are in
 the distribution's `support/SOURCE.zip`.
+
+## Optional Windows official VISA helper
+
+`kohdalab-visa-helper.exe` is a separate MIT helper. It dynamically loads the
+system-installed 64-bit VISA runtime from System32; no vendor DLL/SDK is shipped.
+`--available` returns 1/0. `--list` returns a KIV payload of canonical USB0/GPIB0
+resource strings (optional tab-separated labels). Missing VISA returns an empty
+successful list. A single resource argument opens an exclusive VISA session and
+accepts the same bounded KIV byte protocol (address 0 for this single endpoint).
+Discovery/opening sends no SCPI. GPIB LOCAL/close uses addressed GTL, avoiding a
+bus-wide REN release that could affect another VISA session. The Rust parent
+retains command deadlines, process isolation, identity checks and safe shutdown.
+The GUI resource prefix `VISA::` selects this helper and is stripped before
+calling the vendor API. Once selected, no failed I/O is replayed on WinUSB.
