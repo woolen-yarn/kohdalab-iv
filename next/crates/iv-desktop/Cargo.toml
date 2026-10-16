@@ -22,5 +22,5 @@ eframe = { version = "0.33", default-features = false, features = ["glow", "defa
 egui_plot = "0.34"
 image = { version = "0.25", default-features = false, features = ["png"] }
 time = { version = "0.3", features = ["formatting"] }
-toml = "0.9"
+toml = "1.1"
 rfd = { version = "0.17.2", default-features = false, features = ["xdg-portal", "pollster"] }
