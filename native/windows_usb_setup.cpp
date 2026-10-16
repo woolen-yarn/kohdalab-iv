@@ -138,7 +138,7 @@ static bool configured_device(wdi_device_info* device) {
 int WINAPI wWinMain(HINSTANCE, HINSTANCE, PWSTR arguments, int) {
     bool quiet = std::wstring(arguments).find(L"--ensure") != std::wstring::npos;
     bool rescan = std::wstring(arguments).find(L"--rescan") != std::wstring::npos;
-    if (std::wstring(arguments) == L"--self-test") {
+    if (setup_self_test_request(arguments)) {
         return setup_device_name(0x3923,0x7618,false,0,"") &&
             !setup_device_name(0x0957,0x0518,false,0,"") &&
             setup_device_name(0x0957,0x0718,false,0,"") &&

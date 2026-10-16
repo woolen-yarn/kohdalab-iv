@@ -29,3 +29,10 @@ inline bool setup_preserves_driver(const std::string& driver) {
     std::transform(service.begin(), service.end(), service.begin(), [](unsigned char c) { return char(std::toupper(c)); });
     return service != "WINUSB";
 }
+
+inline bool setup_self_test_request(std::wstring arguments) {
+    auto first = arguments.find_first_not_of(L" \t\r\n");
+    if (first == std::wstring::npos) return false;
+    auto last = arguments.find_last_not_of(L" \t\r\n");
+    return arguments.substr(first, last - first + 1) == L"--self-test";
+}
