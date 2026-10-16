@@ -84,6 +84,23 @@ The USB setup tool preserves already assigned non-WinUSB drivers; only missing
 drivers or an incomplete existing WinUSB assignment are configured.
 
 
+## Development: legacy instrument drivers
+
+The next **1.3.0-alpha.1** build ports the working Python drivers at `b754cfa^` into the Rust engine. This development work is not included in the v1.2.0 downloads above.
+
+| Instrument | Implemented development connection | Validation |
+| --- | --- | --- |
+| Yokogawa GS210 | Direct USB / GPIB | Existing support retained |
+| Yokogawa 7651 | GPIB, legacy commands | Protocol mock tests; hardware pending |
+| Agilent 34401A | GPIB | Protocol port; hardware pending |
+| Agilent / Keysight 34411A | Direct USB / GPIB | Existing support retained |
+| Keysight 34465A | USBTMC / GPIB | Protocol port; hardware pending; fast NPLC depends on options |
+| ADCMT 7461A | GPIB in SCPI mode; Windows official VISA USB in ADC mode | Protocol mock tests; hardware pending |
+
+7461A direct USB through the native WinUSB helper is not implemented. GS200 has no separate legacy driver to port and is not newly enabled. Device selection and resource discovery are separate; a discovered resource still needs a matching model.
+
+The executables currently have no publisher Authenticode signature. See [Windows code signing and execution warnings](docs/windows_code_signing.md). Setup packaging alone does not remove SmartScreen or Smart App Control warnings.
+
 ## Build and validation
 
 Install the Rust toolchain declared in `next/rust-toolchain.toml`.

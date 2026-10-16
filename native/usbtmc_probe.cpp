@@ -56,7 +56,7 @@ int main(int argc, char **argv) {
             handle.claimed = -1;
             std::cout << "USB IDN: " << response << '\n';
         }
-        if (!matches) throw std::runtime_error("No supported GS210 / 34411A USB device found");
+        if (!matches) throw std::runtime_error("No supported GS210 / 34411A / 34465A USB device found");
         return 0;
     } catch (const std::exception &error) {
         std::cerr << "Error: " << error.what() << '\n';

@@ -59,7 +59,7 @@ nplc_max = 100.0
 [AGILENT_34401A.display_precision]
 reviewed_on = "2026-10-14"
 method = "scpi_range_resolution_query"
-native_enabled = false
+native_enabled = true
 review_status = "manual_reviewed_hardware_query_pending"
 resolution_kind = "configured_measurement_resolution"
 voltage_range_query = "SENS:VOLT:DC:RANG?"
@@ -109,7 +109,7 @@ same_precision_profile_as = "AGILENT_34411A"
 [KEYSIGHT_34465A.display_precision]
 reviewed_on = "2026-10-14"
 method = "scpi_range_resolution_query"
-native_enabled = false
+native_enabled = true
 review_status = "manual_reviewed_options_and_hardware_pending"
 resolution_kind = "configured_measurement_resolution"
 voltage_range_query = "SENS:VOLT:DC:RANG?"
@@ -125,7 +125,7 @@ notes = "Query after READ? for autorange. Queries do not change measurement conf
 [ADCMT_7461A.display_precision]
 reviewed_on = "2026-10-14"
 method = "unknown"
-native_enabled = false
+native_enabled = true
 review_status = "product_spec_reviewed_programming_manual_pending"
 resolution_kind = "integration_dependent_measurement_resolution"
 references = ["https://www.adcmt.com/en/products/dmm/7451"]

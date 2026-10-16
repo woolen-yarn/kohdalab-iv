@@ -2,6 +2,7 @@
 
 //! Deterministic, hardware-aware planning and CSV persistence for IV/VI runs.
 
+use std::collections::BTreeMap;
 use std::fmt::Write as _;
 use std::fs::OpenOptions;
 use std::path::{Path, PathBuf};
@@ -76,6 +77,17 @@ impl Pattern {
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct RunConfig {
+    /// TOML source profile used to validate and quantize this run.
+    ///
+    /// Older saved configurations omit this field and therefore retain the
+    /// original GS210 behaviour.
+    #[serde(default = "default_source_model")]
+    pub source_model: String,
+    /// TOML meter profile used to validate NPLC and input compliance.
+    /// Older saved configurations omit this field and therefore retain the
+    /// original 34411A behaviour.
+    #[serde(default = "default_meter_model")]
+    pub meter_model: String,
     pub mode: Mode,
     pub pattern: Pattern,
     /// Start target, in SI units (V for IV and A for VI).
@@ -100,9 +112,19 @@ pub struct RunConfig {
     pub ramp_wait_s: f64,
 }
 
+fn default_source_model() -> String {
+    "YOKOGAWA_GS210".into()
+}
+
+fn default_meter_model() -> String {
+    "AGILENT_34411A".into()
+}
+
 impl Default for RunConfig {
     fn default() -> Self {
         Self {
+            source_model: default_source_model(),
+            meter_model: default_meter_model(),
             mode: Mode::Iv,
             pattern: Pattern::ZeroCentered,
             start: -0.001,
@@ -143,8 +165,8 @@ pub struct Plan {
 
 #[derive(Debug, Deserialize)]
 struct Specs {
-    #[serde(rename = "YOKOGAWA_GS210")]
-    gs210: SourceSpec,
+    #[serde(flatten)]
+    sources: BTreeMap<String, SourceSpec>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -158,12 +180,14 @@ struct SourceSpec {
     #[serde(rename = "current_limit_max_A")]
     current_limit_max_a: f64,
     #[serde(rename = "current_limit_resolution_A")]
+    #[serde(default)]
     current_limit_resolution_a: f64,
     #[serde(rename = "voltage_limit_min_V")]
     voltage_limit_min_v: f64,
     #[serde(rename = "voltage_limit_max_V")]
     voltage_limit_max_v: f64,
     #[serde(rename = "voltage_limit_resolution_V")]
+    #[serde(default)]
     voltage_limit_resolution_v: f64,
     voltage_ranges: Vec<RangeSpec>,
     current_ranges: Vec<RangeSpec>,
@@ -184,25 +208,57 @@ struct RangeSpec {
 
 #[derive(Debug, Deserialize)]
 struct MeterSpecs {
-    #[serde(rename = "AGILENT_34411A")]
-    dmm34411a: DmmSpec,
+    #[serde(flatten)]
+    meters: BTreeMap<String, DmmSpec>,
 }
 
 #[derive(Debug, Deserialize)]
 struct DmmSpec {
+    #[serde(default)]
     nplc_values: Vec<f64>,
+    #[serde(rename = "max_input_V")]
+    max_input_v: f64,
+    #[serde(rename = "max_input_A")]
+    max_input_a: f64,
+    nplc_min: Option<f64>,
+    nplc_max: Option<f64>,
 }
 
-fn gs210() -> Result<SourceSpec, String> {
+fn source_specs() -> Result<BTreeMap<String, SourceSpec>, String> {
     toml::from_str::<Specs>(include_str!("../../../specs/sources.toml"))
-        .map(|specs| specs.gs210)
-        .map_err(|error| format!("embedded GS210 specification is invalid: {error}"))
+        .map(|specs| specs.sources)
+        .map_err(|error| format!("embedded source specification is invalid: {error}"))
 }
 
-fn dmm34411a() -> Result<DmmSpec, String> {
+fn meter_specs() -> Result<BTreeMap<String, DmmSpec>, String> {
     toml::from_str::<MeterSpecs>(include_str!("../../../specs/meters.toml"))
-        .map(|specs| specs.dmm34411a)
-        .map_err(|error| format!("embedded 34411A specification is invalid: {error}"))
+        .map(|specs| specs.meters)
+        .map_err(|error| format!("embedded meter specification is invalid: {error}"))
+}
+
+fn source_spec(model: &str) -> Result<SourceSpec, String> {
+    if !matches!(model, "YOKOGAWA_GS210" | "YOKOGAWA_7651") {
+        return Err(format!(
+            "Unsupported source model '{model}'. Supported source models: YOKOGAWA_GS210, YOKOGAWA_7651."
+        ));
+    }
+    source_specs()?
+        .remove(model)
+        .ok_or_else(|| format!("Embedded source profile for {model} is missing."))
+}
+
+fn meter_spec(model: &str) -> Result<DmmSpec, String> {
+    if !matches!(
+        model,
+        "AGILENT_34401A" | "AGILENT_34411A" | "KEYSIGHT_34411A" | "KEYSIGHT_34465A" | "ADCMT_7461A"
+    ) {
+        return Err(format!(
+            "Unsupported meter model '{model}'. Supported meter models: AGILENT_34401A, AGILENT_34411A, KEYSIGHT_34411A, KEYSIGHT_34465A, ADCMT_7461A."
+        ));
+    }
+    meter_specs()?
+        .remove(model)
+        .ok_or_else(|| format!("Embedded meter profile for {model} is missing."))
 }
 
 fn decimal(value: f64, name: &str) -> Result<Decimal, String> {
@@ -295,7 +351,12 @@ fn directions(points: &[Decimal]) -> Vec<String> {
         .collect()
 }
 
-fn select_range(spec: &SourceSpec, mode: Mode, maximum: f64) -> Result<(f64, f64, f64), String> {
+fn select_range(
+    spec: &SourceSpec,
+    model: &str,
+    mode: Mode,
+    maximum: f64,
+) -> Result<(f64, f64, f64), String> {
     let entries = match mode {
         Mode::Iv => &spec.voltage_ranges,
         Mode::Vi => &spec.current_ranges,
@@ -314,7 +375,7 @@ fn select_range(spec: &SourceSpec, mode: Mode, maximum: f64) -> Result<(f64, f64
         })
         .filter(|(_, supported_maximum, _)| maximum <= *supported_maximum + f64::EPSILON)
         .min_by(|left, right| left.1.total_cmp(&right.1))
-        .ok_or_else(|| "source targets exceed the GS210 range.".to_owned())
+        .ok_or_else(|| format!("source targets exceed the {model} range."))
 }
 
 // Accept only floating-point conversion noise, never a meaningful fraction of
@@ -338,6 +399,7 @@ fn aligned_value(value: f64, resolution: f64, label: &str, unit: &str) -> Result
 
 fn quantized_hardware_compliance(
     spec: &SourceSpec,
+    model: &str,
     mode: Mode,
     requested: f64,
 ) -> Result<f64, String> {
@@ -355,7 +417,12 @@ fn quantized_hardware_compliance(
     };
     if requested > maximum {
         return Err(format!(
-            "compliance {requested} exceeds GS210 hardware maximum {maximum}."
+            "compliance {requested} exceeds {model} hardware maximum {maximum}."
+        ));
+    }
+    if !resolution.is_finite() || resolution <= 0.0 {
+        return Err(format!(
+            "{model} has no valid hardware compliance increment for this mode."
         ));
     }
     let requested = requested.max(minimum);
@@ -401,7 +468,12 @@ pub fn prepare_config(config: &RunConfig) -> Result<RunConfig, String> {
         decimal(config.stop, "stop")?;
         config.start.abs().max(config.stop.abs())
     };
-    let (source_range, range_maximum, resolution) = select_range(&gs210()?, config.mode, maximum)?;
+    let source = source_spec(&config.source_model)?;
+    // Validate the meter here as well so UI previews report a bad model before
+    // a run is started. `plan` validates its mode-dependent limits below.
+    meter_spec(&config.meter_model)?;
+    let (source_range, range_maximum, resolution) =
+        select_range(&source, &config.source_model, config.mode, maximum)?;
     let increment = decimal(resolution, "source resolution")?;
     let requested = decimal(config.step, "step")?;
     if requested.is_zero() {
@@ -420,8 +492,18 @@ pub fn prepare_config(config: &RunConfig) -> Result<RunConfig, String> {
         .parse()
         .map_err(|_| "Invalid effective step")?;
     prepared.step = step.copysign(config.step);
-    let ramp = (decimal(source_range, "source range")? / Decimal::from(100_u32) / increment).ceil()
-        * increment;
+    // The 7651 stores a range command *code* (2..6), not an SI range. Use the
+    // selected range maximum for its automatic ramp calculation. GS210 keeps
+    // its established nominal-range calculation unchanged.
+    let automatic_ramp_range = if config.source_model == "YOKOGAWA_7651" {
+        range_maximum
+    } else {
+        source_range
+    };
+    let ramp =
+        (decimal(automatic_ramp_range, "source range")? / Decimal::from(100_u32) / increment)
+            .ceil()
+            * increment;
     prepared.ramp_step = ramp
         .to_string()
         .parse::<f64>()
@@ -431,7 +513,7 @@ pub fn prepare_config(config: &RunConfig) -> Result<RunConfig, String> {
     Ok(prepared)
 }
 
-/// Validate a GS210 + 34411A run and create its deterministic sweep sequence.
+/// Validate a profiled source + meter run and create its deterministic sweep sequence.
 pub fn plan(config: &RunConfig) -> Result<Plan, String> {
     let prepared = prepare_config(config)?;
     let config = &prepared;
@@ -470,17 +552,36 @@ pub fn plan(config: &RunConfig) -> Result<Plan, String> {
             ));
         }
     }
-    let meter = dmm34411a()?;
-    if !meter
-        .nplc_values
-        .iter()
-        .any(|value| (*value - config.nplc).abs() < 1e-12)
-    {
-        return Err(format!("34411A does not support nplc={}.", config.nplc));
+    let meter = meter_spec(&config.meter_model)?;
+    let nplc_allowed = if !meter.nplc_values.is_empty() {
+        meter
+            .nplc_values
+            .iter()
+            .any(|value| (*value - config.nplc).abs() < 1e-12)
+    } else {
+        meter.nplc_min.is_some_and(|minimum| config.nplc >= minimum)
+            && meter.nplc_max.is_some_and(|maximum| config.nplc <= maximum)
+    };
+    if !nplc_allowed {
+        return Err(format!(
+            "{} does not support nplc={}.",
+            config.meter_model, config.nplc
+        ));
+    }
+    let meter_input_limit = match config.mode {
+        Mode::Iv => meter.max_input_a,
+        Mode::Vi => meter.max_input_v,
+    };
+    if config.compliance > meter_input_limit + f64::EPSILON {
+        let unit = if config.mode == Mode::Iv { "A" } else { "V" };
+        return Err(format!(
+            "compliance {} {} exceeds {} meter maximum input {} {}.",
+            config.compliance, unit, config.meter_model, meter_input_limit, unit
+        ));
     }
 
     // Check range and increments before allocating a potentially large sweep.
-    let gs210 = gs210()?;
+    let source = source_spec(&config.source_model)?;
     let maximum = if config.pattern == Pattern::CustomList {
         config
             .custom_points
@@ -490,7 +591,8 @@ pub fn plan(config: &RunConfig) -> Result<Plan, String> {
     } else {
         config.start.abs().max(config.stop.abs())
     };
-    let (source_range, range_maximum, resolution) = select_range(&gs210, config.mode, maximum)?;
+    let (source_range, range_maximum, resolution) =
+        select_range(&source, &config.source_model, config.mode, maximum)?;
     let unit = if config.mode == Mode::Vi { "A" } else { "V" };
     let start = if config.pattern != Pattern::CustomList {
         aligned_value(config.start, resolution, "Start", unit)?
@@ -558,8 +660,8 @@ pub fn plan(config: &RunConfig) -> Result<Plan, String> {
     }
 
     let hard_limit = match config.mode {
-        Mode::Iv => gs210.max_abs_v,
-        Mode::Vi => gs210.max_abs_a,
+        Mode::Iv => source.max_abs_v,
+        Mode::Vi => source.max_abs_a,
     };
     let maximum_target = base_points
         .iter()
@@ -576,8 +678,12 @@ pub fn plan(config: &RunConfig) -> Result<Plan, String> {
             "source target {max_target} exceeds effective limit {effective_limit}."
         ));
     }
-    let hardware_compliance =
-        quantized_hardware_compliance(&gs210, config.mode, config.compliance)?;
+    let hardware_compliance = quantized_hardware_compliance(
+        &source,
+        &config.source_model,
+        config.mode,
+        config.compliance,
+    )?;
 
     let targets = base_points
         .iter()
@@ -971,6 +1077,86 @@ mod tests {
             })
             .is_err()
         );
+    }
+
+    #[test]
+    fn model_profiles_preserve_legacy_defaults_and_accept_reviewed_nplc_rules() {
+        let mut legacy = serde_json::to_value(RunConfig::default()).unwrap();
+        legacy.as_object_mut().unwrap().remove("source_model");
+        legacy.as_object_mut().unwrap().remove("meter_model");
+        let restored: RunConfig = serde_json::from_value(legacy).unwrap();
+        assert_eq!(restored.source_model, "YOKOGAWA_GS210");
+        assert_eq!(restored.meter_model, "AGILENT_34411A");
+        assert!(plan(&restored).is_ok());
+
+        let config = RunConfig {
+            meter_model: "AGILENT_34401A".into(),
+            nplc: 0.02,
+            ..RunConfig::default()
+        };
+        assert!(plan(&config).is_ok());
+
+        let config = RunConfig {
+            meter_model: "ADCMT_7461A".into(),
+            nplc: 2.5,
+            ..RunConfig::default()
+        };
+        assert!(plan(&config).is_ok());
+    }
+
+    #[test]
+    fn model_profiles_reject_unknown_models_invalid_nplc_and_meter_input_compliance() {
+        let config = RunConfig {
+            source_model: "UNKNOWN_SOURCE".into(),
+            ..RunConfig::default()
+        };
+        assert!(
+            prepare_config(&config)
+                .unwrap_err()
+                .contains("Unsupported source model")
+        );
+
+        let config = RunConfig {
+            meter_model: "UNKNOWN_METER".into(),
+            ..RunConfig::default()
+        };
+        assert!(
+            prepare_config(&config)
+                .unwrap_err()
+                .contains("Unsupported meter model")
+        );
+
+        let config = RunConfig {
+            meter_model: "KEYSIGHT_34465A".into(),
+            nplc: 2.0,
+            ..RunConfig::default()
+        };
+        assert!(plan(&config).unwrap_err().contains("does not support nplc"));
+
+        let config = RunConfig {
+            meter_model: "AGILENT_34401A".into(),
+            compliance: 3.1,
+            ..RunConfig::default()
+        };
+        assert!(plan(&config).unwrap_err().contains("meter maximum input"));
+    }
+
+    #[test]
+    fn legacy_7651_range_codes_do_not_inflate_automatic_ramp_steps() {
+        let config = RunConfig {
+            source_model: "YOKOGAWA_7651".into(),
+            pattern: Pattern::Linear,
+            start: 0.0,
+            stop: 0.05,
+            step: 0.001,
+            source_limit: 0.1,
+            ..RunConfig::default()
+        };
+        let prepared = prepare_config(&config).unwrap();
+        // 100 mV range has code 3 but supports 120 mV. Its automatic ramp is
+        // 1% of 120 mV (1.2 mV), rather than 3% (=30 mV).
+        assert_eq!(prepared.ramp_step, 0.0012);
+        assert_eq!(plan(&config).unwrap().source_range, 3.0);
     }
 
     #[test]

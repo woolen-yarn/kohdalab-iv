@@ -587,6 +587,16 @@ impl IvApp {
     }
 
     fn sync(&mut self) {
+        self.settings.config.source_model = if self.settings.source_model == "SIMULATED_SOURCE" {
+            "YOKOGAWA_GS210".into()
+        } else {
+            self.settings.source_model.clone()
+        };
+        self.settings.config.meter_model = if self.settings.meter_model == "SIMULATED_METER" {
+            "AGILENT_34411A".into()
+        } else {
+            self.settings.meter_model.clone()
+        };
         let config_changed = self.settings.config != self.validated_config;
         if config_changed {
             self.preview = iv_core::plan(&self.settings.config).map(|p| p.points.len());
@@ -1137,6 +1147,7 @@ impl IvApp {
         };
         if source {
             self.send(Command::ConnectSource {
+                model: model.clone(),
                 simulation,
                 resource,
             });
@@ -1145,6 +1156,7 @@ impl IvApp {
             });
         } else {
             self.send(Command::ConnectMeter {
+                model: model.clone(),
                 simulation,
                 resource,
             });
@@ -2033,6 +2045,8 @@ impl eframe::App for IvApp {
         {
             self.smoke_started = true;
             self.send(Command::Connect {
+                source_model: self.settings.config.source_model.clone(),
+                meter_model: self.settings.config.meter_model.clone(),
                 simulation: self.settings.simulation,
                 source: self.settings.source.clone(),
                 meter: self.settings.meter.clone(),
@@ -2271,6 +2285,10 @@ fn model_supported(model: &str) -> bool {
     matches!(
         model,
         "YOKOGAWA_GS210"
+            | "YOKOGAWA_7651"
+            | "AGILENT_34401A"
+            | "KEYSIGHT_34465A"
+            | "ADCMT_7461A"
             | "AGILENT_34411A"
             | "KEYSIGHT_34411A"
             | "SIMULATED_SOURCE"
@@ -2502,8 +2520,11 @@ mod tests {
     #[test]
     fn only_implemented_instruments_are_enabled() {
         assert!(model_supported("KEYSIGHT_34411A"));
-        assert!(!model_supported("AGILENT_34401A"));
-        assert!(!model_supported("YOKOGAWA_7651"));
+        assert!(model_supported("AGILENT_34401A"));
+        assert!(model_supported("KEYSIGHT_34465A"));
+        assert!(model_supported("ADCMT_7461A"));
+        assert!(!model_supported("YOKOGAWA_GS200"));
+        assert!(model_supported("YOKOGAWA_7651"));
     }
 
     #[test]

@@ -1,5 +1,12 @@
 # Changelog
 
+## 1.3.0-alpha.1 (unreleased)
+
+- Port legacy 7651, 34401A, 34465A and 7461A model protocols from Python into the Rust engine; physical validation remains pending.
+- Select model-specific range, compliance, NPLC, identity and safe shutdown behavior in GUI, CLI and Notebook control.
+- Add 34465A USBTMC enumeration/setup, and ADCMT USB ADC-language reads via official VISA without replacing vendor drivers.
+- Document unsigned Windows release limitations and publisher signing requirements.
+
 ## 1.2.0 (2026-10-16)
 
 - Add a graphical Windows Setup.exe, shared desktop/Start-menu shortcuts and Windows Installed apps registration, while keeping portable distribution.
