@@ -14,17 +14,17 @@ use std::sync::{
 };
 use std::time::{Duration, Instant};
 
-const BG: Color32 = Color32::from_rgb(9, 14, 20);
-const PANEL: Color32 = Color32::from_rgb(15, 22, 31);
-const INPUT: Color32 = Color32::from_rgb(11, 18, 27);
-const BUTTON: Color32 = Color32::from_rgb(25, 36, 49);
-const BORDER: Color32 = Color32::from_rgb(43, 59, 76);
-const TEXT: Color32 = Color32::from_rgb(228, 235, 244);
+const BG: Color32 = Color32::from_rgb(18, 19, 23);
+const PANEL: Color32 = Color32::from_rgb(26, 27, 32);
+const INPUT: Color32 = Color32::from_rgb(20, 21, 25);
+const BUTTON: Color32 = Color32::from_rgb(45, 46, 53);
+const BORDER: Color32 = Color32::from_rgb(56, 58, 67);
+const TEXT: Color32 = Color32::from_rgb(235, 236, 241);
 const BLUE: Color32 = Color32::from_rgb(102, 174, 255);
 const ORANGE: Color32 = Color32::from_rgb(245, 183, 82);
 const PURPLE: Color32 = Color32::from_rgb(179, 155, 248);
 const TEAL: Color32 = Color32::from_rgb(63, 215, 194);
-const MUTED: Color32 = Color32::from_rgb(139, 156, 175);
+const MUTED: Color32 = Color32::from_rgb(160, 163, 176);
 const RED: Color32 = Color32::from_rgb(255, 123, 130);
 const SOURCE_MODELS: &[&str] = &["YOKOGAWA_GS210", "YOKOGAWA_7651", "SIMULATED_SOURCE"];
 const METER_MODELS: &[&str] = &[
@@ -95,40 +95,43 @@ fn save_settings(settings: &Settings, path: &Path) -> Result<(), String> {
     std::fs::write(path, bytes).map_err(|e| e.to_string())
 }
 
-// Draw a compact group box with its title interrupting the top border, as in
-// the original Qt interface. The frame contributes its real measured height.
+// Preserve the original density while placing headings inside quiet cards.
 fn section(ui: &mut egui::Ui, title: &str, add: impl FnOnce(&mut egui::Ui)) {
-    ui.add_space(10.0);
+    let nested = matches!(title, "Output" | "Run");
+    ui.add_space(4.0);
     let frame = egui::Frame::new()
-        .fill(PANEL)
-        .corner_radius(4)
-        .stroke(Stroke::new(1.0_f32, BORDER))
+        .fill(if nested { Color32::TRANSPARENT } else { PANEL })
+        .corner_radius(10)
+        .stroke(if nested {
+            Stroke::NONE
+        } else {
+            Stroke::new(1.0_f32, BORDER)
+        })
         .inner_margin(egui::Margin {
-            left: 10,
-            right: 10,
-            top: 14,
-            bottom: 12,
+            left: if nested { 4 } else { 10 },
+            right: if nested { 4 } else { 10 },
+            top: if nested { 22 } else { 24 },
+            bottom: if nested { 2 } else { 6 },
         })
         .show(ui, |ui| {
             ui.set_min_width(ui.available_width());
             add(ui);
         });
-    let galley = ui
-        .painter()
-        .layout_no_wrap(title.into(), egui::FontId::proportional(12.0), TEXT);
-    let position = frame.response.rect.left_top() + Vec2::new(12.0, -7.0);
-    let background = egui::Rect::from_min_size(
-        position - Vec2::new(4.0, 0.0),
-        galley.size() + Vec2::new(8.0, 0.0),
+    ui.painter().text(
+        frame.response.rect.left_top() + Vec2::new(if nested { 4.0 } else { 10.0 }, 6.0),
+        egui::Align2::LEFT_TOP,
+        title,
+        egui::FontId::proportional(13.0),
+        TEXT,
     );
-    ui.painter().rect_filled(background, 0, BG);
-    ui.painter().galley(position, galley, TEXT);
 }
 
 fn button(ui: &mut egui::Ui, text: &str, width: f32, enabled: bool) -> egui::Response {
     ui.add_enabled(
         enabled,
-        egui::Button::new(text).min_size(Vec2::new(width, 24.0)),
+        egui::Button::new(text)
+            .fill(BUTTON)
+            .min_size(Vec2::new(width, 24.0)),
     )
 }
 
@@ -139,8 +142,79 @@ fn form_label(ui: &mut egui::Ui, text: &str, width: f32) {
         egui::Align2::RIGHT_CENTER,
         text,
         egui::FontId::proportional(12.0),
-        TEXT,
+        MUTED,
     );
+}
+
+// Keep paths and resource identities readable at rest; preserve full manual editing.
+fn compact_field(
+    ui: &mut egui::Ui,
+    salt: impl std::hash::Hash,
+    value: &mut String,
+    width: f32,
+    summary: String,
+) {
+    let id = ui.make_persistent_id(salt);
+    let editing = ui
+        .ctx()
+        .data_mut(|data| data.get_temp::<bool>(id).unwrap_or(false));
+    if editing {
+        let response = ui.add_sized(
+            [width, 24.0],
+            egui::TextEdit::singleline(value)
+                .id(id)
+                .margin(egui::Margin::symmetric(5, 4)),
+        );
+        if !response.has_focus() && !response.lost_focus() {
+            response.request_focus();
+        }
+        if response.lost_focus() {
+            ui.ctx().data_mut(|data| data.insert_temp(id, false));
+        }
+        response.on_hover_text(value.as_str());
+    } else {
+        let response = ui.add_sized(
+            [width, 24.0],
+            egui::Button::new(RichText::new(summary).color(TEXT))
+                .fill(INPUT)
+                .stroke(Stroke::new(0.7_f32, BORDER))
+                .wrap_mode(egui::TextWrapMode::Truncate),
+        );
+        if response.clicked() {
+            ui.ctx().data_mut(|data| data.insert_temp(id, true));
+            ui.ctx().request_repaint();
+        }
+        response.on_hover_text(format!("{value}\nClick to edit the full value."));
+    }
+}
+
+fn path_summary(value: &str) -> String {
+    let trimmed = value.trim_end_matches(['/', '\\']);
+    match trimmed.rsplit_once(['/', '\\']) {
+        Some((_, tail)) if !tail.is_empty() => format!("…/{tail}"),
+        _ => value.to_owned(),
+    }
+}
+
+fn resource_summary(value: &str) -> String {
+    let parts: Vec<_> = value.split("::").collect();
+    if value.starts_with("GPIB") && parts.len() >= 2 {
+        format!("GPIB · {}", parts[1])
+    } else if value.starts_with("USB") && parts.len() >= 4 {
+        format!("USB · {}", parts[3])
+    } else {
+        value.to_owned()
+    }
+}
+
+fn state_badge(ui: &mut egui::Ui, text: &str, color: Color32) {
+    egui::Frame::new()
+        .fill(color.gamma_multiply(0.12))
+        .corner_radius(4)
+        .inner_margin(egui::Margin::symmetric(4, 1))
+        .show(ui, |ui| {
+            ui.label(RichText::new(text).size(9.0).color(color).strong());
+        });
 }
 
 fn fmt_quantity(value: f64, unit: &str) -> String {
@@ -726,7 +800,7 @@ impl IvApp {
                 let rect = ui.available_rect_before_wrap();
                 let toggle = egui::Rect::from_min_max(
                     egui::pos2(rect.right() - 24.0, rect.top()),
-                    rect.right_bottom(),
+                    egui::pos2(rect.right(), rect.top() + 28.0),
                 );
                 if self.left_visible {
                     let content = egui::Rect::from_min_max(
@@ -770,11 +844,14 @@ impl IvApp {
             ui.add_enabled_ui(enabled, |ui| {
                 ui.horizontal(|ui| {
                     let field_width = (ui.available_width() - 92.0).max(80.0);
-                    ui.add(
-                        egui::TextEdit::singleline(&mut self.config_path)
-                            .desired_width(field_width),
-                    )
-                    .on_hover_text(&self.config_path);
+                    let summary = path_summary(&self.config_path);
+                    compact_field(
+                        ui,
+                        "config_path",
+                        &mut self.config_path,
+                        field_width,
+                        summary,
+                    );
                     if button(ui, "Browse", 70.0, true).clicked()
                         && let Some(path) = rfd::FileDialog::new()
                             .set_title("Configuration file")
@@ -915,10 +992,14 @@ impl IvApp {
                 .color(if running { BLUE } else { MUTED }),
             );
             if source {
-                ui.label(
-                    RichText::new(format!("Out {}", self.state.output.to_lowercase()))
-                        .size(9.0)
-                        .color(MUTED),
+                state_badge(
+                    ui,
+                    &format!("Output {}", self.state.output.to_lowercase()),
+                    if self.state.output == "Off" {
+                        MUTED
+                    } else {
+                        ORANGE
+                    },
                 );
             }
         });
@@ -1075,6 +1156,17 @@ impl IvApp {
             } else {
                 self.state.meter_connected
             };
+            ui.painter().text(
+                ui.max_rect().right_top() + Vec2::new(-2.0, -18.0),
+                egui::Align2::RIGHT_TOP,
+                if connected {
+                    "Connected"
+                } else {
+                    "Disconnected"
+                },
+                egui::FontId::proportional(10.0),
+                if connected { TEAL } else { MUTED },
+            );
             let idle = !self.busy();
             let width = (ui.available_width() - 65.0).max(140.0);
             egui::Grid::new(("instrument", source))
@@ -1184,12 +1276,14 @@ impl IvApp {
             ui.spacing_mut().button_padding.x = 3.0;
             ui.spacing_mut().icon_width = 14.0;
             ui.spacing_mut().icon_spacing = 0.0;
-            ui.add(
-                egui::TextEdit::singleline(selection)
-                    .margin(egui::Margin::symmetric(2, 3))
-                    .desired_width((width - 28.0).max(30.0)),
-            )
-            .on_hover_text(selection.as_str());
+            let summary = resource_summary(selection);
+            compact_field(
+                ui,
+                ("resource_edit", source),
+                selection,
+                (width - 28.0).max(30.0),
+                summary,
+            );
             egui::ComboBox::from_id_salt(("resources", source))
                 .width(20.0)
                 .selected_text("")
@@ -1274,7 +1368,7 @@ impl IvApp {
                 }
                 form_label(ui, "Sweep", 45.0);
                 egui::ComboBox::from_id_salt("pattern")
-                    .width(width.min(150.0))
+                    .width(width)
                     .selected_text(pattern_name(self.settings.config.pattern))
                     .show_ui(ui, |ui| {
                         ui.set_min_width(230.0);
@@ -1344,12 +1438,14 @@ impl IvApp {
                             .show(ui, |ui| {
                                 form_label(ui, "Directory", 54.0);
                                 ui.horizontal(|ui| {
-                                    ui.add(
-                                        egui::TextEdit::singleline(&mut self.settings.output_dir)
-                                            .margin(egui::Margin::symmetric(3, 3))
-                                            .desired_width((width - 118.0).max(35.0)),
-                                    )
-                                    .on_hover_text(&self.settings.output_dir);
+                                    let summary = path_summary(&self.settings.output_dir);
+                                    compact_field(
+                                        ui,
+                                        "output_dir",
+                                        &mut self.settings.output_dir,
+                                        (width - 118.0).max(35.0),
+                                        summary,
+                                    );
                                     if button(ui, "Browse", 104.0, true).clicked()
                                         && let Some(path) = rfd::FileDialog::new()
                                             .set_title("Output directory")
@@ -1459,13 +1555,29 @@ impl IvApp {
     fn run_controls(&mut self, ui: &mut egui::Ui) {
         let width = (ui.available_width() - 16.0) / 3.0;
         ui.horizontal(|ui| {
-            if button(ui, "Start", width, !self.busy() && !self.pending_run)
+            let start_ready = self.state.connected && self.preview.is_ok();
+            let start_button = egui::Button::new(RichText::new("Start").strong())
+                .min_size(Vec2::new(width, 28.0))
+                .fill(if start_ready {
+                    Color32::from_rgb(45, 112, 224)
+                } else {
+                    BUTTON
+                });
+            if ui
+                .add_enabled(!self.busy() && !self.pending_run, start_button)
                 .on_disabled_hover_text("Wait for the current operation to finish, or use Stop.")
                 .clicked()
             {
                 self.start_run();
             }
-            if button(ui, "Stop", width, self.active()).clicked() && self.send(Command::Stop) {
+            let stop_button = egui::Button::new(RichText::new("Stop").strong())
+                .min_size(Vec2::new(width, 28.0))
+                .fill(if self.active() {
+                    Color32::from_rgb(137, 53, 63)
+                } else {
+                    BUTTON
+                });
+            if ui.add_enabled(self.active(), stop_button).clicked() && self.send(Command::Stop) {
                 self.report(
                     "Stop requested. Waiting for the current I/O and output cleanup.".into(),
                 );
@@ -1616,7 +1728,7 @@ impl IvApp {
                 ui.horizontal_top(|ui| {
                     if ui
                         .add_sized(
-                            [24.0, height],
+                            [24.0, 28.0],
                             egui::Button::new(if self.details { ">" } else { "<" }),
                         )
                         .clicked()
@@ -1733,7 +1845,7 @@ impl IvApp {
         self.measurement_controls(ui);
         ui.add_space(8.0);
         ui.horizontal(|ui| {
-            ui.label("Status");
+            ui.label(RichText::new("Status").color(MUTED));
             let status = if self.busy() {
                 format!(
                     "{} ({:.0}s)",
@@ -1749,14 +1861,14 @@ impl IvApp {
                     "{}\nOutput: {}",
                     self.state.message, self.state.output
                 ));
-            ui.label("Point");
+            ui.label(RichText::new("Point").color(MUTED));
             ui.label(if self.state.total == 0 {
                 "-".into()
             } else {
                 format!("{}/{}", self.state.points, self.state.total)
             });
             ui.add_space(8.0);
-            ui.label("Resistance");
+            ui.label(RichText::new("Resistance").color(MUTED));
             ui.label(
                 self.state
                     .resistance
@@ -1764,7 +1876,7 @@ impl IvApp {
                     .unwrap_or_else(|| "-".into()),
             );
             ui.add_space(8.0);
-            ui.label("Conductance");
+            ui.label(RichText::new("Conductance").color(MUTED));
             ui.label(
                 self.state
                     .resistance
@@ -1809,7 +1921,7 @@ impl IvApp {
             .id(plot_id)
             .height(graph_height)
             .show_background(false)
-            .grid_spacing(8.0..=12000.0)
+            .grid_spacing(16.0..=12000.0)
             .x_axis_label(format!("{x_name} ({}{x_unit})", x_scale.prefix))
             .y_axis_label(format!("{y_name} ({}{y_unit})", y_scale.prefix))
             .x_axis_formatter(move |mark, _| x_scale.tick(mark.value, mark.step_size))
@@ -1827,7 +1939,7 @@ impl IvApp {
                     display_reading(point.y, resolution[1], y_unit)
                 )
             })
-            .legend(Legend::default())
+            .legend(Legend::default().background_alpha(0.45))
             .allow_boxed_zoom(true)
             .allow_scroll(false)
             .allow_drag(true)
@@ -1907,12 +2019,7 @@ impl eframe::App for IvApp {
         self.detail_panel(ctx);
         egui::CentralPanel::default()
             .frame(egui::Frame::new().fill(BG).inner_margin(8))
-            .show(ctx, |ui| {
-                egui::ScrollArea::vertical()
-                    .id_salt("measurement_view")
-                    .auto_shrink([false, false])
-                    .show(ui, |ui| self.main_view(ui));
-            });
+            .show(ctx, |ui| self.main_view(ui));
         self.timing_dialog(ctx);
         self.start_error_dialog(ctx);
         self.save_dialog(ctx);
@@ -1989,26 +2096,30 @@ fn style(ctx: &egui::Context) {
     ctx.set_theme(egui::ThemePreference::Dark);
     let mut visuals = egui::Visuals::dark();
     visuals.panel_fill = BG;
-    visuals.window_fill = BG;
+    visuals.window_fill = PANEL;
+    visuals.window_corner_radius = egui::CornerRadius::same(12);
+    visuals.window_stroke = Stroke::new(1.0_f32, BORDER);
     visuals.extreme_bg_color = INPUT;
+    visuals.text_edit_bg_color = Some(INPUT);
     visuals.faint_bg_color = PANEL;
     visuals.override_text_color = Some(TEXT);
-    visuals.selection.bg_fill = Color32::from_rgb(37, 93, 143);
+    visuals.selection.bg_fill = Color32::from_rgb(48, 91, 158);
     visuals.selection.stroke = Stroke::new(1.0_f32, TEXT);
     for widget in [
         &mut visuals.widgets.inactive,
         &mut visuals.widgets.hovered,
         &mut visuals.widgets.active,
     ] {
-        widget.bg_stroke = Stroke::new(1.0_f32, Color32::from_rgb(57, 75, 94));
-        widget.corner_radius = egui::CornerRadius::same(3);
+        widget.bg_stroke = Stroke::new(1.0_f32, BORDER);
+        widget.corner_radius = egui::CornerRadius::same(6);
         widget.fg_stroke = Stroke::new(1.0_f32, TEXT);
     }
+    visuals.widgets.inactive.bg_stroke = Stroke::new(0.7_f32, BORDER);
     visuals.widgets.inactive.bg_fill = BUTTON;
-    visuals.widgets.inactive.weak_bg_fill = BUTTON;
-    visuals.widgets.hovered.bg_fill = Color32::from_rgb(37, 52, 69);
-    visuals.widgets.active.bg_fill = Color32::from_rgb(37, 93, 143);
-    visuals.widgets.noninteractive.bg_stroke = Stroke::new(1.0_f32, Color32::from_rgb(48, 65, 83));
+    visuals.widgets.inactive.weak_bg_fill = INPUT;
+    visuals.widgets.hovered.bg_fill = Color32::from_rgb(62, 64, 74);
+    visuals.widgets.active.bg_fill = Color32::from_rgb(48, 91, 158);
+    visuals.widgets.noninteractive.bg_stroke = Stroke::new(1.0_f32, BORDER);
     ctx.set_visuals(visuals);
     ctx.style_mut(|style| {
         style.spacing.item_spacing = Vec2::new(8.0, 4.0);
@@ -2086,7 +2197,7 @@ fn quantity(
         let mut display = *value / scale;
         if ui
             .add_sized(
-                [(width - 68.0).max(65.0), 24.0],
+                [(width - 54.0 - ui.spacing().item_spacing.x).max(65.0), 24.0],
                 egui::DragValue::new(&mut display)
                     .range(if nonnegative {
                         0.0..=f64::MAX

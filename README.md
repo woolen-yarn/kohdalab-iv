@@ -4,7 +4,12 @@ A Rust desktop for DC I-V and V-I measurements with GS210 and 34411A over direct
 USB or USB-GPIB. The three-column interface keeps setup on the left, measurement
 and the I-V graph in the center, and detailed values/logs on the right.
 
-## Native version: 1.0.1
+## Native version: 1.1.0
+
+The refreshed charcoal interface preserves the original three-column layout,
+with aligned sweep controls, distinct inputs and actions, readable path/resource
+summaries and explicit instrument connection/output states. Data and logs remain
+visible together on the right.
 
 Config stays at the top of the left panel. Source and Meter each contain a compact
 resolution-aware readout, zero-centered level bar and filled time-history trend,
@@ -23,7 +28,7 @@ separate processes with their own licenses and OS boundaries.
 
 ## Published portable downloads
 
-The current published release is **v1.0.1**.
+The current published release is **v1.1.0**.
 
 Run uses **Start / Stop / Save**. Measurements are still saved automatically;
 Save exports a complete CSV copy and its run metadata without overwriting data.
@@ -34,12 +39,12 @@ and invalid Start requests explain the problem in an English dialog.
 
 | Platform | Kohdalab | Personal mirror |
 | --- | --- | --- |
-| macOS Apple Silicon | [Mac portable](https://github.com/Kohdalab/kohdalab-iv/releases/download/portable-v1.0.1/kohdalab-iv-1.0.1-macos-arm64-portable.zip) | [Mac portable](https://github.com/woolen-yarn/kohdalab-iv/releases/download/portable-v1.0.1/kohdalab-iv-1.0.1-macos-arm64-portable.zip) |
-| Windows x64 | [Windows portable](https://github.com/Kohdalab/kohdalab-iv/releases/download/portable-v1.0.1/kohdalab-iv-1.0.1-windows-x64-portable.zip) | [Windows portable](https://github.com/woolen-yarn/kohdalab-iv/releases/download/portable-v1.0.1/kohdalab-iv-1.0.1-windows-x64-portable.zip) |
+| macOS Apple Silicon | [Mac portable](https://github.com/Kohdalab/kohdalab-iv/releases/download/portable-v1.1.0/kohdalab-iv-1.1.0-macos-arm64-portable.zip) | [Mac portable](https://github.com/woolen-yarn/kohdalab-iv/releases/download/portable-v1.1.0/kohdalab-iv-1.1.0-macos-arm64-portable.zip) |
+| Windows x64 | [Windows portable](https://github.com/Kohdalab/kohdalab-iv/releases/download/portable-v1.1.0/kohdalab-iv-1.1.0-windows-x64-portable.zip) | [Windows portable](https://github.com/woolen-yarn/kohdalab-iv/releases/download/portable-v1.1.0/kohdalab-iv-1.1.0-windows-x64-portable.zip) |
 
-[Source build kit (Kohdalab)](https://github.com/Kohdalab/kohdalab-iv/releases/download/portable-v1.0.1/kohdalab-iv-1.0.1-build-kit.zip) ·
-[Source build kit (personal)](https://github.com/woolen-yarn/kohdalab-iv/releases/download/portable-v1.0.1/kohdalab-iv-1.0.1-build-kit.zip) ·
-[SHA-256 checksums](https://github.com/Kohdalab/kohdalab-iv/releases/download/portable-v1.0.1/SHA256SUMS.txt)
+[Source build kit (Kohdalab)](https://github.com/Kohdalab/kohdalab-iv/releases/download/portable-v1.1.0/kohdalab-iv-1.1.0-build-kit.zip) ·
+[Source build kit (personal)](https://github.com/woolen-yarn/kohdalab-iv/releases/download/portable-v1.1.0/kohdalab-iv-1.1.0-build-kit.zip) ·
+[SHA-256 checksums](https://github.com/Kohdalab/kohdalab-iv/releases/download/portable-v1.1.0/SHA256SUMS.txt)
 
 Extract the whole ZIP. Mac: open `KohdaLab IV Next.app`. On Windows, double-click
 `Install-Application.cmd`, approve the Windows administrator prompt, then use
