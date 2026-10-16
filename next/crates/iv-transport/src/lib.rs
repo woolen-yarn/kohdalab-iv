@@ -6,6 +6,9 @@
 
 #![forbid(unsafe_code)]
 
+mod instruments;
+#[cfg(all(test, unix))]
+mod legacy_models;
 use fs2::FileExt;
 use serde::{Deserialize, Serialize};
 use std::fs::{self, File, OpenOptions};
@@ -336,6 +339,9 @@ pub fn list_resources(paths: &HelperPaths) -> Result<Vec<ResourceInfo>, String> 
 pub struct DevicePair {
     pub source_identity: String,
     pub meter_identity: String,
+    pub source_model: String,
+    pub meter_model: String,
+    meter_discard: bool,
     paths: HelperPaths,
     source_kind: Option<ResourceKind>,
     meter_kind: Option<ResourceKind>,
@@ -357,6 +363,9 @@ impl DevicePair {
         Self {
             source_identity: String::new(),
             meter_identity: String::new(),
+            source_model: instruments::default_model(Role::Source).into(),
+            meter_model: instruments::default_model(Role::Meter).into(),
+            meter_discard: false,
             paths: paths.clone(),
             source_kind: None,
             meter_kind: None,
@@ -382,7 +391,20 @@ impl DevicePair {
 
     /// Connects one role, validating its identity before it becomes usable.
     pub fn connect(&mut self, role: Role, resource: &str) -> Result<(), String> {
+        self.connect_model(role, resource, instruments::default_model(role))
+    }
+
+    pub fn connect_model(&mut self, role: Role, resource: &str, model: &str) -> Result<(), String> {
+        if !instruments::valid_model(role, model) {
+            return Err(format!("Unsupported model: {model}"));
+        }
+        if self.is_connected(role) && self.model(role) != model {
+            return Err("Disconnect before changing instrument model.".into());
+        }
         let kind = preferred_kind(&self.paths, resource)?;
+        if model == "ADCMT_7461A" && matches!(kind, ResourceKind::Usb { .. }) {
+            return Err("ADCMT 7461A USB requires the official Windows 64-bit VISA driver/runtime and a VISA USB resource. Native WinUSB ADCMT USB is not implemented; GPIB is available.".into());
+        }
         if let Some(current) = self.kind_option(role) {
             if current.same_physical(&kind) {
                 return Ok(());
@@ -423,8 +445,8 @@ impl DevicePair {
         } else {
             self.open_single_endpoint(&kind)?
         };
-        let identity = match query_endpoint(&endpoint, "*IDN?\n").and_then(|id| {
-            verify_identity(role, &id)?;
+        let identity = match identify_endpoint(&endpoint, model).and_then(|id| {
+            instruments::verify_model(role, model, &id)?;
             Ok(id)
         }) {
             Ok(identity) => identity,
@@ -455,11 +477,14 @@ impl DevicePair {
         match role {
             Role::Source => {
                 self.source_identity = identity;
+                self.source_model = model.into();
                 self.source_kind = Some(kind);
                 self.source = Some(endpoint);
             }
             Role::Meter => {
                 self.meter_identity = identity;
+                self.meter_model = model.into();
+                self.meter_discard = model == "ADCMT_7461A";
                 self.meter_kind = Some(kind);
                 self.meter = Some(endpoint);
             }
@@ -474,6 +499,31 @@ impl DevicePair {
         let Some(endpoint) = self.endpoint_option(role).cloned() else {
             return Ok(());
         };
+        if role == Role::Meter && self.meter_model == "ADCMT_7461A" {
+            let mut session = lock_session(&endpoint.session)?;
+            session.request(
+                "CLEAR",
+                endpoint.address,
+                2_000,
+                &[],
+                Duration::from_secs(2),
+            )?;
+            let stop = if self.meter_usb() { "H0\n" } else { ":ABORt\n" };
+            session.request(
+                "WRITE",
+                endpoint.address,
+                2_000,
+                stop.as_bytes(),
+                Duration::from_secs(2),
+            )?;
+            session.request(
+                "WRITE",
+                endpoint.address,
+                2_000,
+                b"*CLS\n",
+                Duration::from_secs(2),
+            )?;
+        }
         if let Err(error) = lock_session(&endpoint.session).and_then(|mut session| {
             session.request(
                 "LOCAL",
@@ -549,18 +599,119 @@ impl DevicePair {
         result
     }
 
+    pub fn model(&self, role: Role) -> &str {
+        match role {
+            Role::Source => &self.source_model,
+            Role::Meter => &self.meter_model,
+        }
+    }
+
+    fn meter_usb(&self) -> bool {
+        self.meter_kind.as_ref().is_some_and(|kind| match kind {
+            ResourceKind::Usb { .. } => true,
+            ResourceKind::Visa { native, .. } => {
+                matches!(native.as_ref(), ResourceKind::Usb { .. })
+            }
+            _ => false,
+        })
+    }
+
     pub fn write(&mut self, role: Role, command: &str) -> Result<(), String> {
         self.ensure_usable()?;
-        let terminated = format!("{}\n", command.trim_end_matches(['\r', '\n']));
-        self.endpoint(role)?
-            .request("WRITE", &terminated)
-            .map(|_| ())
+        let commands = if role == Role::Source && self.source_model == "YOKOGAWA_7651" {
+            instruments::source_write(command)?.into_iter().collect()
+        } else if role == Role::Meter && self.meter_model == "ADCMT_7461A" {
+            instruments::adc_configuration(command, self.meter_usb())?
+                .unwrap_or_else(|| vec![command.into()])
+        } else if role == Role::Meter
+            && self.meter_model == "AGILENT_34401A"
+            && command.to_ascii_uppercase().contains(":ZERO:AUTO ")
+        {
+            vec![]
+        } else {
+            vec![command.into()]
+        };
+        for command in commands {
+            let terminated = format!("{}\n", command.trim_end_matches(['\r', '\n']));
+            self.endpoint(role)?.request("WRITE", &terminated)?;
+        }
+        if role == Role::Source
+            && command.to_ascii_uppercase().contains("SOUR:LEV:FIX ")
+            && self.meter_model == "ADCMT_7461A"
+        {
+            self.meter_discard = true;
+        }
+        Ok(())
     }
 
     pub fn query(&mut self, role: Role, command: &str) -> Result<String, String> {
         self.ensure_usable()?;
+        let canonical = command.trim().trim_start_matches(':').to_ascii_uppercase();
+        let endpoint = self.endpoint(role)?.clone();
+        if role == Role::Source && self.source_model == "YOKOGAWA_7651" {
+            return match canonical.as_str() {
+                "*IDN?" => identify_endpoint(&endpoint, &self.source_model),
+                "SOUR:FUNC?" => {
+                    let panel = legacy_panel(&endpoint)?;
+                    match instruments::panel_value(&panel, b'F')?.as_str() {
+                        "1" => Ok("VOLT".into()),
+                        "5" => Ok("CURR".into()),
+                        _ => Err("Unsupported 7651 source function".into()),
+                    }
+                }
+                "SOUR:RANG?" => instruments::panel_value(&legacy_panel(&endpoint)?, b'R'),
+                "SOUR:LEV?" | "SOUR:LEV:FIX?" | "SOUR:LEV:AUTO?" => {
+                    instruments::numeric_reading(&endpoint.request("QUERY", "OD;E\n")?)
+                }
+                "OUTP?" => Ok(
+                    if instruments::legacy_output(&endpoint.request("QUERY", "OC;E\n")?)? {
+                        "1"
+                    } else {
+                        "0"
+                    }
+                    .into(),
+                ),
+                "SYST:ERR?" => {
+                    let reply = endpoint.request("QUERY", "OC;E\n")?;
+                    let status = instruments::legacy_status(&reply)?;
+                    Ok(if status & 4 != 0 {
+                        "1,7651 command error"
+                    } else {
+                        "0,No error"
+                    }
+                    .into())
+                }
+                _ => Err(format!("Unsupported internal 7651 query: {command}")),
+            };
+        }
+        if role == Role::Meter && self.meter_model == "ADCMT_7461A" {
+            if canonical == "READ?" {
+                let usb = self.meter_usb();
+                let read = || -> Result<String, String> {
+                    if usb {
+                        thread::sleep(Duration::from_millis(20));
+                        instruments::numeric_reading(&endpoint.request("READ", "")?)
+                    } else {
+                        instruments::numeric_reading(&endpoint.request("QUERY", "READ?\n")?)
+                    }
+                };
+                if self.meter_discard {
+                    read()?;
+                    self.meter_discard = false;
+                }
+                return read();
+            }
+            if canonical == "SYST:ERR?" {
+                if self.meter_usb() {
+                    endpoint.request("WRITE", "ERR?\n")?;
+                    thread::sleep(Duration::from_millis(20));
+                    return endpoint.request("READ", "");
+                }
+                return endpoint.request("QUERY", ":SYSTem:ERRor?\n");
+            }
+        }
         let terminated = format!("{}\n", command.trim_end_matches(['\r', '\n']));
-        self.endpoint(role)?.request("QUERY", &terminated)
+        endpoint.request("QUERY", &terminated)
     }
 
     /// Attempts emergency source shutdown. It sends output-off first, verifies
@@ -696,15 +847,43 @@ impl DevicePair {
         let source = self.source.as_ref().ok_or_else(|| {
             "Cannot turn output off because the source is not connected.".to_owned()
         })?;
-        source.request_before("WRITE", ":OUTP OFF\n", deadline)?;
-        let output = source.request_before("QUERY", ":OUTP?\n", deadline)?;
+        let legacy = self.source_model == "YOKOGAWA_7651";
+        source.request_before(
+            "WRITE",
+            if legacy { "O0;E\n" } else { ":OUTP OFF\n" },
+            deadline,
+        )?;
+        let output = source.request_before(
+            "QUERY",
+            if legacy { "OC;E\n" } else { ":OUTP?\n" },
+            deadline,
+        )?;
+        let output = if legacy {
+            if instruments::legacy_output(&output)? {
+                "1"
+            } else {
+                "0"
+            }
+            .to_owned()
+        } else {
+            output
+        };
         if !matches!(output.trim(), "0" | "OFF") {
             return Err(format!(
-                "GS210 did not confirm output off (returned {output:?})."
+                "{} did not confirm output off (returned {output:?}).",
+                self.source_model
             ));
         }
         let zeroing_warning = source
-            .request_before("WRITE", ":SOUR:LEV:FIX 0\n", deadline)
+            .request_before(
+                "WRITE",
+                if legacy {
+                    "S0;E\n"
+                } else {
+                    ":SOUR:LEV:FIX 0\n"
+                },
+                deadline,
+            )
             .err();
         Ok(OutputOffReport {
             output_off_verified: true,
@@ -755,11 +934,17 @@ impl DevicePair {
         {
             meter.session = fresh.clone();
         }
-        let identity = candidate.request_before("QUERY", "*IDN?\n", deadline)?;
-        verify_identity(Role::Source, &identity)?;
+        let identity = if self.source_model == "YOKOGAWA_7651" {
+            // Re-identification shares the same emergency deadline, including all OS lines.
+            let panel = legacy_panel_before(&candidate, deadline)?;
+            panel.lines().next().unwrap_or_default().trim().to_owned()
+        } else {
+            candidate.request_before("QUERY", "*IDN?\n", deadline)?
+        };
+        instruments::verify_model(Role::Source, &self.source_model, &identity)?;
         if normalize_identity(&identity) != normalize_identity(&self.source_identity) {
             return Err(format!(
-                "Recovered source identity {identity:?} does not match the previously validated GS210 {}.",
+                "Recovered source identity {identity:?} does not match the previously validated source {}.",
                 self.source_identity
             ));
         }
@@ -817,8 +1002,34 @@ fn lock_session(
         .map_err(|_| "The instrument transport worker stopped unexpectedly.".into())
 }
 
-fn query_endpoint(endpoint: &Endpoint, command: &str) -> Result<String, String> {
-    endpoint.request("QUERY", command)
+fn legacy_panel_before(endpoint: &Endpoint, deadline: Instant) -> Result<String, String> {
+    let mut panel = endpoint.request_before("QUERY", "OS;E\n", deadline)?;
+    for _ in 0..5 {
+        if panel.lines().any(|line| line.trim() == "END") {
+            return Ok(panel);
+        }
+        if panel.len() > 4096 {
+            return Err("Oversized 7651 panel response".into());
+        }
+        panel.push('\n');
+        panel.push_str(&endpoint.request_before("READ", "", deadline)?);
+    }
+    Err("Incomplete 7651 panel response: END was not received".into())
+}
+fn legacy_panel(endpoint: &Endpoint) -> Result<String, String> {
+    legacy_panel_before(endpoint, Instant::now() + Duration::from_secs(6))
+}
+fn identify_endpoint(endpoint: &Endpoint, model: &str) -> Result<String, String> {
+    if model == "YOKOGAWA_7651" {
+        Ok(legacy_panel(endpoint)?
+            .lines()
+            .next()
+            .unwrap_or_default()
+            .trim()
+            .into())
+    } else {
+        endpoint.request("QUERY", instruments::identity_command(model))
+    }
 }
 
 fn spawn_for_resource(
@@ -994,29 +1205,9 @@ fn parse_hex_u16(value: &str, label: &str) -> Result<u16, String> {
     u16::from_str_radix(value, 16).map_err(|_| format!("Invalid {label}."))
 }
 
+#[cfg(test)]
 fn verify_identity(role: Role, identity: &str) -> Result<(), String> {
-    let upper = identity.to_ascii_uppercase();
-    let matches = match role {
-        Role::Source => upper.contains("YOKOGAWA") && upper.contains("GS210"),
-        Role::Meter => {
-            (upper.contains("AGILENT")
-                || upper.contains("KEYSIGHT")
-                || upper.contains("HEWLETT-PACKARD")
-                || upper.starts_with("HP"))
-                && upper.contains("34411A")
-        }
-    };
-    if matches {
-        Ok(())
-    } else {
-        let expected = match role {
-            Role::Source => "Yokogawa GS210",
-            Role::Meter => "Agilent or Keysight 34411A",
-        };
-        Err(format!(
-            "Selected {expected} returned an unexpected identity: {identity:?}. Check the resource selection before measurement."
-        ))
-    }
+    instruments::verify_model(role, instruments::default_model(role), identity)
 }
 
 fn normalize_identity(identity: &str) -> String {
@@ -1514,7 +1705,7 @@ mod tests {
     // These tests intentionally use the production GPIB adapter lease key, so
     // serialize them without weakening the production cross-process lock.
     #[cfg(unix)]
-    static GPIB_TEST_LOCK: Mutex<()> = Mutex::new(());
+    pub(super) static GPIB_TEST_LOCK: Mutex<()> = Mutex::new(());
 
     #[test]
     fn frame_handles_empty_and_fragment_independent_payloads() {

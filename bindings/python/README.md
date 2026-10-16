@@ -78,3 +78,14 @@ iv-cli --measure --simulate --output example.csv
 After connecting, `iv.set_mode("dc_vi")` selects source current / measure voltage;
 `iv.set_mode("dc_iv")` selects source voltage / measure current. Rust verifies
 output OFF and zero level before switching. Use these calls while idle.
+
+## Development model selection
+
+The 1.3 development engine accepts explicit models (both the client and engine must be the matching development version):
+
+```python
+iv.connect("GPIB0::3::INSTR", "GPIB0::7::INSTR",
+           source_model="YOKOGAWA_7651", meter_model="ADCMT_7461A")
+```
+
+The client carries those models into each run. The engine rejects a run whose model settings disagree with the connected devices. 7461A GPIB uses SCPI; Windows official VISA USB uses ADC commands and stream reads. Native ADCMT USB and a separate GS200 driver are not implemented. Hardware validation of the newly ported models is pending.

@@ -51,7 +51,16 @@ fn run() -> Result<(), String> {
         let paths = iv_transport::HelperPaths::discover()?;
         let source = argument(&args, "--source").ok_or("--source is required")?;
         let meter = argument(&args, "--meter").ok_or("--meter is required")?;
-        let mut pair = iv_transport::DevicePair::open(&paths, &source, &meter)?;
+        let mut pair = iv_transport::DevicePair::new(&paths);
+        let source_model =
+            argument(&args, "--source-model").unwrap_or_else(|| "YOKOGAWA_GS210".into());
+        let meter_model =
+            argument(&args, "--meter-model").unwrap_or_else(|| "AGILENT_34411A".into());
+        pair.connect_model(iv_transport::Role::Source, &source, &source_model)?;
+        if let Err(error) = pair.connect_model(iv_transport::Role::Meter, &meter, &meter_model) {
+            let _ = pair.close();
+            return Err(error);
+        }
         let output = pair.query(iv_transport::Role::Source, ":OUTP?")?;
         println!(
             "{}",
@@ -131,6 +140,8 @@ fn command_measure(args: &[String]) -> Result<(), String> {
     let meter = argument(args, "--meter").unwrap_or_default();
     let path = argument(args, "--output").ok_or("--output CSV path is required")?;
     let mut config = iv_core::RunConfig {
+        source_model: argument(args, "--source-model").unwrap_or_else(|| "YOKOGAWA_GS210".into()),
+        meter_model: argument(args, "--meter-model").unwrap_or_else(|| "AGILENT_34411A".into()),
         pattern: iv_core::Pattern::Linear,
         step: 0.001,
         ..Default::default()
@@ -145,6 +156,8 @@ fn command_measure(args: &[String]) -> Result<(), String> {
     iv_core::plan(&config)?;
     let client = client::Client::start(|| {})?;
     client.send(Command::Connect {
+        source_model: config.source_model.clone(),
+        meter_model: config.meter_model.clone(),
         simulation,
         source,
         meter,

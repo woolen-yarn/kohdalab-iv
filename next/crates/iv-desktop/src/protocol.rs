@@ -14,12 +14,20 @@ pub enum Command {
         simulation: bool,
         source: String,
         meter: String,
+        #[serde(default = "default_source_model")]
+        source_model: String,
+        #[serde(default = "default_meter_model")]
+        meter_model: String,
     },
     ConnectSource {
+        #[serde(default = "default_source_model")]
+        model: String,
         simulation: bool,
         resource: String,
     },
     ConnectMeter {
+        #[serde(default = "default_meter_model")]
+        model: String,
         simulation: bool,
         resource: String,
     },
@@ -103,4 +111,11 @@ impl Default for Snapshot {
 pub enum Event {
     State(Box<Snapshot>),
     Point { run_id: u64, record: Box<Record> },
+}
+
+fn default_source_model() -> String {
+    "YOKOGAWA_GS210".into()
+}
+fn default_meter_model() -> String {
+    "AGILENT_34411A".into()
 }

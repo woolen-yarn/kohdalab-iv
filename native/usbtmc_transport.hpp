@@ -16,7 +16,8 @@
 using Bytes = std::vector<unsigned char>;
 inline constexpr uint16_t vendor = 0x0957, product = 0x0a07;
 inline bool supported_device(uint16_t vid, uint16_t pid) {
-    return (vid == vendor && pid == product) || (vid == 0x0b21 && pid == 0x0039);
+    return (vid == vendor && pid == product) || (vid == 0x0b21 && pid == 0x0039) ||
+           (vid == 0x2a8d && pid == 0x0101);
 }
 inline std::string usb_resource(uint16_t vid, uint16_t pid, const std::string &serial) {
     char prefix[40];

@@ -177,8 +177,8 @@ notes = "Applies to source level, not /MON measurement. :SOUR:LEV? is a programm
 [YOKOGAWA_7651.display_precision]
 reviewed_on = "2026-10-14"
 method = "source_range_table"
-native_enabled = false
-review_status = "datasheet_reviewed_protocol_pending"
+native_enabled = true
+review_status = "legacy_protocol_ported_hardware_validation_pending"
 resolution_kind = "source_setting_increment"
 references = ["https://cdn.tmi.yokogawa.com/7651spec.pdf"]
 reference_sections = ["DC voltage and DC current range tables, page 1"]
