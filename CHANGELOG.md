@@ -1,6 +1,14 @@
 # Changelog
 
-## 1.3.0-alpha.2 (unreleased)
+## 1.3.0-alpha.3
+
+- Prepare public code-signing and privacy policies for a SignPath application; acceptance and signatures remain pending.
+- Add versioned Windows PE product metadata and an unsigned GitHub-hosted source build workflow with metadata/signature reports.
+- Keep upstream signing boundaries explicit and preserve all redistribution sources/licenses.
+- Publish Windows Setup/portable, Mac portable and source kit as a development preview; new model hardware validation remains pending.
+
+
+## Earlier 1.3.0 development changes (alpha.1–alpha.2)
 
 - Reduce sweep precision queries by caching resolution only while the observed range stays unchanged; still check autorange after each conversion and preserve source readback, every-sample compliance and CSV flush.
 - Show readings per point and NPLC beside Run controls. Zero wait never starts an extra live conversion.

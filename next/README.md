@@ -1,6 +1,6 @@
 # KohdaLab IV Native Desktop
 
-Development **1.3.0-alpha.2** ports Yokogawa 7651, Agilent 34401A, Keysight 34465A and ADCMT 7461A from the former Python drivers. Protocol mocks pass; physical validation is pending. GS200 and native ADCMT USB are not added. See the instrument matrix in the source README.
+Development **1.3.0-alpha.3** ports Yokogawa 7651, Agilent 34401A, Keysight 34465A and ADCMT 7461A from the former Python drivers. Protocol mocks pass; physical validation is pending. GS200 and native ADCMT USB are not added. See the instrument matrix in the source README.
 
 Version **1.2.0** adds a Windows Setup.exe installer and per-device official VISA preference
 on Windows.
@@ -356,3 +356,12 @@ checked against the source-pinned SHA-256 before use. Python is only required
 on this build machine, not on an end user's Windows PC.
 
 See `docs/windows_code_signing.md` in the included source for publisher signing and execution warnings. No security controls are disabled by the app or installer.
+
+
+## Code signing policy
+
+This build is unsigned on Windows; SignPath acceptance and production signing
+are pending. Public policies and the unsigned CI build procedure are included
+in `support/SOURCE.zip`: `CODE_SIGNING_POLICY.md`, `PRIVACY.md` and
+`.signpath/README.md`. No SignPath credentials or certificates are bundled.
+See the source README for development and stable download links.

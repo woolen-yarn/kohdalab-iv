@@ -86,7 +86,7 @@ drivers or an incomplete existing WinUSB assignment are configured.
 
 ## Development: legacy instrument drivers
 
-The next **1.3.0-alpha.2** build ports the working Python drivers at `b754cfa^` into the Rust engine. This development work is not included in the v1.2.0 downloads above.
+The next **1.3.0-alpha.3** build ports the working Python drivers at `b754cfa^` into the Rust engine. This development work is not included in the v1.2.0 downloads above.
 
 | Instrument | Implemented development connection | Validation |
 | --- | --- | --- |
@@ -100,6 +100,25 @@ The next **1.3.0-alpha.2** build ports the working Python drivers at `b754cfa^` 
 7461A direct USB through the native WinUSB helper is not implemented. GS200 has no separate legacy driver to port and is not newly enabled. Device selection and resource discovery are separate; a discovered resource still needs a matching model.
 
 The executables currently have no publisher Authenticode signature. See [Windows code signing and execution warnings](docs/windows_code_signing.md). Setup packaging alone does not remove SmartScreen or Smart App Control warnings.
+
+## Code signing policy
+
+Windows artifacts are currently **unsigned**. SignPath Foundation application
+preparation is documented in [Code signing policy](CODE_SIGNING_POLICY.md),
+[Privacy policy](PRIVACY.md) and the [application preparation guide](.signpath/README.md).
+Acceptance and trusted publisher signatures are pending; this is not a sponsorship
+claim. The manual [unsigned build workflow](.github/workflows/release-build.yml)
+rebuilds Windows application/helper files from source on GitHub-hosted runners.
+Upstream GPIB/libwdi signing eligibility and installer signing require review
+before production signing can be enabled.
+
+The latest development download is **v1.3.0-alpha.3**, including legacy protocol
+ports, reduced zero-wait metadata traffic and signing preparation. Additional
+instrument hardware validation is pending. The stable v1.2.0 links above remain
+available.
+
+- [Development downloads (Kohdalab)](https://github.com/Kohdalab/kohdalab-iv/releases/tag/preview-v1.3.0-alpha.3)
+- [Development downloads (personal)](https://github.com/woolen-yarn/kohdalab-iv/releases/tag/preview-v1.3.0-alpha.3)
 
 ## Build and validation
 

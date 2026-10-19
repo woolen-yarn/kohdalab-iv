@@ -1,0 +1,31 @@
+// Template expanded by scripts/windows_version_resource.py or iv-desktop/build.rs.
+// This resource describes KohdaLab-owned executables only. Do not apply it to
+// vendor binaries such as libwdi.dll or its embedded installer.
+1 VERSIONINFO
+ FILEVERSION @FILEVERSION_COMMAS@
+ PRODUCTVERSION @PRODUCTVERSION_COMMAS@
+ FILEFLAGSMASK 0x3fL
+ FILEFLAGS 0x0L
+ FILEOS 0x40004L
+ FILETYPE 0x1L
+ FILESUBTYPE 0x0L
+BEGIN
+    BLOCK "StringFileInfo"
+    BEGIN
+        BLOCK "040904B0"
+        BEGIN
+            VALUE "CompanyName", "@COMPANY_NAME@\0"
+            VALUE "FileDescription", "@FILE_DESCRIPTION@\0"
+            VALUE "FileVersion", "@FILE_VERSION@\0"
+            VALUE "InternalName", "@INTERNAL_NAME@\0"
+            VALUE "LegalCopyright", "Copyright (c) Kohdalab\0"
+            VALUE "OriginalFilename", "@ORIGINAL_FILENAME@\0"
+            VALUE "ProductName", "@PRODUCT_NAME@\0"
+            VALUE "ProductVersion", "@PRODUCT_VERSION@\0"
+        END
+    END
+    BLOCK "VarFileInfo"
+    BEGIN
+        VALUE "Translation", 0x0409, 1200
+    END
+END

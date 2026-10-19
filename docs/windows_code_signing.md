@@ -33,11 +33,11 @@ certificate issued for the publisher identity and a timestamp authority. The
 certificate private key must remain in the signing service or protected
 certificate store; it must never be committed or placed in a portable package.
 
-At minimum, sign and verify:
+After agreeing the component boundaries with the signing provider, sign and verify:
 
 1. `iv-cli.exe`
 2. `kohdalab-iv-next.exe`
-3. every bundled `.exe` and `.dll` helper
+3. the approved first-party helper allowlist (not upstream components under the project identity)
 4. the NSIS-generated `Uninstall.exe`
 5. the final NSIS Setup executable
 
@@ -81,3 +81,28 @@ driver-signature enforcement, or Windows security policy as a workaround.
 The current unsigned release remains usable through the normal Windows
 approval path. Users should obtain it from the official GitHub release and
 verify the published SHA-256 checksum before running it.
+
+
+## SignPath preparation (1.3.0-alpha.3)
+
+Public policy: [Code signing policy](../CODE_SIGNING_POLICY.md). Application
+notes and the proposed first-party PE configuration live in [`.signpath`](../.signpath/README.md).
+The manual `release-build.yml` workflow rebuilds native helpers and Rust binaries
+on GitHub-hosted Windows runners and uploads unsigned artifacts with build-origin
+metadata, PE metadata and signature reports. It has no signing token, no signing
+step and no automatic GitHub release publication.
+
+Rust and project helper executables carry the same `KohdaLab IV` product name
+and Cargo application version. `check_windows_metadata.ps1` rejects missing or
+inconsistent metadata. `libwdi.dll` retains its upstream identity. The GPL GPIB
+adaptation is separately disclosed for Foundation eligibility review. A valid
+redistribution license does not establish eligibility to sign an upstream
+derivative with a Foundation project certificate.
+
+The existing `-RequireSigned` audit checks **all** PE files. Do not enable it
+blindly when the approved distribution intentionally retains unsigned upstream
+files. The eventual signing gate must use the provider-approved allowlist and
+validate publisher identity/timestamps, with explicit upstream exceptions.
+This integration, including the NSIS uninstaller signing hook, is pending.
+Foundation acceptance/MFA/account setup are maintainer actions and cannot be
+claimed by committing configuration files.
