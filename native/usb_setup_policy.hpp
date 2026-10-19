@@ -18,6 +18,7 @@ inline const char* setup_device_name(unsigned vid, unsigned pid, bool composite,
         ids.find("MS_COMP_WINUSB") == std::string::npos) return nullptr;
     if (vid == 0x0b21 && pid == 0x0039) return "YOKOGAWA GS210 USBTMC";
     if (vid == 0x0957 && pid == 0x0a07) return "Agilent 34411A USBTMC";
+    if (vid == 0x2a8d && pid == 0x0101) return "Keysight 34465A USBTMC";
     return nullptr;
 }
 

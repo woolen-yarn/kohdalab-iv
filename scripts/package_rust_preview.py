@@ -56,6 +56,9 @@ def source_archive(path: Path) -> None:
             "CONTRIBUTING.md",
             "CHANGELOG.md",
             "SECURITY.md",
+            "PRIVACY.md",
+            "CODE_SIGNING_POLICY.md",
+            ".signpath",
             "native",
             "scripts",
             "docs",
@@ -136,6 +139,7 @@ def main() -> None:
     parser.add_argument(
         "--binaries-dir", type=Path, help="Override the Cargo release binary directory"
     )
+    parser.add_argument("--native-dir", type=Path, help="Rebuilt Windows helpers with SHA256.json")
     args = parser.parse_args()
     version = tomllib.loads((ROOT / "next/Cargo.toml").read_text())["workspace"][
         "package"
@@ -195,7 +199,7 @@ def main() -> None:
     documentation = support if windows else stage / "support"
     documentation.mkdir(parents=True, exist_ok=True)
     if windows:
-        helpers = ROOT / "portable/windows/native"
+        helpers = args.native_dir or ROOT / "portable/windows/native"
         known = json.loads((helpers / "SHA256.json").read_text())
         for filename in (
             "kohdalab-gpib-helper.exe",

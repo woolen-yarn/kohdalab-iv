@@ -1,9 +1,9 @@
 {
   "kohdalab-gpib-helper.exe": "e9ec215cdcfb1a4e0fa5046527b85ce818a853045b583fc4546d0446ec4e1a1f",
-  "kohdalab-usbtmc-helper.exe": "4571b191b096628af2e49552df5ed516f0948308e7ac1c2aeaad5cb216dd04c1",
+  "kohdalab-usbtmc-helper.exe": "ebba628d3601ac1f391be2b2481775b3fe2a9819ed214c9873c36dd2207ecdba",
   "gpib-probe.exe": "e9ec215cdcfb1a4e0fa5046527b85ce818a853045b583fc4546d0446ec4e1a1f",
-  "usbtmc-probe.exe": "cae934c00c7485defbeb4045df36a4adf6bff5fe6423b58e645b8823e21b3148",
-  "USB-Setup.exe": "2a9fb524293355850df5e5adf047ff8a6d869950da0eab0dcfcb921b69727b72",
-  "libwdi.dll": "48ace7d629c3c63335c4e0f0029458f86188c5910dd55f33cc0bec0b98801c37",
+  "usbtmc-probe.exe": "375808b628a9ea7c280a9d7bf21ae41742c00d982c21b8fb9df15fe2f4b9ce56",
+  "USB-Setup.exe": "8aac3d19b5abbfac078ae1ff3934e9e64562fe1cc4b13a52a38b3b2fffdd6058",
+  "libwdi.dll": "05add1a45ec9dd9a36107e187768bdbe609ebc33221aebcf2c6b9e5c4d85dfe3",
   "kohdalab-visa-helper.exe": "b334cfa26760f81a31d7fbd9e49305381211616500063e72b0bcdd311f223627"
 }

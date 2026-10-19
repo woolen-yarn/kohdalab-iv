@@ -42,7 +42,8 @@ Yokogawa 7651 / GS200, Agilent 34401A, Keysight 34465A and ADCMT 7461A are **not
 
 ## Downloads
 
-The current published release is **v1.2.0**.
+The current stable release is **v1.2.0**. Public downloads are available from
+the personal mirror; Kohdalab links may require organization repository access.
 
 Run uses **Start / Stop / Save**. Measurements are still saved automatically;
 Save exports a complete CSV copy and its run metadata without overwriting data.
@@ -83,6 +84,42 @@ silent retry through a different backend. No manufacturer runtime is bundled.
 The USB setup tool preserves already assigned non-WinUSB drivers; only missing
 drivers or an incomplete existing WinUSB assignment are configured.
 
+
+## Development: legacy instrument drivers
+
+The next **1.3.0-alpha.3** build ports the working Python drivers at `b754cfa^` into the Rust engine. This development work is not included in the v1.2.0 downloads above.
+
+| Instrument | Implemented development connection | Validation |
+| --- | --- | --- |
+| Yokogawa GS210 | Direct USB / GPIB | Existing support retained |
+| Yokogawa 7651 | GPIB, legacy commands | Protocol mock tests; hardware pending |
+| Agilent 34401A | GPIB | Protocol port; hardware pending |
+| Agilent / Keysight 34411A | Direct USB / GPIB | Existing support retained |
+| Keysight 34465A | USBTMC / GPIB | Protocol port; hardware pending; fast NPLC depends on options |
+| ADCMT 7461A | GPIB in SCPI mode; Windows official VISA USB in ADC mode | Protocol mock tests; hardware pending |
+
+7461A direct USB through the native WinUSB helper is not implemented. GS200 has no separate legacy driver to port and is not newly enabled. Device selection and resource discovery are separate; a discovered resource still needs a matching model.
+
+The executables currently have no publisher Authenticode signature. See [Windows code signing and execution warnings](docs/windows_code_signing.md). Setup packaging alone does not remove SmartScreen or Smart App Control warnings.
+
+## Code signing policy
+
+Windows artifacts are currently **unsigned**. SignPath Foundation application
+preparation is documented in [Code signing policy](CODE_SIGNING_POLICY.md),
+[Privacy policy](PRIVACY.md) and the [application preparation guide](.signpath/README.md).
+Acceptance and trusted publisher signatures are pending; this is not a sponsorship
+claim. The manual [unsigned build workflow](.github/workflows/release-build.yml)
+rebuilds Windows application/helper files from source on GitHub-hosted runners.
+Upstream GPIB/libwdi signing eligibility and installer signing require review
+before production signing can be enabled.
+
+The latest development download is **v1.3.0-alpha.3**, including legacy protocol
+ports, reduced zero-wait metadata traffic and signing preparation. Additional
+instrument hardware validation is pending. The stable v1.2.0 links above remain
+available.
+
+- [Development downloads (Kohdalab)](https://github.com/Kohdalab/kohdalab-iv/releases/tag/preview-v1.3.0-alpha.3)
+- [Development downloads (personal)](https://github.com/woolen-yarn/kohdalab-iv/releases/tag/preview-v1.3.0-alpha.3)
 
 ## Build and validation
 

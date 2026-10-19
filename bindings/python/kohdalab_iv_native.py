@@ -133,8 +133,10 @@ class NativeIV:
                     raise TimeoutError("Rust engine response timed out")
                 self._condition.wait(remaining)
 
-    def connect(self, source="", meter="", *, simulation=False, timeout=30):
-        self._send("connect", source=source, meter=meter, simulation=simulation)
+    def connect(self, source="", meter="", *, simulation=False, timeout=30,
+                source_model="YOKOGAWA_GS210", meter_model="AGILENT_34411A"):
+        self._models = {"source_model": source_model, "meter_model": meter_model}
+        self._send("connect", source=source, meter=meter, simulation=simulation, **self._models)
         return self.wait(lambda s: s.get("connected", False), timeout)
 
     def set_mode(self, mode, timeout=20):
@@ -154,6 +156,7 @@ class NativeIV:
     def run(self, path, config=None, *, timeout=120):
         """Execute a sweep and wait for verified terminal state; save via Rust."""
         values = copy.deepcopy(self.default_config)
+        values.update(getattr(self, "_models", {}))
         values.update(config or {})
         previous = self.snapshot.get("run_id", 0)
         self._send("run", path=str(Path(path).resolve()), config=values)

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import argparse
 import copy
 import hashlib
 import json
@@ -18,6 +19,9 @@ def digest(path: Path) -> str:
 
 
 def main() -> None:
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--native-dir", type=Path)
+    args = parser.parse_args()
     root = Path(__file__).resolve().parents[1]
     version = tomllib.loads((root / "next/Cargo.toml").read_text())["workspace"][
         "package"
@@ -30,7 +34,7 @@ def main() -> None:
     )
     name = f"kohdalab-iv-{version}-build-kit"
     destination = root / "next/dist" / f"{name}.zip"
-    native = root / "portable/windows/native"
+    native = args.native_dir or root / "portable/windows/native"
     known = json.loads((native / "SHA256.json").read_text())
     for filename, expected in known.items():
         if digest(native / filename) != expected:
@@ -38,12 +42,14 @@ def main() -> None:
     with ZipFile(source) as original, ZipFile(destination, "w", ZIP_DEFLATED) as kit:
         included = set(original.namelist())
         for entry in original.infolist():
+            if entry.filename == "portable/windows/native/SHA256.json":
+                continue
             metadata = copy.copy(entry)
             metadata.filename = f"{name}/{entry.filename}"
             kit.writestr(metadata, original.read(entry.filename))
         for file in sorted(native.iterdir()):
-            relative = file.relative_to(root).as_posix()
-            if file.is_file() and relative not in included:
+            relative = "portable/windows/native/" + file.name
+            if file.is_file() and (relative not in included or file.name == "SHA256.json"):
                 kit.write(file, f"{name}/{relative}")
         kit.writestr(
             f"{name}/BUILD-README.txt",

@@ -7,11 +7,13 @@ TASK_BUILD="$TASK_ROOT/build/usb-setup"
 TASK_SOURCE="$TASK_ROOT/native/vendor/libwdi"
 TASK_CC="${KOHDALAB_WINDOWS_CC:-gcc}"
 TASK_CXX="${KOHDALAB_WINDOWS_CXX:-g++}"
-TASK_RC="${KOHDALAB_WINDOWS_RC:-windres}"
+TASK_RC="${KOHDALAB_WINDOWS_RC:-${TASK_CC%gcc}windres}"
 TASK_HOST_CC="${KOHDALAB_HOST_CC:-cc}"
+TASK_PYTHON="${KOHDALAB_PYTHON:-python3}"
+TASK_ICON="$TASK_ROOT/next/assets/kohdalab-iv.ico"
 mkdir -p "$TASK_BUILD"
 cp -R "$TASK_SOURCE/libwdi" "$TASK_BUILD/"
-cp "$TASK_SOURCE/config.h" "$TASK_BUILD/"
+cp "$TASK_ROOT/native/libwdi_inbox_config.h" "$TASK_BUILD/config.h"
 cd "$TASK_BUILD/libwdi"
 "$TASK_CC" -O2 -static -s -DUNICODE installer.c -lsetupapi -lnewdev -lole32 -o installer_x64.exe
 "$TASK_HOST_CC" -O2 -I.. embedder.c -o embedder
@@ -22,7 +24,11 @@ cd "$TASK_BUILD/libwdi"
     libwdi.c libwdi_rc.o -lsetupapi -lole32 -lntdll -o ../libwdi.dll \
     -Wl,--out-implib,../libwdi.dll.a
 cd ..
+"$TASK_PYTHON" "$TASK_ROOT/scripts/windows_version_resource.py" \
+    --output USB-Setup.rc --description 'KohdaLab IV USB Setup' \
+    --original-filename USB-Setup.exe --internal-name USB-Setup --icon "$TASK_ICON"
+"$TASK_RC" -O coff -i USB-Setup.rc -o USB-Setup.res.o
 "$TASK_CXX" -std=c++17 -O2 -static -s -municode -mwindows \
     -Ilibwdi "$TASK_ROOT/native/windows_usb_setup.cpp" libwdi.dll.a \
-    -ladvapi32 -lshell32 -lole32 -lcfgmgr32 -o USB-Setup.exe
+    USB-Setup.res.o -ladvapi32 -lshell32 -lole32 -lcfgmgr32 -o USB-Setup.exe
 echo "Built $TASK_BUILD/USB-Setup.exe and libwdi.dll"

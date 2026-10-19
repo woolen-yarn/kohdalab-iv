@@ -1,5 +1,7 @@
 # KohdaLab IV Native Desktop
 
+Development **1.3.0-alpha.3** ports Yokogawa 7651, Agilent 34401A, Keysight 34465A and ADCMT 7461A from the former Python drivers. Protocol mocks pass; physical validation is pending. GS200 and native ADCMT USB are not added. See the instrument matrix in the source README.
+
 Version **1.2.0** adds a Windows Setup.exe installer and per-device official VISA preference
 on Windows.
 
@@ -40,7 +42,7 @@ The Rust desktop includes the KohdaLab IV app icon. It uses the same
 egui and eframe GUI foundation as KohdaLab Camera Native, with a separate Rust
 measurement engine and the established USB and GPIB helper processes.
 
-This desktop supports Yokogawa GS210 and Agilent or Keysight 34411A. It includes
+The published v1.2.0 desktop supports Yokogawa GS210 and Agilent or Keysight 34411A. The development edition additionally supports the models listed above. It includes
 IV and VI modes, linear, round trip, zero centered and custom sweeps, limits,
 settling, averaging, NPLC, streamed CSV, run metadata, and an explicit simulator.
 Hardware accuracy and all firmware variants are not certified by this release.
@@ -70,8 +72,7 @@ The Mac app is ad hoc signed and is not notarized.
    Measurement controls and graph in the center, and log / Field-Value table on
    the right. The tall `<` / `>` buttons collapse either side column.
 2. Choose a Device in each instrument group. For a dry run, select
-   SIMULATED_SOURCE and SIMULATED_METER. Other unimplemented models from the
-   original UI are visible but disabled in this edition.
+   SIMULATED_SOURCE and SIMULATED_METER. Legacy models are enabled in this development edition; physical validation is pending.
 3. For real devices, click Refresh, choose or type each Resource, then use the
    independent Connect buttons or All Connect. Identity checks reject an
    incompatible instrument. Only one GPIB adapter may be attached; both roles
@@ -353,3 +354,14 @@ The pinned NSIS compiler is a build tool only. Its zlib notices and the complete
 installer scripts are included in the build kit. Downloaded tool archives are
 checked against the source-pinned SHA-256 before use. Python is only required
 on this build machine, not on an end user's Windows PC.
+
+See `docs/windows_code_signing.md` in the included source for publisher signing and execution warnings. No security controls are disabled by the app or installer.
+
+
+## Code signing policy
+
+This build is unsigned on Windows; SignPath acceptance and production signing
+are pending. Public policies and the unsigned CI build procedure are included
+in `support/SOURCE.zip`: `CODE_SIGNING_POLICY.md`, `PRIVACY.md` and
+`.signpath/README.md`. No SignPath credentials or certificates are bundled.
+See the source README for development and stable download links.

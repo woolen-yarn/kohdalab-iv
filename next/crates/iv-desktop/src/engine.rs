@@ -275,25 +275,58 @@ pub fn serve() -> Result<(), String> {
                 simulation,
                 source,
                 meter,
+                source_model,
+                meter_model,
             } => {
                 begin_connect(&mut state, &latest);
-                connect_role(&mut pair, &mut state, Role::Source, simulation, &source).and_then(
-                    |()| connect_role(&mut pair, &mut state, Role::Meter, simulation, &meter),
+                connect_role(
+                    &mut pair,
+                    &mut state,
+                    Role::Source,
+                    simulation,
+                    &source,
+                    &source_model,
                 )
+                .and_then(|()| {
+                    connect_role(
+                        &mut pair,
+                        &mut state,
+                        Role::Meter,
+                        simulation,
+                        &meter,
+                        &meter_model,
+                    )
+                })
             }
             Command::ConnectSource {
                 simulation,
                 resource,
+                model,
             } => {
                 begin_connect(&mut state, &latest);
-                connect_role(&mut pair, &mut state, Role::Source, simulation, &resource)
+                connect_role(
+                    &mut pair,
+                    &mut state,
+                    Role::Source,
+                    simulation,
+                    &resource,
+                    &model,
+                )
             }
             Command::ConnectMeter {
                 simulation,
                 resource,
+                model,
             } => {
                 begin_connect(&mut state, &latest);
-                connect_role(&mut pair, &mut state, Role::Meter, simulation, &resource)
+                connect_role(
+                    &mut pair,
+                    &mut state,
+                    Role::Meter,
+                    simulation,
+                    &resource,
+                    &model,
+                )
             }
             Command::DisconnectSource => {
                 disconnect_role(&mut pair, &mut state, Role::Source, &control)
@@ -368,6 +401,15 @@ fn refresh_connections(state: &mut Snapshot) {
     state.simulation = state.source_simulation && state.meter_simulation;
 }
 
+fn model_label(role: Role, model: &str) -> String {
+    let role = if role == Role::Source {
+        "source"
+    } else {
+        "meter"
+    };
+    format!("{role}.{model}")
+}
+
 fn begin_connect(state: &mut Snapshot, latest: &StateFeed) {
     state.phase = "Connecting".into();
     state.message = "Verifying instrument identity…".into();
@@ -382,6 +424,7 @@ fn connect_role(
     role: Role,
     simulation: bool,
     resource: &str,
+    model: &str,
 ) -> Result<(), String> {
     let source = role == Role::Source;
     let connected = if source {
@@ -399,8 +442,26 @@ fn connect_role(
     } else {
         &state.meter_resource
     };
+    let previous_model = if previous_simulation {
+        Some(if source {
+            "SIMULATED_SOURCE"
+        } else {
+            "SIMULATED_METER"
+        })
+    } else {
+        pair.as_ref().map(|device| {
+            if source {
+                device.source_model.as_str()
+            } else {
+                device.meter_model.as_str()
+            }
+        })
+    };
     if connected {
-        if simulation == previous_simulation && (simulation || resource == previous_resource) {
+        if simulation == previous_simulation
+            && previous_model == Some(model)
+            && (simulation || resource == previous_resource)
+        {
             state.phase = "Ready".into();
             state.message = "Instrument already connected.".into();
             return Ok(());
@@ -422,7 +483,7 @@ fn connect_role(
         let device = pair
             .as_mut()
             .ok_or("Instrument transport is unavailable.")?;
-        device.connect(role, resource)?;
+        device.connect_model(role, resource, model)?;
         if source {
             device.source_identity.clone()
         } else {
@@ -451,14 +512,7 @@ fn connect_role(
     }
     refresh_connections(state);
     state.phase = "Ready".into();
-    state.message = format!(
-        "Connected {}: {identity}",
-        if source {
-            "source.gs210"
-        } else {
-            "meter.34411a"
-        }
-    );
+    state.message = format!("Connected {}: {identity}", model_label(role, model));
     Ok(())
 }
 
@@ -793,21 +847,26 @@ fn monitor_reading(
     if !source.is_finite() {
         return Err("Invalid live source level".into());
     }
-    let range = monitor_query(
-        pair,
-        Role::Source,
-        iv_core::source_range_query("YOKOGAWA_GS210")?.ok_or("Source range query unavailable")?,
-        control,
-    )?;
-    let (range_query, resolution_query) = iv_core::meter_display_queries("AGILENT_34411A", mode)?
-        .ok_or("Meter display queries unavailable")?;
-    let meter_range = positive_reading(&monitor_query(pair, Role::Meter, range_query, control)?);
-    let meter_resolution = positive_reading(&monitor_query(
-        pair,
-        Role::Meter,
-        resolution_query,
-        control,
-    )?);
+    // The transport translates this canonical range query for legacy models.
+    let range_query = iv_core::source_range_query(&pair.source_model)?.unwrap_or(":SOUR:RANG?");
+    let range = monitor_query(pair, Role::Source, range_query, control)?;
+    let (meter_range, meter_resolution) = if let Some((range_query, resolution_query)) =
+        iv_core::meter_display_queries(&pair.meter_model, mode)?
+    {
+        (
+            positive_reading(&monitor_query(pair, Role::Meter, range_query, control)?),
+            positive_reading(&monitor_query(
+                pair,
+                Role::Meter,
+                resolution_query,
+                control,
+            )?),
+        )
+    } else {
+        // Protocol support has not been verified for this meter. Do not infer
+        // a range or resolution from a different instrument family.
+        (None, None)
+    };
     let raw_output = monitor_query(pair, Role::Source, ":OUTP?", control)?;
     *output = match raw_output.trim() {
         "0" | "+0" | "OFF" => "Off",
@@ -832,11 +891,12 @@ fn monitor_reading(
     record.source_set = source;
     record.source_readback = Some(source);
     record.meter_value = measured;
-    record.source_resolution = positive_reading(&range).and_then(|r| source_resolution(mode, r));
+    record.source_resolution =
+        positive_reading(&range).and_then(|r| source_resolution(&pair.source_model, mode, r));
     record.meter_range = meter_range;
     record.meter_resolution = meter_resolution;
-    record.source_resource = "source.gs210".into();
-    record.meter_resource = "meter.dmm_34411a".into();
+    record.source_resource = model_label(Role::Source, &pair.source_model);
+    record.meter_resource = model_label(Role::Meter, &pair.meter_model);
     Ok(record)
 }
 
@@ -845,8 +905,8 @@ fn set_level(pair: &mut DevicePair, level: f64) -> Result<(), String> {
 }
 
 // Resolve display precision from the shared, reviewed instrument TOML.
-fn source_resolution(mode: Mode, range: f64) -> Option<f64> {
-    iv_core::source_display_resolution("YOKOGAWA_GS210", mode, range)
+fn source_resolution(model: &str, mode: Mode, range: f64) -> Option<f64> {
+    iv_core::source_display_resolution(model, mode, range)
         .ok()
         .flatten()
 }
@@ -947,6 +1007,32 @@ fn clean_output(
 
 // One owner serializes device I/O. Live samples use the already configured
 // sweep NPLC and never enter the CSV or resistance fit.
+// Resolution is fixed by range + the NPLC/function configured for this run.
+// Still inspect range after EVERY conversion, including each averaged sample.
+// Reconfiguration creates a new cache; never carry idle-monitor precision into a run.
+#[derive(Default)]
+struct MeterResolutionCache {
+    last: Option<(f64, f64)>,
+}
+impl MeterResolutionCache {
+    fn read(
+        &mut self,
+        range: Option<f64>,
+        query: impl FnOnce() -> Result<String, String>,
+    ) -> Result<Option<f64>, String> {
+        if let (Some(range), Some((previous, resolution))) = (range, self.last)
+            && range == previous
+        {
+            return Ok(Some(resolution));
+        }
+        // Invalidate first: failed/unknown metadata must not retain old precision.
+        self.last = None;
+        let resolution = positive_reading(&query()?);
+        self.last = range.zip(resolution);
+        Ok(resolution)
+    }
+}
+
 struct SweepMonitor<'a> {
     config: &'a RunConfig,
     control: &'a Control,
@@ -954,6 +1040,7 @@ struct SweepMonitor<'a> {
     begin: Instant,
     last: Instant,
     source_resolution: Option<f64>,
+    meter_resolution: MeterResolutionCache,
 }
 impl SweepMonitor<'_> {
     fn record(&self, level: f64) -> Record {
@@ -976,7 +1063,7 @@ impl SweepMonitor<'_> {
         publish(self.latest, state);
     }
 
-    fn acquire(&self, pair: Option<&mut DevicePair>, level: f64) -> Result<Record, String> {
+    fn acquire(&mut self, pair: Option<&mut DevicePair>, level: f64) -> Result<Record, String> {
         let mut record = self.record(level);
         if let Some(device) = pair {
             let measured = monitor_query(device, Role::Meter, "READ?", self.control)?;
@@ -997,19 +1084,20 @@ impl SweepMonitor<'_> {
             }
             record.source_readback = Some(readback);
             record.source_resolution = self.source_resolution;
-            let (range, resolution) =
-                iv_core::meter_display_queries("AGILENT_34411A", self.config.mode)?
-                    .ok_or("Reviewed meter display queries are unavailable")?;
-            record.meter_range =
-                positive_reading(&monitor_query(device, Role::Meter, range, self.control)?);
-            record.meter_resolution = positive_reading(&monitor_query(
-                device,
-                Role::Meter,
-                resolution,
-                self.control,
-            )?);
-            record.source_resource = "source.gs210".into();
-            record.meter_resource = "meter.dmm_34411a".into();
+            if let Some((range, resolution)) =
+                iv_core::meter_display_queries(&device.meter_model, self.config.mode)?
+            {
+                record.meter_range =
+                    positive_reading(&monitor_query(device, Role::Meter, range, self.control)?);
+                record.meter_resolution = self.meter_resolution.read(record.meter_range, || {
+                    monitor_query(device, Role::Meter, resolution, self.control)
+                })?;
+            } else {
+                record.meter_range = None;
+                record.meter_resolution = None;
+            }
+            record.source_resource = model_label(Role::Source, &device.source_model);
+            record.meter_resource = model_label(Role::Meter, &device.meter_model);
         }
         Ok(record)
     }
@@ -1021,7 +1109,10 @@ impl SweepMonitor<'_> {
         level: f64,
         state: &mut Snapshot,
     ) -> Result<bool, String> {
-        let end = Instant::now() + Duration::from_secs_f64(seconds.max(0.0));
+        if seconds <= 0.0 {
+            return Ok(!self.control.cancelled());
+        }
+        let end = Instant::now() + Duration::from_secs_f64(seconds);
         // Avoid starting a conversion at the end of a short ramp/settling wait.
         // Budget conservatively for 50 Hz mains, autozero and transport overhead.
         let budget = if pair.is_some() {
@@ -1068,6 +1159,17 @@ fn execute(
         return Err(
             "Use two real instruments or two simulated instruments for a measurement.".into(),
         );
+    }
+    if !state.source_simulation {
+        let device = pair
+            .as_deref()
+            .ok_or("Cannot start: reconnect the source and meter before measuring.")?;
+        if config.source_model != device.source_model || config.meter_model != device.meter_model {
+            return Err(format!(
+                "Selected run models ({}/{}) do not match the connected instruments ({}/{}). Disconnect, choose the matching models, and reconnect before Start.",
+                config.source_model, config.meter_model, device.source_model, device.meter_model
+            ));
+        }
     }
     let requested_config = config;
     let effective_config = iv_core::prepare_config(config)?;
@@ -1126,6 +1228,7 @@ fn execute(
         begin,
         last: Instant::now(),
         source_resolution: None,
+        meter_resolution: MeterResolutionCache::default(),
     };
     let mut display_settings_changes = Vec::new();
     let mut instrument_status_events = Vec::new();
@@ -1138,11 +1241,13 @@ fn execute(
                 planned.source_range,
                 planned.hardware_compliance,
             )?;
-            let range_query = iv_core::source_range_query("YOKOGAWA_GS210")?
-                .ok_or("Reviewed source range query is unavailable")?;
+            // The transport translates this canonical query for models such as
+            // the 7651 that do not use GS210 SCPI directly.
+            let range_query =
+                iv_core::source_range_query(&device.source_model)?.unwrap_or(":SOUR:RANG?");
             let range = device.query(Role::Source, range_query)?;
-            actual_source_resolution =
-                positive_reading(&range).and_then(|range| source_resolution(config.mode, range));
+            actual_source_resolution = positive_reading(&range)
+                .and_then(|range| source_resolution(&device.source_model, config.mode, range));
             live.source_resolution = actual_source_resolution;
             if control.cancelled() {
                 stopped = true;
@@ -1193,7 +1298,10 @@ fn execute(
             }
             let mut record = if let Some(device) = pair.as_deref_mut() {
                 state.message.clear();
-                state.message.push_str("Reading meter…");
+                state.message = format!(
+                    "Reading meter ({} readings per point, NPLC {})…",
+                    config.average_count, config.nplc
+                );
                 publish_progress(latest, state, &mut last_progress);
                 let mut value = 0.0;
                 let mut readings_completed = 0_u32;
@@ -1202,9 +1310,8 @@ fn execute(
                 let mut meter_resolution: Option<f64> = None;
                 let mut meter_range: Option<f64> = None;
                 let mut resolution_known = true;
-                let (range_query, resolution_query) =
-                    iv_core::meter_display_queries("AGILENT_34411A", config.mode)?
-                        .ok_or("Reviewed meter display queries are unavailable")?;
+                let display_queries =
+                    iv_core::meter_display_queries(&device.meter_model, config.mode)?;
                 for _ in 0..config.average_count {
                     if control.cancelled() {
                         stopped = true;
@@ -1234,15 +1341,24 @@ fn execute(
                     }
                     // Query the range/resolution after READ? so autoranging is
                     // reflected. Preserve the coarsest resolution when averaging.
-                    let range = device.query(Role::Meter, range_query)?;
-                    if control.cancelled() {
-                        stopped = true;
-                        break;
-                    }
-                    let resolution = device.query(Role::Meter, resolution_query)?;
-                    let resolution = positive_reading(&resolution);
-                    resolution_known &= resolution.is_some();
-                    let range = positive_reading(&range);
+                    let (range, resolution) =
+                        if let Some((range_query, resolution_query)) = display_queries {
+                            let range = device.query(Role::Meter, range_query)?;
+                            if control.cancelled() {
+                                stopped = true;
+                                break;
+                            }
+                            let range = positive_reading(&range);
+                            let resolution = live
+                                .meter_resolution
+                                .read(range, || device.query(Role::Meter, resolution_query))?;
+                            (range, resolution)
+                        } else {
+                            // A profile without verified display commands can still
+                            // acquire readings, but its precision metadata stays unknown.
+                            (None, None)
+                        };
+                    resolution_known &= resolution.is_some() || display_queries.is_none();
                     if let Some(resolution) = resolution {
                         meter_resolution = Some(meter_resolution.unwrap_or(0.0).max(resolution));
                     }
@@ -1257,8 +1373,8 @@ fn execute(
                     reading.source_resolution = actual_source_resolution;
                     reading.meter_range = range;
                     reading.meter_resolution = resolution;
-                    reading.source_resource = "source.gs210".into();
-                    reading.meter_resource = "meter.dmm_34411a".into();
+                    reading.source_resource = model_label(Role::Source, &device.source_model);
+                    reading.meter_resource = model_label(Role::Meter, &device.meter_model);
                     live.publish(reading, state);
                 }
                 if stopped {
@@ -1285,8 +1401,8 @@ fn execute(
                     None
                 };
                 record.meter_range = meter_range;
-                record.source_resource = "source.gs210".into();
-                record.meter_resource = "meter.dmm_34411a".into();
+                record.source_resource = model_label(Role::Source, &device.source_model);
+                record.meter_resource = model_label(Role::Meter, &device.meter_model);
                 record.compliance = sample_limit_hit || value.abs() >= config.compliance;
                 record
             } else {
@@ -1423,15 +1539,25 @@ mod tests {
     #[test]
     fn gs210_resolution_uses_actual_range_and_rejects_unknown_ranges() {
         assert_eq!(
-            super::source_resolution(iv_core::Mode::Iv, 0.01),
+            super::source_resolution("YOKOGAWA_GS210", iv_core::Mode::Iv, 0.01),
             Some(1e-7)
         );
         assert_eq!(
-            super::source_resolution(iv_core::Mode::Iv, 30.0),
+            super::source_resolution("YOKOGAWA_GS210", iv_core::Mode::Iv, 30.0),
             Some(1e-3)
         );
-        assert_eq!(super::source_resolution(iv_core::Mode::Vi, 0.2), Some(1e-6));
-        assert_eq!(super::source_resolution(iv_core::Mode::Iv, 0.2), None);
+        assert_eq!(
+            super::source_resolution("YOKOGAWA_GS210", iv_core::Mode::Vi, 0.2),
+            Some(1e-6)
+        );
+        assert_eq!(
+            super::source_resolution("YOKOGAWA_GS210", iv_core::Mode::Iv, 0.2),
+            None
+        );
+        assert_eq!(
+            super::source_resolution("YOKOGAWA_7651", iv_core::Mode::Iv, 3.0),
+            Some(1e-6)
+        );
         assert_eq!(super::positive_reading("+1.5E-09\n"), Some(1.5e-9));
         for invalid in ["NaN", "inf", "0", "-1", "9.9e37", "invalid"] {
             assert_eq!(super::positive_reading(invalid), None);
@@ -1447,6 +1573,78 @@ mod tests {
             closed: AtomicBool::new(false),
             heartbeat: Mutex::new(Instant::now()),
         }
+    }
+
+    #[test]
+    fn resolution_cache_reuses_only_the_current_range_and_recovers_unknowns() {
+        let mut cache = MeterResolutionCache::default();
+        let calls = std::cell::Cell::new(0);
+        for _ in 0..10 {
+            assert_eq!(
+                cache
+                    .read(Some(1.0), || {
+                        calls.set(calls.get() + 1);
+                        Ok("1e-6".into())
+                    })
+                    .unwrap(),
+                Some(1e-6)
+            );
+        }
+        assert_eq!(
+            calls.get(),
+            1,
+            "Repeat 10 should not query identical resolution 10 times"
+        );
+        assert_eq!(
+            cache.read(Some(10.0), || Ok("1e-5".into())).unwrap(),
+            Some(1e-5)
+        );
+        assert_eq!(
+            cache.read(Some(1.0), || Ok("2e-6".into())).unwrap(),
+            Some(2e-6),
+            "range changes must refresh, even on returning to an old range"
+        );
+        assert!(
+            cache
+                .read(Some(100.0), || Err("transport failure".into()))
+                .is_err()
+        );
+        assert_eq!(
+            cache.read(Some(1.0), || Ok("3e-6".into())).unwrap(),
+            Some(3e-6)
+        );
+        assert_eq!(cache.read(None, || Ok("NaN".into())).unwrap(), None);
+        assert_eq!(
+            cache.read(Some(1.0), || Ok("4e-6".into())).unwrap(),
+            Some(4e-6)
+        );
+        let mut new_run = MeterResolutionCache::default();
+        assert_eq!(
+            new_run.read(Some(1.0), || Ok("5e-6".into())).unwrap(),
+            Some(5e-6)
+        );
+    }
+
+    #[test]
+    fn zero_wait_does_not_acquire_or_publish_an_extra_conversion() {
+        let config = RunConfig::default();
+        let control = live_control();
+        let latest = StateFeed::default();
+        let mut monitor = SweepMonitor {
+            config: &config,
+            control: &control,
+            latest: &latest,
+            begin: Instant::now(),
+            last: Instant::now() - Duration::from_secs(1),
+            source_resolution: None,
+            meter_resolution: MeterResolutionCache::default(),
+        };
+        let mut state = Snapshot::default();
+        assert!(monitor.wait(0.0, None, 0.0, &mut state).unwrap());
+        assert!(state.live.is_none());
+        assert!(latest.pending.lock().unwrap().snapshot.is_none());
+        control.stop.store(true, Ordering::Release);
+        assert!(!monitor.wait(0.0, None, 0.0, &mut state).unwrap());
     }
 
     #[test]
@@ -1520,26 +1718,73 @@ mod tests {
     fn independent_connections_preserve_the_other_role() {
         let mut state = Snapshot::default();
         let mut pair = None;
-        connect_role(&mut pair, &mut state, Role::Source, true, "").unwrap();
+        connect_role(
+            &mut pair,
+            &mut state,
+            Role::Source,
+            true,
+            "",
+            "SIMULATED_SOURCE",
+        )
+        .unwrap();
         assert!(state.source_connected);
         assert!(!state.connected);
+        // Repeating the same model/resource is idempotent, but a different
+        // requested model requires an explicit disconnect first.
+        connect_role(
+            &mut pair,
+            &mut state,
+            Role::Source,
+            true,
+            "",
+            "SIMULATED_SOURCE",
+        )
+        .unwrap();
+        assert!(
+            connect_role(
+                &mut pair,
+                &mut state,
+                Role::Source,
+                true,
+                "",
+                "YOKOGAWA_GS210",
+            )
+            .is_err()
+        );
         assert!(
             connect_role(
                 &mut pair,
                 &mut state,
                 Role::Source,
                 false,
-                "GPIB0::5::INSTR"
+                "GPIB0::5::INSTR",
+                "YOKOGAWA_GS210",
             )
             .is_err()
         );
         assert!(state.source_connected && state.source_simulation);
-        connect_role(&mut pair, &mut state, Role::Meter, true, "").unwrap();
+        connect_role(
+            &mut pair,
+            &mut state,
+            Role::Meter,
+            true,
+            "",
+            "SIMULATED_METER",
+        )
+        .unwrap();
         assert!(state.connected && state.simulation);
         disconnect_role(&mut pair, &mut state, Role::Source, &live_control()).unwrap();
         assert!(!state.source_connected && state.meter_connected);
         assert_eq!(state.output, "Off");
-        connect_role(&mut pair, &mut state, Role::Source, true, "").unwrap();
+        connect_role(
+            &mut pair,
+            &mut state,
+            Role::Source,
+            true,
+            "",
+            "SIMULATED_SOURCE",
+        )
+        .unwrap();
         disconnect_role(&mut pair, &mut state, Role::Meter, &live_control()).unwrap();
         assert!(state.source_connected && !state.meter_connected);
         clean_output(pair.as_mut(), &mut state, None, &live_control());

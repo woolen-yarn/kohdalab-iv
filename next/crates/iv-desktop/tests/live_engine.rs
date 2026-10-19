@@ -355,6 +355,21 @@ fn native_mock_idle_monitor_uses_actual_source_mode_and_never_enables_output() {
             .count(),
         4
     );
+    assert_eq!(
+        conversions
+            .matches(&format!("QUERY 7 {}", hex("SENS:VOLT:DC:RANG?\n")))
+            .count(),
+        4,
+        "autorange must be checked after each saved conversion"
+    );
+    assert_eq!(
+        conversions
+            .matches(&format!("QUERY 7 {}", hex("SENS:VOLT:DC:RES?\n")))
+            .count(),
+        1,
+        "same-range repeat readings should share one resolution query per run"
+    );
+    assert_eq!(repeated["last"]["meter_resolution"], 1e-7);
     assert!(
         !conversions.contains("WRITE 3 "),
         "source must stay fixed during accumulation"

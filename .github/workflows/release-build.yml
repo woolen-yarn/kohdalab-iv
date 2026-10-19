@@ -1,0 +1,92 @@
+name: Build unsigned release artifacts
+on:
+  workflow_dispatch:
+  pull_request:
+permissions:
+  contents: read
+concurrency:
+  group: unsigned-release-${{ github.ref }}
+  cancel-in-progress: false
+jobs:
+  windows:
+    runs-on: windows-latest
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v7
+      - name: Native Windows compiler tools
+        uses: msys2/setup-msys2@ec48f7c5447b3140e2b088413ae3a55687bccb6e # v2
+        with:
+          msystem: UCRT64
+          update: true
+          install: >-
+            make autoconf automake libtool
+            mingw-w64-ucrt-x86_64-gcc
+            mingw-w64-ucrt-x86_64-python
+      - name: Rebuild native helpers from included source
+        shell: msys2 {0}
+        run: |
+          bash scripts/build_native_windows.sh
+          bash scripts/build_usb_setup.sh
+      - name: Stage rebuilt helper hashes
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force build/release-native | Out-Null
+          Copy-Item build/native-windows/kohdalab-*-helper.exe build/release-native/
+          Copy-Item build/usb-setup/USB-Setup.exe,build/usb-setup/libwdi.dll build/release-native/
+          python -c "import pathlib,hashlib,json; p=pathlib.Path('build/release-native'); (p/'SHA256.json').write_text(json.dumps({f.name:hashlib.sha256(f.read_bytes()).hexdigest() for f in sorted(p.iterdir()) if f.is_file()},indent=2)+'\n')"
+      - name: Windows resource compiler
+        shell: pwsh
+        run: |
+          $rc = Get-ChildItem 'C:\Program Files (x86)\Windows Kits\10\bin' -Recurse -Filter rc.exe | Where-Object { $_.FullName -match '\\x64\\rc.exe$' } | Sort-Object FullName | Select-Object -Last 1
+          if (-not $rc) { throw 'Windows resource compiler missing' }
+          "RC=$($rc.FullName)" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+      - name: Rust test and release build
+        working-directory: next
+        shell: pwsh
+        run: |
+          rustup toolchain install 1.99.0 --profile minimal
+          cargo test --workspace --locked
+          if ($LASTEXITCODE -ne 0) { throw 'Tests failed' }
+          cargo build --release --locked
+          if ($LASTEXITCODE -ne 0) { throw 'Build failed' }
+      - name: Package portable, source kit and Setup
+        id: package
+        shell: pwsh
+        run: |
+          python scripts/package_rust_preview.py --platform windows-x64 --binaries-dir next/target/release --native-dir build/release-native
+          if ($LASTEXITCODE -ne 0) { throw 'Portable packaging failed' }
+          python scripts/package_rust_build_kit.py --native-dir build/release-native
+          if ($LASTEXITCODE -ne 0) { throw 'Build kit failed' }
+          $v = python -c "import tomllib,pathlib; print(tomllib.loads(pathlib.Path('next/Cargo.toml').read_text())['workspace']['package']['version'])"
+          $edition = if ($v.Contains('-')) { 'preview' } else { 'portable' }
+          $payload = "next/dist/kohdalab-iv-$v-windows-x64-$edition"
+          "payload=$payload" | Out-File -FilePath $env:GITHUB_OUTPUT -Append -Encoding utf8
+          python scripts/build_windows_installer.py --payload-dir $payload --version $v --output "next/dist/kohdalab-iv-$v-windows-x64-Setup.exe"
+          if ($LASTEXITCODE -ne 0) { throw 'Setup compilation failed' }
+          ./scripts/check_windows_metadata.ps1 -Directory $payload -Version $v -ReportPath next/dist/windows-metadata.json
+          ./scripts/check_windows_signatures.ps1 -Directory $payload -ReportPath next/dist/windows-signatures.json
+          python -c "import pathlib,hashlib,json,os; p=pathlib.Path('next/dist'); fs=sorted([*p.glob('*.zip'),*p.glob('*-Setup.exe')]); (p/'SHA256SUMS.txt').write_text(''.join(hashlib.sha256(f.read_bytes()).hexdigest()+'  '+f.name+'\n' for f in fs)); (p/'BUILD-ORIGIN.json').write_text(json.dumps({k:os.environ.get(k) for k in ['GITHUB_REPOSITORY','GITHUB_SHA','GITHUB_RUN_ID','GITHUB_RUN_ATTEMPT','GITHUB_WORKFLOW']},indent=2)+'\n')"
+      - name: Upload exact first-party signing input (unsigned)
+        id: signing-input
+        uses: actions/upload-artifact@v7
+        with:
+          name: signing-input-${{ github.sha }}
+          if-no-files-found: error
+          retention-days: 14
+          path: |
+            ${{ steps.package.outputs.payload }}/kohdalab-iv-next.exe
+            ${{ steps.package.outputs.payload }}/iv-cli.exe
+            ${{ steps.package.outputs.payload }}/support/kohdalab-usbtmc-helper.exe
+            ${{ steps.package.outputs.payload }}/support/kohdalab-visa-helper.exe
+            ${{ steps.package.outputs.payload }}/support/USB-Setup.exe
+      - name: Upload unsigned review artifacts
+        uses: actions/upload-artifact@v7
+        with:
+          name: windows-unsigned-${{ github.sha }}
+          if-no-files-found: error
+          retention-days: 14
+          path: |
+            next/dist/*.zip
+            next/dist/*-Setup.exe
+            next/dist/*.json
+            next/dist/SHA256SUMS.txt
