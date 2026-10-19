@@ -42,7 +42,8 @@ Yokogawa 7651 / GS200, Agilent 34401A, Keysight 34465A and ADCMT 7461A are **not
 
 ## Downloads
 
-The current published release is **v1.2.0**.
+The current stable release is **v1.2.0**. Public downloads are available from
+the personal mirror; Kohdalab links may require organization repository access.
 
 Run uses **Start / Stop / Save**. Measurements are still saved automatically;
 Save exports a complete CSV copy and its run metadata without overwriting data.

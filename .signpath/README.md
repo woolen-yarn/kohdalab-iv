@@ -5,6 +5,9 @@ certificate or accepted Foundation subscription is configured here.
 
 Use [CODE_SIGNING_POLICY.md](../CODE_SIGNING_POLICY.md) and
 [PRIVACY.md](../PRIVACY.md) as public policy links in the application.
+The application-review repository is the public `woolen-yarn/kohdalab-iv`;
+use its public README, policy, build logs and release links for the application.
+The laboratory mirror may require access and is not the public evidence source.
 The public application is described in the root README, with existing installer
 and portable releases. `release-build.yml` builds Windows helpers and the Rust
 application from source on GitHub-hosted runners, records metadata/signatures,
@@ -24,7 +27,7 @@ upstream libwdi DLL/GPIB adaptation to it without Foundation review.
 ## Maintainer steps after acceptance
 
 1. Confirm the responsible owner, reviewers and signing approvers, MFA, and
-   repository access with SignPath. Choose one canonical build repository.
+   repository access with SignPath. Confirm the public build repository above.
 2. Install the SignPath GitHub App, link the trusted GitHub build system and
    configure required manual approval on the production signing policy.
 3. Resolve upstream GPIB/libwdi and NSIS installer/uninstaller signing boundaries

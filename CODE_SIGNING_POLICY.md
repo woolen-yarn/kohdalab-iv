@@ -9,8 +9,10 @@ signatures are separate and do not provide Apple Developer ID notarization.
 
 ## Responsibility and approval
 
-The public source repositories are [Kohdalab/kohdalab-iv](https://github.com/Kohdalab/kohdalab-iv)
-and [woolen-yarn/kohdalab-iv](https://github.com/woolen-yarn/kohdalab-iv).
+The public source and application-review repository is
+[woolen-yarn/kohdalab-iv](https://github.com/woolen-yarn/kohdalab-iv).
+[Kohdalab/kohdalab-iv](https://github.com/Kohdalab/kohdalab-iv) is the laboratory
+mirror and may require organization access; its visibility is not changed by a release.
 The currently designated project maintainer, committer and reviewer is
 [@woolen-yarn](https://github.com/woolen-yarn), also named in `.github/CODEOWNERS`.
 The proposed signing approver is that maintainer. Before enabling production
