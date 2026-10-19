@@ -1,5 +1,11 @@
 # Changelog
 
+## 1.3.0-alpha.4
+
+- Add separate rounded outlines around Output and Run while preserving the three-column layout.
+- Collapse Source/Meter model, resource, connection controls and Meter NPLC inside Device. The selected model, connection status and live readouts remain visible.
+- Preserve measurement, CSV, instrument and safety behavior.
+
 ## 1.3.0-alpha.3
 
 - Prepare public code-signing and privacy policies for a SignPath application; acceptance and signatures remain pending.

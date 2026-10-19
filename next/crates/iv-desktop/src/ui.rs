@@ -102,23 +102,19 @@ fn section(ui: &mut egui::Ui, title: &str, add: impl FnOnce(&mut egui::Ui)) {
     let frame = egui::Frame::new()
         .fill(if nested { Color32::TRANSPARENT } else { PANEL })
         .corner_radius(10)
-        .stroke(if nested {
-            Stroke::NONE
-        } else {
-            Stroke::new(1.0_f32, BORDER)
-        })
+        .stroke(Stroke::new(1.0_f32, BORDER))
         .inner_margin(egui::Margin {
-            left: if nested { 4 } else { 10 },
-            right: if nested { 4 } else { 10 },
+            left: 10,
+            right: 10,
             top: if nested { 22 } else { 24 },
-            bottom: if nested { 2 } else { 6 },
+            bottom: if nested { 8 } else { 6 },
         })
         .show(ui, |ui| {
             ui.set_min_width(ui.available_width());
             add(ui);
         });
     ui.painter().text(
-        frame.response.rect.left_top() + Vec2::new(if nested { 4.0 } else { 10.0 }, 6.0),
+        frame.response.rect.left_top() + Vec2::new(10.0, 6.0),
         egui::Align2::LEFT_TOP,
         title,
         egui::FontId::proportional(13.0),
@@ -1182,102 +1178,131 @@ impl IvApp {
                 egui::FontId::proportional(10.0),
                 if connected { TEAL } else { MUTED },
             );
-            let idle = !self.busy();
-            let width = (ui.available_width() - 65.0).max(140.0);
-            egui::Grid::new(("instrument", source))
-                .num_columns(2)
-                .spacing([6.0, 6.0])
-                .show(ui, |ui| {
-                    form_label(ui, "Device", 57.0);
-                    let model = if source {
-                        &mut self.settings.source_model
-                    } else {
-                        &mut self.settings.meter_model
-                    };
-                    ui.add_enabled_ui(idle && !connected, |ui| {
-                        egui::ComboBox::from_id_salt(("device", source))
-                            .width(width)
-                            .wrap_mode(egui::TextWrapMode::Truncate)
-                            .selected_text(model.as_str())
-                            .show_ui(ui, |ui| {
-                                ui.set_min_width(230.0);
-                                for candidate in if source { SOURCE_MODELS } else { METER_MODELS } {
-                                    ui.add_enabled_ui(model_supported(candidate), |ui| {
-                                        ui.selectable_value(
-                                            model,
-                                            candidate.to_string(),
-                                            *candidate,
-                                        );
-                                    })
-                                    .response
-                                    .on_disabled_hover_text(
-                                        "Not yet supported in the Rust preview",
-                                    );
-                                }
-                            });
-                    });
-                    ui.end_row();
-                    form_label(ui, "Resource", 57.0);
-                    ui.horizontal(|ui| {
-                        let resource_width = (width - 76.0).max(65.0);
-                        self.resource(ui, source, resource_width, idle && !connected);
-                        if button(ui, "Refresh", 68.0, idle).clicked() {
-                            self.send(Command::Discover);
-                        }
-                    });
-                    ui.end_row();
-                    if !source {
-                        form_label(ui, "NPLC", 57.0);
-                        ui.add_enabled_ui(idle, |ui| {
-                            ui.add_sized(
-                                [60.0, 24.0],
-                                egui::DragValue::new(&mut self.settings.config.nplc)
-                                    .speed(0.01)
-                                    .range(0.001..=100.0)
-                                    .min_decimals(3)
-                                    .max_decimals(3),
-                            );
-                        });
-                        ui.end_row();
-                    }
-                    form_label(ui, "", 57.0);
-                    ui.horizontal(|ui| {
-                        let model = if source {
-                            &self.settings.source_model
-                        } else {
-                            &self.settings.meter_model
-                        };
-                        let resource = if source {
-                            &self.settings.source
-                        } else {
-                            &self.settings.meter
-                        };
-                        let valid = model_supported(model)
-                            && (model.starts_with("SIMULATED_") || !resource.is_empty());
-                        if button(
-                            ui,
-                            "Connect",
-                            (width - 8.0) / 2.0,
-                            idle && !connected && valid,
-                        )
-                        .clicked()
-                        {
-                            self.connect_instrument(source);
-                        }
-                        if button(ui, "Disconnect", (width - 8.0) / 2.0, idle && connected)
-                            .clicked()
-                        {
-                            self.send(if source {
-                                Command::DisconnectSource
-                            } else {
-                                Command::DisconnectMeter
-                            });
-                        }
-                    });
-                    ui.end_row();
-                });
+            let model = if source {
+                &self.settings.source_model
+            } else {
+                &self.settings.meter_model
+            };
+            let summary = if model.starts_with("SIMULATED_") {
+                "Simulation"
+            } else {
+                model
+                    .split_once('_')
+                    .map_or(model.as_str(), |(_, name)| name)
+            };
+            let resource = if source {
+                &self.settings.source
+            } else {
+                &self.settings.meter
+            };
+            let hint = format!(
+                "{model}\n{}",
+                if resource.is_empty() {
+                    "No resource selected"
+                } else {
+                    resource
+                }
+            );
+            egui::CollapsingHeader::new(format!("Device  ·  {summary}"))
+                .id_salt(("instrument_device_settings", source))
+                .default_open(false)
+                .show_background(true)
+                .show_unindented(ui, |ui| {
+                    self.instrument_connection_controls(ui, source, connected)
+                })
+                .header_response
+                .on_hover_text(hint);
             self.live_monitor(ui, source);
         });
+    }
+
+    fn instrument_connection_controls(&mut self, ui: &mut egui::Ui, source: bool, connected: bool) {
+        let idle = !self.busy();
+        let width = (ui.available_width() - 65.0).max(140.0);
+        egui::Grid::new(("instrument", source))
+            .num_columns(2)
+            .spacing([6.0, 6.0])
+            .show(ui, |ui| {
+                form_label(ui, "Device", 57.0);
+                let model = if source {
+                    &mut self.settings.source_model
+                } else {
+                    &mut self.settings.meter_model
+                };
+                ui.add_enabled_ui(idle && !connected, |ui| {
+                    egui::ComboBox::from_id_salt(("device", source))
+                        .width(width)
+                        .wrap_mode(egui::TextWrapMode::Truncate)
+                        .selected_text(model.as_str())
+                        .show_ui(ui, |ui| {
+                            ui.set_min_width(230.0);
+                            for candidate in if source { SOURCE_MODELS } else { METER_MODELS } {
+                                ui.add_enabled_ui(model_supported(candidate), |ui| {
+                                    ui.selectable_value(model, candidate.to_string(), *candidate);
+                                })
+                                .response
+                                .on_disabled_hover_text("Not yet supported in the Rust preview");
+                            }
+                        });
+                });
+                ui.end_row();
+                form_label(ui, "Resource", 57.0);
+                ui.horizontal(|ui| {
+                    let resource_width = (width - 76.0).max(65.0);
+                    self.resource(ui, source, resource_width, idle && !connected);
+                    if button(ui, "Refresh", 68.0, idle).clicked() {
+                        self.send(Command::Discover);
+                    }
+                });
+                ui.end_row();
+                if !source {
+                    form_label(ui, "NPLC", 57.0);
+                    ui.add_enabled_ui(idle, |ui| {
+                        ui.add_sized(
+                            [60.0, 24.0],
+                            egui::DragValue::new(&mut self.settings.config.nplc)
+                                .speed(0.01)
+                                .range(0.001..=100.0)
+                                .min_decimals(3)
+                                .max_decimals(3),
+                        );
+                    });
+                    ui.end_row();
+                }
+                form_label(ui, "", 57.0);
+                ui.horizontal(|ui| {
+                    let model = if source {
+                        &self.settings.source_model
+                    } else {
+                        &self.settings.meter_model
+                    };
+                    let resource = if source {
+                        &self.settings.source
+                    } else {
+                        &self.settings.meter
+                    };
+                    let valid = model_supported(model)
+                        && (model.starts_with("SIMULATED_") || !resource.is_empty());
+                    if button(
+                        ui,
+                        "Connect",
+                        (width - 8.0) / 2.0,
+                        idle && !connected && valid,
+                    )
+                    .clicked()
+                    {
+                        self.connect_instrument(source);
+                    }
+                    if button(ui, "Disconnect", (width - 8.0) / 2.0, idle && connected).clicked() {
+                        self.send(if source {
+                            Command::DisconnectSource
+                        } else {
+                            Command::DisconnectMeter
+                        });
+                    }
+                });
+                ui.end_row();
+            });
     }
 
     fn resource(&mut self, ui: &mut egui::Ui, source: bool, width: f32, enabled: bool) {
