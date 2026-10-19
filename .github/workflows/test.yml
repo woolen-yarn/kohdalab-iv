@@ -54,7 +54,7 @@ jobs:
           else
             export KOHDALAB_IV_EXE="$PWD/next/target/debug/iv-cli"
           fi
-          python bindings/python/test_native_client.py
+          python -m unittest discover -s bindings/python -p 'test_*.py' -v
       - name: Redistribution packaging policy
         run: python tests/test_distribution_policy.py
       - name: Windows application installation lifecycle

@@ -87,7 +87,7 @@ drivers or an incomplete existing WinUSB assignment are configured.
 
 ## Development: legacy instrument drivers
 
-The next **1.3.0-alpha.5** build ports the working Python drivers at `b754cfa^` into the Rust engine. This development work is not included in the v1.2.0 downloads above.
+The next **1.3.0-alpha.6** build ports the working Python drivers at `b754cfa^` into the Rust engine. This development work is not included in the v1.2.0 downloads above.
 
 | Instrument | Implemented development connection | Validation |
 | --- | --- | --- |
@@ -120,13 +120,14 @@ Source and Meter connection settings, including Meter NPLC, are grouped in
 collapsible Device sections. Live readouts remain visible when folded. Output
 and Run have separate rounded outlines.
 
-The latest development download is **v1.3.0-alpha.5**, including legacy protocol
-ports, reduced zero-wait metadata traffic and signing preparation. Additional
+The latest development download is **v1.3.0-alpha.6**, including legacy protocol
+ports, reduced zero-wait metadata traffic, signing preparation and automatic
+Notebook application discovery with a migration tutorial. Additional
 instrument hardware validation is pending. The stable v1.2.0 links above remain
 available.
 
-- [Development downloads (Kohdalab)](https://github.com/Kohdalab/kohdalab-iv/releases/tag/preview-v1.3.0-alpha.5)
-- [Development downloads (personal)](https://github.com/woolen-yarn/kohdalab-iv/releases/tag/preview-v1.3.0-alpha.5)
+- [Development downloads (Kohdalab)](https://github.com/Kohdalab/kohdalab-iv/releases/tag/preview-v1.3.0-alpha.6)
+- [Development downloads (personal)](https://github.com/woolen-yarn/kohdalab-iv/releases/tag/preview-v1.3.0-alpha.6)
 
 ## Build and validation
 
@@ -191,8 +192,8 @@ and plot tooltips continue using instrument-resolution display precision.
 
 Install the desktop/portable Rust application first. In a checkout containing the
 new client packaging, run `python -m pip install ./bindings/python` (or
-`uv pip install ./bindings/python`). On Windows, `NativeIV()` finds the installed
-Program Files engine automatically. For portable use or macOS, pass the
-`iv-cli` path explicitly or set `KOHDALAB_IV_EXE`. The Python package contains
-only a small client; Git clone alone does not install the Rust application.
+`uv pip install ./bindings/python`). `NativeIV()` finds the Windows installation
+or a macOS application in `~/Applications` or `/Applications` automatically.
+For a portable package elsewhere, pass its folder or the `iv-cli` path, or set
+`KOHDALAB_IV_EXE`. The Python package contains only a small client; Git clone alone does not install the Rust application.
 See [Python/Notebook instructions](bindings/python/README.md).

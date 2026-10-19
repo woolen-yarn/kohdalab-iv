@@ -10,46 +10,79 @@ import threading
 import time
 
 
-def _existing_executable(value, source):
-    """Return a verified executable path with an actionable installation error."""
+def _cli_path(value):
+    """Accept a CLI file, an installation directory, or a macOS app bundle."""
     path = Path(value).expanduser()
+    if path.is_dir():
+        if path.suffix.lower() == ".app":
+            return path / "Contents" / "MacOS" / "iv-cli"
+        return path / ("iv-cli.exe" if sys.platform == "win32" else "iv-cli")
+    return path
+
+
+def _existing_executable(value, source):
+    path = _cli_path(value)
     if not path.is_file():
         raise FileNotFoundError(
             f"{source} points to '{path}', but iv-cli was not found there. "
-            "Install KohdaLab IV first, or pass the full path to iv-cli(.exe)."
+            "Install KohdaLab IV first, or pass the path to iv-cli(.exe), "
+            "its installation directory, or the macOS app bundle."
         )
     return str(path.resolve())
 
 
-def resolve_executable(executable=None):
-    """Find the Rust engine without bundling or rebuilding it in Python.
+def _windows_installations():
+    # Read both registry views: a 32-bit Notebook may control a 64-bit engine.
+    try:
+        import winreg
+    except ImportError:
+        return
+    key = r"SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\KohdaLabIV"
+    for hive in (winreg.HKEY_CURRENT_USER, winreg.HKEY_LOCAL_MACHINE):
+        for view in (winreg.KEY_WOW64_64KEY, winreg.KEY_WOW64_32KEY):
+            try:
+                with winreg.OpenKey(hive, key, 0, winreg.KEY_READ | view) as handle:
+                    location, kind = winreg.QueryValueEx(handle, "InstallLocation")
+                if kind in (winreg.REG_SZ, winreg.REG_EXPAND_SZ) and location:
+                    yield Path(os.path.expandvars(location)) / "iv-cli.exe"
+            except OSError:
+                continue
 
-    Resolution is deliberate: an explicit argument wins, then
-    ``KOHDALAB_IV_EXE``, then an existing ``iv-cli`` on ``PATH``, and finally
-    the standard Windows installer location. Pass an explicit path when more
-    than one KohdaLab IV installation is present.
+
+def _installed_candidates():
+    if sys.platform == "win32":
+        yield from _windows_installations()
+        for variable in ("ProgramW6432", "ProgramFiles"):
+            root = os.environ.get(variable, r"C:\Program Files")
+            yield Path(root) / "Kohdalab" / "KohdaLab IV" / "iv-cli.exe"
+    elif sys.platform == "darwin":
+        for root in (Path.home() / "Applications", Path("/Applications")):
+            yield root / "KohdaLab IV.app" / "Contents" / "MacOS" / "iv-cli"
+
+
+def resolve_executable(executable=None):
+    """Resolve explicit path, environment, PATH, then known installations.
+
+    Discovery only inspects known locations; it never starts an engine, scans
+    instruments, downloads software, or recursively searches user folders.
+    An invalid explicit override raises instead of silently using another app.
     """
     if executable:
         return _existing_executable(executable, "The executable argument")
-
     configured = os.environ.get("KOHDALAB_IV_EXE")
     if configured:
         return _existing_executable(configured, "KOHDALAB_IV_EXE")
-
     for name in ("iv-cli", "iv-cli.exe"):
         from_path = shutil.which(name)
         if from_path:
             return _existing_executable(from_path, f"{name} on PATH")
-
-    if sys.platform == "win32":
-        program_files = Path(os.environ.get("ProgramFiles", r"C:\\Program Files"))
-        installed = program_files / "Kohdalab" / "KohdaLab IV" / "iv-cli.exe"
+    for installed in _installed_candidates():
         if installed.is_file():
             return str(installed.resolve())
-
     raise FileNotFoundError(
         "KohdaLab IV's Rust engine (iv-cli) was not found. Install the "
-        "KohdaLab IV desktop application, then create NativeIV(), or pass "
+        "KohdaLab IV desktop application (on macOS, place KohdaLab IV.app "
+        "in ~/Applications or /Applications), then create NativeIV(), or pass "
         "the full path with NativeIV(executable=...). Installing this Python "
         "client does not install or build the measurement engine."
     )

@@ -20,28 +20,37 @@ uv pip install ./bindings/python
 Install directly from the matching GitHub release:
 
 ```text
-python -m pip install "kohdalab-iv-native @ git+https://github.com/woolen-yarn/kohdalab-iv.git@portable-v1.2.0#subdirectory=bindings/python"
-uv add "kohdalab-iv-native @ git+https://github.com/woolen-yarn/kohdalab-iv.git@portable-v1.2.0#subdirectory=bindings/python"
+python -m pip install "kohdalab-iv-native @ git+https://github.com/woolen-yarn/kohdalab-iv.git@preview-v1.3.0-alpha.6#subdirectory=bindings/python"
+uv add "kohdalab-iv-native @ git+https://github.com/woolen-yarn/kohdalab-iv.git@preview-v1.3.0-alpha.6#subdirectory=bindings/python"
 ```
+
+The discovery enhancements below are included in v1.3.0-alpha.6 and newer.
+Install the matching client from the release tag or its bundled `python-control`
+folder. Release tags are frozen snapshots.
 
 The client resolves `iv-cli` in this order:
 
 1. The explicit `NativeIV(executable=...)` argument.
 2. `KOHDALAB_IV_EXE`.
 3. An `iv-cli` or `iv-cli.exe` already on `PATH`.
-4. On Windows, `C:\\Program Files\\Kohdalab\\KohdaLab IV\\iv-cli.exe` from the
-   desktop installer.
+4. On Windows, the registered installer location (both 32-bit and 64-bit
+   registry views), then the native Program Files installation.
+5. On macOS, `~/Applications/KohdaLab IV.app`, then
+   `/Applications/KohdaLab IV.app`.
 
-Use an explicit path if several installations exist. On macOS, pass the portable
-`iv-cli` path or set `KOHDALAB_IV_EXE`. Keep a portable executable in its package
-folder so its native helpers can be found. Close the GUI before connecting to the
-same hardware.
+Discovery only checks known paths. It does not scan hardware or recursively
+search Downloads. Explicit arguments and `KOHDALAB_IV_EXE` take priority;
+invalid overrides raise an error instead of silently selecting another app.
+Use `resolve_executable()` to inspect the selected path without starting it.
+For a portable installation elsewhere, pass the CLI path, its containing folder,
+or the macOS `.app` folder. Keep the complete portable package together.
+Close the GUI's hardware connections before using the same devices in a Notebook.
 
 ```python
 from pathlib import Path
 from kohdalab_iv_native import NativeIV
 
-with NativeIV() as iv:  # Finds the Windows desktop installation automatically.
+with NativeIV() as iv:  # Finds an installed Windows or macOS application automatically.
     iv.connect(simulation=True)
     print(iv.live())  # no output enabled, no CSV created
     result = iv.run(Path("example.csv"), {
@@ -89,3 +98,21 @@ iv.connect("GPIB0::3::INSTR", "GPIB0::7::INSTR",
 ```
 
 The client carries those models into each run. The engine rejects a run whose model settings disagree with the connected devices. 7461A GPIB uses SCPI; Windows official VISA USB uses ADC commands and stream reads. Native ADCMT USB and a separate GS200 driver are not implemented. Hardware validation of the newly ported models is pending.
+
+## Move an existing Notebook
+
+See [the migration tutorial](examples/migrate-to-native.ipynb). Keep analysis and
+plotting cells; replace legacy Python instrument objects / PyVISA calls with one
+`NativeIV` context. This is a new API, not a drop-in replacement. Rust owns
+communication, limits, CSV persistence and output cleanup. `iv.live()` returns a
+sample dictionary; `iv.run()` returns run status, while the saved CSV holds the
+measurement rows. Use `start`, `stop` (the former End field), and `step` in SI
+units, `settle_s` for wait time, `nplc` for integration time and `repeat` for
+meter readings averaged at each unchanged source level. Query
+`iv.default_config` for the complete current schema. Use the context manager
+inside a single cell or function so interruptions pass through cleanup.
+
+The package installation must target your Notebook kernel's Python environment.
+In Jupyter, `%pip install /path/to/kohdalab-iv/bindings/python` installs this client
+into the active kernel. Restart the kernel after upgrading an imported client.
+No Python measurement engine or VISA dependency is installed by this package.
