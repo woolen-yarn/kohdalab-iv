@@ -1,6 +1,6 @@
 # KohdaLab IV Native Desktop
 
-Development **1.3.0-alpha.5** ports Yokogawa 7651, Agilent 34401A, Keysight 34465A and ADCMT 7461A from the former Python drivers. Protocol mocks pass; physical validation is pending. GS200 and native ADCMT USB are not added. See the instrument matrix in the source README.
+Development **1.3.0-alpha.6** ports Yokogawa 7651, Agilent 34401A, Keysight 34465A and ADCMT 7461A from the former Python drivers. Protocol mocks pass; physical validation is pending. GS200 and native ADCMT USB are not added. See the instrument matrix in the source README.
 
 Version **1.2.0** adds a Windows Setup.exe installer and per-device official VISA preference
 on Windows.
@@ -276,6 +276,14 @@ Python's standard library (Pillow only for regenerating icons) on a build host;
 they are not included as an application runtime or compatibility layer.
 
 ## Python and Notebook control
+
+Version 1.3.0-alpha.6 includes automatic discovery of the Windows installation
+and `KohdaLab IV.app` in `~/Applications` or `/Applications`. Install the bundled
+client with `python -m pip install /path/to/python-control`, then use `NativeIV()`
+without a path. For a portable package elsewhere, pass its directory or the Mac
+app bundle. See `python-control/README.md` and
+`python-control/examples/migrate-to-native.ipynb` in the distribution.
+
 
 Use `python-control/kohdalab_iv_native.py` from the portable package, or
 [the source client](../bindings/python/README.md). It uses only the Python standard

@@ -1,5 +1,12 @@
 # Changelog
 
+## 1.3.0-alpha.6
+
+- Find the installed Rust engine automatically from Windows installer registration and native Program Files, including 32-bit Notebook kernels, or macOS user/system Applications folders.
+- Accept a CLI path, installation directory or Mac app bundle as an explicit client override; retain deterministic override priority and clear missing-engine errors.
+- Include an executable Notebook migration tutorial, updated client instructions and automatic discovery tests in portable packages, Setup and the build kit.
+- Preserve measurement, CSV, driver and output protection behavior.
+
 ## 1.3.0-alpha.5
 
 - Rename the desktop executable to `kohdalab-iv.exe` on Windows and `kohdalab-iv` on macOS; name the Mac bundle `KohdaLab IV.app`. No legacy GUI executable alias is shipped.
