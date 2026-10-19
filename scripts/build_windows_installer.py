@@ -27,6 +27,8 @@ import sys
 from urllib.request import urlretrieve
 from zipfile import ZipFile
 
+from windows_version_resource import version_words
+
 
 ROOT = Path(__file__).resolve().parents[1]
 NSIS_VERSION = "3.12"
@@ -105,20 +107,11 @@ def find_compiler(explicit: Path | None) -> Path:
 
 
 def windows_file_version(version: str) -> str:
-    """Map a semver release to the numeric four-part PE version field."""
-    match = re.fullmatch(r"(\d+)\.(\d+)\.(\d+)(?:-([A-Za-z0-9.-]+))?", version)
-    if not match:
-        raise SystemExit("Version must use semantic versioning, for example 1.2.0 or 1.2.0-rc.1")
-    parts = [int(match.group(index)) for index in range(1, 4)]
-    prerelease = match.group(4)
-    revision = 0
-    if prerelease:
-        tail = re.search(r"(?:^|\.)(\d+)$", prerelease)
-        revision = int(tail.group(1)) if tail else 0
-    parts.append(revision)
-    if any(part > 65535 for part in parts):
-        raise SystemExit("Each Windows file-version component must be at most 65535")
-    return ".".join(str(part) for part in parts)
+    """Use exactly the same numeric PE version as the application/helpers."""
+    try:
+        return version_words(version).replace(",", ".")
+    except ValueError as error:
+        raise SystemExit(str(error)) from error
 
 
 def main() -> None:

@@ -2,15 +2,6 @@ name: Build unsigned release artifacts
 on:
   workflow_dispatch:
   pull_request:
-    paths:
-      - .github/workflows/release-build.yml
-      - scripts/package_rust*.py
-      - scripts/build_native_windows.sh
-      - scripts/build_usb_setup.sh
-      - scripts/windows_version_resource.py
-      - scripts/check_windows_metadata.ps1
-      - native/windows_version.rc
-      - next/crates/iv-desktop/build.rs
 permissions:
   contents: read
 concurrency:
@@ -59,6 +50,7 @@ jobs:
           cargo build --release --locked
           if ($LASTEXITCODE -ne 0) { throw 'Build failed' }
       - name: Package portable, source kit and Setup
+        id: package
         shell: pwsh
         run: |
           python scripts/package_rust_preview.py --platform windows-x64 --binaries-dir next/target/release --native-dir build/release-native
@@ -68,11 +60,25 @@ jobs:
           $v = python -c "import tomllib,pathlib; print(tomllib.loads(pathlib.Path('next/Cargo.toml').read_text())['workspace']['package']['version'])"
           $edition = if ($v.Contains('-')) { 'preview' } else { 'portable' }
           $payload = "next/dist/kohdalab-iv-$v-windows-x64-$edition"
+          "payload=$payload" | Out-File -FilePath $env:GITHUB_OUTPUT -Append -Encoding utf8
           python scripts/build_windows_installer.py --payload-dir $payload --version $v --output "next/dist/kohdalab-iv-$v-windows-x64-Setup.exe"
           if ($LASTEXITCODE -ne 0) { throw 'Setup compilation failed' }
           ./scripts/check_windows_metadata.ps1 -Directory $payload -Version $v -ReportPath next/dist/windows-metadata.json
           ./scripts/check_windows_signatures.ps1 -Directory $payload -ReportPath next/dist/windows-signatures.json
           python -c "import pathlib,hashlib,json,os; p=pathlib.Path('next/dist'); fs=sorted([*p.glob('*.zip'),*p.glob('*-Setup.exe')]); (p/'SHA256SUMS.txt').write_text(''.join(hashlib.sha256(f.read_bytes()).hexdigest()+'  '+f.name+'\n' for f in fs)); (p/'BUILD-ORIGIN.json').write_text(json.dumps({k:os.environ.get(k) for k in ['GITHUB_REPOSITORY','GITHUB_SHA','GITHUB_RUN_ID','GITHUB_RUN_ATTEMPT','GITHUB_WORKFLOW']},indent=2)+'\n')"
+      - name: Upload exact first-party signing input (unsigned)
+        id: signing-input
+        uses: actions/upload-artifact@v7
+        with:
+          name: signing-input-${{ github.sha }}
+          if-no-files-found: error
+          retention-days: 14
+          path: |
+            ${{ steps.package.outputs.payload }}/kohdalab-iv-next.exe
+            ${{ steps.package.outputs.payload }}/iv-cli.exe
+            ${{ steps.package.outputs.payload }}/support/kohdalab-usbtmc-helper.exe
+            ${{ steps.package.outputs.payload }}/support/kohdalab-visa-helper.exe
+            ${{ steps.package.outputs.payload }}/support/USB-Setup.exe
       - name: Upload unsigned review artifacts
         uses: actions/upload-artifact@v7
         with:

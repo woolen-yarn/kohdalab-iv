@@ -11,6 +11,11 @@ application from source on GitHub-hosted runners, records metadata/signatures,
 and publishes unsigned workflow artifacts for review. A manual workflow run
 requires no signing credentials and does not publish a GitHub release.
 
+The separate `signing-input-<commit>` workflow artifact contains the five
+allowlisted PE files at the ZIP paths used below (GUI/CLI at root, helpers under
+`support/`). The version-rooted portable ZIP is a different review artifact; do
+not submit it using the flat signing configuration.
+
 `application-pe.xml` is a proposed exact allowlist for first-party PE files in
 a GitHub workflow ZIP, with product/version constraints. It is not an activated
 configuration or a full installer-signing pipeline. Do not add `**/*.exe` or the
