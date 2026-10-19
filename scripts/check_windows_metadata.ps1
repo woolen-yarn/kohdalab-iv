@@ -7,7 +7,7 @@ param(
 # Read-only metadata gate; this does not imply a valid Authenticode signature.
 $ErrorActionPreference = 'Stop'
 $root = [IO.Path]::GetFullPath($Directory)
-$paths = @('kohdalab-iv-next.exe', 'iv-cli.exe',
+$paths = @('kohdalab-iv.exe', 'iv-cli.exe',
     'support/kohdalab-gpib-helper.exe', 'support/kohdalab-usbtmc-helper.exe',
     'support/kohdalab-visa-helper.exe', 'support/USB-Setup.exe')
 $files = foreach ($relative in $paths) {

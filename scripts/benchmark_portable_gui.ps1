@@ -32,7 +32,8 @@ New-Item -ItemType Directory -Force $rustConfigDir | Out-Null
 $rustSettings=@{source='';meter='';source_model='SIMULATED_SOURCE';meter_model='SIMULATED_METER';simulation=$true;output_dir=(Join-Path $OutputDir 'unused-results');filename='unused';auto_suffix=$true}
 [IO.File]::WriteAllText((Join-Path $rustConfigDir 'iv-next.json'),($rustSettings|ConvertTo-Json -Depth 6),$utf8)
 $pythonExe=Join-Path $pythonRuntime 'KohdaLab IV.exe'
-$rustExe=Join-Path $RustPackage 'kohdalab-iv-next.exe'
+$rustExe=Join-Path $RustPackage 'kohdalab-iv.exe'
+if(!(Test-Path -LiteralPath $rustExe)) { $rustExe=Join-Path $RustPackage 'kohdalab-iv-next.exe' }
 $report=[ordered]@{
     started_utc=[DateTime]::UtcNow.ToString('o'); repeats=$Repeats
     python_exe=$pythonExe; python_sha256=(Get-FileHash $pythonExe).Hash.ToLowerInvariant()

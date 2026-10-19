@@ -4,7 +4,7 @@
   </parameters>
   <zip-file>
     <pe-file-set product-name="KohdaLab IV" product-version="${version}" company-name="Kohdalab">
-      <include path="kohdalab-iv-next.exe" />
+      <include path="kohdalab-iv.exe" />
       <include path="iv-cli.exe" />
       <include path="support/kohdalab-usbtmc-helper.exe" />
       <include path="support/kohdalab-visa-helper.exe" />

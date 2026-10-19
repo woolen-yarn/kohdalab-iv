@@ -156,14 +156,14 @@ def main() -> None:
             args.binaries_dir
             or ROOT / "next/target-windows/x86_64-pc-windows-gnu/release"
         )
-        shutil.copy2(binaries / "kohdalab-iv-next.exe", stage / "kohdalab-iv-next.exe")
+        shutil.copy2(binaries / "kohdalab-iv.exe", stage / "kohdalab-iv.exe")
         shutil.copy2(binaries / "iv-cli.exe", stage / "iv-cli.exe")
         for filename in ("Install-Application.cmd", "Install-Application.ps1", "Uninstall-Application.ps1"):
             shutil.copy2(ROOT / "portable/windows" / filename, stage / filename)
         support = stage / "support"
     else:
         binaries = args.binaries_dir or ROOT / "next/target/release"
-        app = stage / "KohdaLab IV Next.app"
+        app = stage / "KohdaLab IV.app"
         contents = app / "Contents"
         macos = contents / "MacOS"
         macos.mkdir(parents=True)
@@ -172,16 +172,16 @@ def main() -> None:
         shutil.copy2(
             ROOT / "next/assets/kohdalab-iv.icns", resources / "KohdaLabIV.icns"
         )
-        shutil.copy2(binaries / "kohdalab-iv-next", macos / "kohdalab-iv-next")
+        shutil.copy2(binaries / "kohdalab-iv", macos / "kohdalab-iv")
         shutil.copy2(binaries / "iv-cli", macos / "iv-cli")
         support = macos / "support"
         short_version, build_version = mac_versions(version)
         (contents / "Info.plist").write_bytes(
             plistlib.dumps(
                 {
-                    "CFBundleName": "KohdaLab IV Next",
-                    "CFBundleDisplayName": "KohdaLab IV Next",
-                    "CFBundleExecutable": "kohdalab-iv-next",
+                    "CFBundleName": "KohdaLab IV",
+                    "CFBundleDisplayName": "KohdaLab IV",
+                    "CFBundleExecutable": "kohdalab-iv",
                     "CFBundleIdentifier": "org.kohdalab.iv.next",
                     "CFBundlePackageType": "APPL",
                     "CFBundleVersion": build_version,

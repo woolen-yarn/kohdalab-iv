@@ -36,7 +36,7 @@ certificate store; it must never be committed or placed in a portable package.
 After agreeing the component boundaries with the signing provider, sign and verify:
 
 1. `iv-cli.exe`
-2. `kohdalab-iv-next.exe`
+2. `kohdalab-iv.exe`
 3. the approved first-party helper allowlist (not upstream components under the project identity)
 4. the NSIS-generated `Uninstall.exe`
 5. the final NSIS Setup executable
@@ -106,3 +106,8 @@ validate publisher identity/timestamps, with explicit upstream exceptions.
 This integration, including the NSIS uninstaller signing hook, is pending.
 Foundation acceptance/MFA/account setup are maintainer actions and cannot be
 claimed by committing configuration files.
+
+
+Version 1.3.0-alpha.5 renames the desktop PE to `kohdalab-iv.exe`. The old
+filename above records the historical v1.2.0 audit. Current allowlists and
+metadata checks use only the new name; no legacy executable alias is shipped.

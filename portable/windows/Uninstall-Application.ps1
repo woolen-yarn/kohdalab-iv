@@ -49,7 +49,7 @@ try {
  }
  $state=Get-Content -LiteralPath (Join-Path $installed 'installer-state.json') -Raw | ConvertFrom-Json
  if($state.application -ne 'org.kohdalab.iv' -or $state.installation -ne $installed){throw 'Installed application identity did not match.'}
- foreach($process in @(Get-Process -Name kohdalab-iv-next,iv-cli -ErrorAction SilentlyContinue)){
+ foreach($process in @(Get-Process -Name kohdalab-iv,kohdalab-iv-next,iv-cli -ErrorAction SilentlyContinue)){
   if(!$process.Path){throw 'Could not verify that IV is closed. Close IV before uninstalling.'}
   if($process.Path.StartsWith($installed+'\',[StringComparison]::OrdinalIgnoreCase)){throw 'KohdaLab IV is running. Stop measurement and close IV before uninstalling.'}
  }
@@ -79,7 +79,7 @@ try {
  if($current.Count -ne $hashes.Count){throw 'Installation changed while its backup was created.'}
  foreach($file in $current){if((Get-FileHash -LiteralPath $file.FullName -Algorithm SHA256).Hash -ne $hashes[$file.FullName.Substring($installed.Length+1).Replace('\','/')]){throw 'Installation changed while backing up.'}}
  # Recheck immediately before changing any app or registration state.
- foreach($process in @(Get-Process -Name kohdalab-iv-next,iv-cli -ErrorAction SilentlyContinue)){
+ foreach($process in @(Get-Process -Name kohdalab-iv,kohdalab-iv-next,iv-cli -ErrorAction SilentlyContinue)){
   if(!$process.Path -or $process.Path.StartsWith($installed+'\',[StringComparison]::OrdinalIgnoreCase)){throw 'Close KohdaLab IV before uninstalling.'}
  }
  Set-Location -LiteralPath $env:TEMP
@@ -87,7 +87,7 @@ try {
  $moved=$true
  $shell=New-Object -ComObject WScript.Shell
  foreach($shortcut in $shortcuts){
-  if(Test-Path -LiteralPath $shortcut){if($shell.CreateShortcut($shortcut).TargetPath -eq (Join-Path $installed 'kohdalab-iv-next.exe')){Remove-Item -LiteralPath $shortcut}}
+  if(Test-Path -LiteralPath $shortcut){if($shell.CreateShortcut($shortcut).TargetPath -in @((Join-Path $installed 'kohdalab-iv.exe'),(Join-Path $installed 'kohdalab-iv-next.exe'))){Remove-Item -LiteralPath $shortcut}}
  }
  if(Test-Path -LiteralPath $key){Remove-Item -LiteralPath $key -Recurse}
  $committed=$true

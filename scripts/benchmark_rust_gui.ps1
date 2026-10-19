@@ -19,8 +19,15 @@ $rustConfigDir=Join-Path $rustProfile '.kohdalab\config'
 New-Item -ItemType Directory -Force $rustConfigDir | Out-Null
 $rustSettings=@{source='';meter='';source_model='SIMULATED_SOURCE';meter_model='SIMULATED_METER';simulation=$true;output_dir=(Join-Path $OutputDir 'unused-results');filename='unused';auto_suffix=$true}
 [IO.File]::WriteAllText((Join-Path $rustConfigDir 'iv-next.json'),($rustSettings|ConvertTo-Json -Depth 6),$utf8)
-$beforeExe=Join-Path $BeforePackage 'kohdalab-iv-next.exe'
-$afterExe=Join-Path $AfterPackage 'kohdalab-iv-next.exe'
+function Find-Gui([string]$Package) {
+ foreach($name in @('kohdalab-iv.exe','kohdalab-iv-next.exe')) {
+  $path=Join-Path $Package $name
+  if(Test-Path -LiteralPath $path -PathType Leaf) { return $path }
+ }
+ throw 'GUI executable not found'
+}
+$beforeExe=Find-Gui $BeforePackage
+$afterExe=Find-Gui $AfterPackage
 $report=[ordered]@{
     started_utc=[DateTime]::UtcNow.ToString('o'); repeats=$Repeats
     before_exe=$beforeExe; before_sha256=(Get-FileHash $beforeExe).Hash.ToLowerInvariant()

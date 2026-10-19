@@ -73,7 +73,7 @@ fn run() -> Result<(), String> {
         return command_measure(&args);
     }
     if args.iter().any(|a| a == "--version") {
-        println!("KohdaLab IV Next {}", env!("CARGO_PKG_VERSION"));
+        println!("KohdaLab IV {}", env!("CARGO_PKG_VERSION"));
         return Ok(());
     }
     if cfg!(windows) {

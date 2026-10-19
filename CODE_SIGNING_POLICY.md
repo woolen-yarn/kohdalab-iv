@@ -28,7 +28,7 @@ checksums will be mirrored to both repositories; mirrors must not rebuild them.
 
 ## Signing boundaries
 
-The intended first-party PE allowlist is `kohdalab-iv-next.exe`, `iv-cli.exe`,
+The intended first-party PE allowlist is `kohdalab-iv.exe`, `iv-cli.exe`,
 `support/kohdalab-usbtmc-helper.exe`, `support/kohdalab-visa-helper.exe` and
 `support/USB-Setup.exe`. Each carries the product name `KohdaLab IV` and the same
 application product version. Source-built artifacts and build logs must be

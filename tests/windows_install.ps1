@@ -11,7 +11,7 @@ $installer=Join-Path $RepositoryRoot 'portable\windows\Install-Application.ps1'
 function Assert-True($value,[string]$message){if(!$value){throw $message}}
 function New-Package([string]$revision){
  New-Item -ItemType Directory (Join-Path $package 'support') -Force | Out-Null
- Set-Content (Join-Path $package 'kohdalab-iv-next.exe') "GUI fixture $revision" -Encoding ASCII
+ Set-Content (Join-Path $package 'kohdalab-iv.exe') "GUI fixture $revision" -Encoding ASCII
  Set-Content (Join-Path $package 'iv-cli.exe') "CLI fixture $revision" -Encoding ASCII
  Set-Content (Join-Path $package 'support\native.txt') "support $revision" -Encoding ASCII
  Set-Content (Join-Path $package 'README.md') "Install fixture $revision" -Encoding ASCII
@@ -28,14 +28,26 @@ function Expect-Refusal([string]$description){
  Assert-True $refused "Installer accepted $description"
 }
 try {
+ # Simulate an installed pre-rename release.  The new package must replace the
+ # legacy executable and repoint its shortcut without touching user data.
+ $installed=Join-Path $testRoot 'ProgramFiles\Kohdalab\KohdaLab IV'
+ New-Item -ItemType Directory $installed -Force | Out-Null
+ $legacyExe=Join-Path $installed 'kohdalab-iv-next.exe'
+ Set-Content $legacyExe 'GUI fixture legacy' -Encoding ASCII
+ $legacyShortcutPath=Join-Path $testRoot 'Desktop\KohdaLab IV.lnk'
+ New-Item -ItemType Directory (Split-Path -Parent $legacyShortcutPath) -Force | Out-Null
+ $legacyShortcut=(New-Object -ComObject WScript.Shell).CreateShortcut($legacyShortcutPath)
+ $legacyShortcut.TargetPath=$legacyExe
+ $legacyShortcut.WorkingDirectory=(Join-Path $testRoot 'UserData')
+ $legacyShortcut.Save()
  New-Package 'first'
  Install-Fixture
- $installed=Join-Path $testRoot 'ProgramFiles\Kohdalab\KohdaLab IV'
- $exe=Join-Path $installed 'kohdalab-iv-next.exe'
+ $exe=Join-Path $installed 'kohdalab-iv.exe'
  Assert-True (Test-Path $exe) 'Fresh install is missing'
- Assert-True ((Get-FileHash $exe).Hash -eq (Get-FileHash (Join-Path $package 'kohdalab-iv-next.exe')).Hash) 'Fresh install differs from package'
+ Assert-True (!(Test-Path $legacyExe)) 'Update retained the legacy executable name'
+ Assert-True ((Get-FileHash $exe).Hash -eq (Get-FileHash (Join-Path $package 'kohdalab-iv.exe')).Hash) 'Fresh install differs from package'
  $shortcut=(New-Object -ComObject WScript.Shell).CreateShortcut((Join-Path $testRoot 'Desktop\KohdaLab IV.lnk'))
- Assert-True ($shortcut.TargetPath -eq $exe) 'Shortcut points at extracted download'
+ Assert-True ($shortcut.TargetPath -eq $exe) 'Legacy shortcut was not migrated to the renamed executable'
  Assert-True ($shortcut.WorkingDirectory -eq (Join-Path $testRoot 'UserData')) 'Shortcut working folder is not user-writable'
  # Re-running identical setup must also succeed.
  Install-Fixture
@@ -91,7 +103,7 @@ try {
  try{& ([ScriptBlock]::Create([IO.File]::ReadAllText($installer))) -PackageDirectory $package -TestRoot $testRoot -AfterInstall { param($path) throw 'simulated registration failure' }}catch{$failed=$true}
  Assert-True $failed 'Installer accepted a registration callback failure'
  Assert-True ((Get-FileHash $exe).Hash -eq $before) 'Registration failure did not restore the old executable'
- Write-Host 'PASS: fresh install, repeat, update, backup preservation, shortcuts, user data, tamper/traversal refusal and failed-update rollback.'
+ Write-Host 'PASS: legacy executable migration, fresh install, repeat, update, backup preservation, shortcuts, user data, tamper/traversal refusal and failed-update rollback.'
 } finally {
  Remove-Item -LiteralPath $directory -Recurse -Force
 }

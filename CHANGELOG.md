@@ -1,5 +1,11 @@
 # Changelog
 
+## 1.3.0-alpha.5
+
+- Rename the desktop executable to `kohdalab-iv.exe` on Windows and `kohdalab-iv` on macOS; name the Mac bundle `KohdaLab IV.app`. No legacy GUI executable alias is shipped.
+- Update shortcuts, metadata, packaging, CLI launch and signing inputs for the new name. Preserve existing configuration, device leases and Python `iv-cli` automation.
+- Keep old/new process detection and shortcut migration for safe installation updates.
+
 ## 1.3.0-alpha.4
 
 - Add separate rounded outlines around Output and Run while preserving the three-column layout.

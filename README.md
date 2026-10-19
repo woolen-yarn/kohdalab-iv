@@ -64,7 +64,7 @@ and invalid Start requests explain the problem in an English dialog.
 
 Windows: run **Setup.exe**, approve administrator access, then start **KohdaLab IV** from the desktop or Start menu. It installs to `C:\Program Files\Kohdalab\KohdaLab IV`. Run a newer Setup to update; uninstall from Windows Settings. Close IV and automation clients first. Settings, results and instrument drivers are retained.
 
-For portable use, extract the whole ZIP. Mac: open `KohdaLab IV Next.app`. Windows: run `kohdalab-iv-next.exe` directly. No Python or Rust installation is needed. Instrument communication uses an available official 64-bit VISA runtime or the native WinUSB helpers. App installation does not change drivers; `support/USB-Setup.exe` is a separate action for devices that need WinUSB.
+For portable use, extract the whole ZIP. Mac: open `KohdaLab IV.app`. Windows: run `kohdalab-iv.exe` directly. No Python or Rust installation is needed. Instrument communication uses an available official 64-bit VISA runtime or the native WinUSB helpers. App installation does not change drivers; `support/USB-Setup.exe` is a separate action for devices that need WinUSB.
 See [Windows Setup distribution](next/README.md#windows-setupexe-distribution).
 Mac bundles are ad hoc signed, not Apple-notarized.
 
@@ -87,7 +87,7 @@ drivers or an incomplete existing WinUSB assignment are configured.
 
 ## Development: legacy instrument drivers
 
-The next **1.3.0-alpha.4** build ports the working Python drivers at `b754cfa^` into the Rust engine. This development work is not included in the v1.2.0 downloads above.
+The next **1.3.0-alpha.5** build ports the working Python drivers at `b754cfa^` into the Rust engine. This development work is not included in the v1.2.0 downloads above.
 
 | Instrument | Implemented development connection | Validation |
 | --- | --- | --- |
@@ -113,17 +113,20 @@ rebuilds Windows application/helper files from source on GitHub-hosted runners.
 Upstream GPIB/libwdi signing eligibility and installer signing require review
 before production signing can be enabled.
 
+The desktop executable is `kohdalab-iv.exe` on Windows; the Mac bundle is
+`KohdaLab IV.app`. The CLI remains `iv-cli`, and existing saved settings are retained.
+
 Source and Meter connection settings, including Meter NPLC, are grouped in
 collapsible Device sections. Live readouts remain visible when folded. Output
 and Run have separate rounded outlines.
 
-The latest development download is **v1.3.0-alpha.4**, including legacy protocol
+The latest development download is **v1.3.0-alpha.5**, including legacy protocol
 ports, reduced zero-wait metadata traffic and signing preparation. Additional
 instrument hardware validation is pending. The stable v1.2.0 links above remain
 available.
 
-- [Development downloads (Kohdalab)](https://github.com/Kohdalab/kohdalab-iv/releases/tag/preview-v1.3.0-alpha.4)
-- [Development downloads (personal)](https://github.com/woolen-yarn/kohdalab-iv/releases/tag/preview-v1.3.0-alpha.4)
+- [Development downloads (Kohdalab)](https://github.com/Kohdalab/kohdalab-iv/releases/tag/preview-v1.3.0-alpha.5)
+- [Development downloads (personal)](https://github.com/woolen-yarn/kohdalab-iv/releases/tag/preview-v1.3.0-alpha.5)
 
 ## Build and validation
 

@@ -125,8 +125,8 @@ def main() -> None:
 
     payload = must_directory(args.payload_dir, "Prepared portable payload")
     wrapper = must_file(args.wrapper, "Installer wrapper")
-    if not (payload / "kohdalab-iv-next.exe").is_file():
-        raise SystemExit("Prepared portable payload lacks kohdalab-iv-next.exe")
+    if not (payload / "kohdalab-iv.exe").is_file():
+        raise SystemExit("Prepared portable payload lacks kohdalab-iv.exe")
     if not (payload / "iv-cli.exe").is_file():
         raise SystemExit("Prepared portable payload lacks iv-cli.exe")
     if not (payload / "FILES.json").is_file():
