@@ -45,7 +45,9 @@ class ExecutableDiscoveryTests(unittest.TestCase):
             executable.touch()
             with patch.dict(os.environ, {"ProgramFiles": str(root)}, clear=True), patch(
                 "kohdalab_iv_native.shutil.which", return_value=None
-            ), patch("kohdalab_iv_native.sys.platform", "win32"):
+            ), patch("kohdalab_iv_native.sys.platform", "win32"), patch(
+                "kohdalab_iv_native._windows_installations", return_value=iter(())
+            ):
                 self.assertEqual(resolve_executable(), str(executable.resolve()))
 
     def test_invalid_override_does_not_fall_back(self):
@@ -119,7 +121,7 @@ class ExecutableDiscoveryTests(unittest.TestCase):
     def test_error_explains_that_client_does_not_install_engine(self):
         with patch.dict(os.environ, {}, clear=True), patch(
             "kohdalab_iv_native.shutil.which", return_value=None
-        ), patch("kohdalab_iv_native.sys.platform", "darwin"):
+        ), patch("kohdalab_iv_native._installed_candidates", return_value=iter(())):
             with self.assertRaisesRegex(FileNotFoundError, "does not install or build"):
                 resolve_executable()
 
