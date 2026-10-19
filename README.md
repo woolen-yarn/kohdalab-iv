@@ -87,7 +87,7 @@ drivers or an incomplete existing WinUSB assignment are configured.
 
 ## Development: legacy instrument drivers
 
-The next **1.3.0-alpha.3** build ports the working Python drivers at `b754cfa^` into the Rust engine. This development work is not included in the v1.2.0 downloads above.
+The next **1.3.0-alpha.4** build ports the working Python drivers at `b754cfa^` into the Rust engine. This development work is not included in the v1.2.0 downloads above.
 
 | Instrument | Implemented development connection | Validation |
 | --- | --- | --- |
@@ -113,13 +113,17 @@ rebuilds Windows application/helper files from source on GitHub-hosted runners.
 Upstream GPIB/libwdi signing eligibility and installer signing require review
 before production signing can be enabled.
 
-The latest development download is **v1.3.0-alpha.3**, including legacy protocol
+Source and Meter connection settings, including Meter NPLC, are grouped in
+collapsible Device sections. Live readouts remain visible when folded. Output
+and Run have separate rounded outlines.
+
+The latest development download is **v1.3.0-alpha.4**, including legacy protocol
 ports, reduced zero-wait metadata traffic and signing preparation. Additional
 instrument hardware validation is pending. The stable v1.2.0 links above remain
 available.
 
-- [Development downloads (Kohdalab)](https://github.com/Kohdalab/kohdalab-iv/releases/tag/preview-v1.3.0-alpha.3)
-- [Development downloads (personal)](https://github.com/woolen-yarn/kohdalab-iv/releases/tag/preview-v1.3.0-alpha.3)
+- [Development downloads (Kohdalab)](https://github.com/Kohdalab/kohdalab-iv/releases/tag/preview-v1.3.0-alpha.4)
+- [Development downloads (personal)](https://github.com/woolen-yarn/kohdalab-iv/releases/tag/preview-v1.3.0-alpha.4)
 
 ## Build and validation
 

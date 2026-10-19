@@ -1,6 +1,6 @@
 # KohdaLab IV Native Desktop
 
-Development **1.3.0-alpha.3** ports Yokogawa 7651, Agilent 34401A, Keysight 34465A and ADCMT 7461A from the former Python drivers. Protocol mocks pass; physical validation is pending. GS200 and native ADCMT USB are not added. See the instrument matrix in the source README.
+Development **1.3.0-alpha.4** ports Yokogawa 7651, Agilent 34401A, Keysight 34465A and ADCMT 7461A from the former Python drivers. Protocol mocks pass; physical validation is pending. GS200 and native ADCMT USB are not added. See the instrument matrix in the source README.
 
 Version **1.2.0** adds a Windows Setup.exe installer and per-device official VISA preference
 on Windows.
@@ -365,3 +365,8 @@ are pending. Public policies and the unsigned CI build procedure are included
 in `support/SOURCE.zip`: `CODE_SIGNING_POLICY.md`, `PRIVACY.md` and
 `.signpath/README.md`. No SignPath credentials or certificates are bundled.
 See the source README for development and stable download links.
+
+
+Source/Meter Device sections fold model, resource and connection controls together;
+Meter NPLC is inside Device. Live values and connection status remain visible.
+Output and Run have separate rounded outlines.
