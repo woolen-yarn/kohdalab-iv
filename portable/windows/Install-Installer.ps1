@@ -72,12 +72,12 @@ try {
  $shell=New-Object -ComObject WScript.Shell
  foreach($path in @((Join-Path $menu 'KohdaLab IV.lnk'),(Join-Path $desktop 'KohdaLab IV.lnk'))){
   $shortcut=$shell.CreateShortcut($path)
-  $shortcut.TargetPath=Join-Path $installed 'kohdalab-iv-next.exe'
+  $shortcut.TargetPath=Join-Path $installed 'kohdalab-iv.exe'
   $shortcut.WorkingDirectory=$env:WINDIR
   $shortcut.Description='KohdaLab IV'
   $shortcut.Save()
  }
- $values=@{DisplayName='KohdaLab IV';DisplayVersion=$ApplicationVersion;Publisher='KohdaLab';InstallLocation=$installed;DisplayIcon=(Join-Path $installed 'kohdalab-iv-next.exe');UninstallString=('"'+(Join-Path $installed 'Uninstall.exe')+'"');QuietUninstallString=('"'+(Join-Path $installed 'Uninstall.exe')+'" /S');URLInfoAbout='https://github.com/Kohdalab/kohdalab-iv'}
+ $values=@{DisplayName='KohdaLab IV';DisplayVersion=$ApplicationVersion;Publisher='KohdaLab';InstallLocation=$installed;DisplayIcon=(Join-Path $installed 'kohdalab-iv.exe');UninstallString=('"'+(Join-Path $installed 'Uninstall.exe')+'"');QuietUninstallString=('"'+(Join-Path $installed 'Uninstall.exe')+'" /S');URLInfoAbout='https://github.com/Kohdalab/kohdalab-iv'}
  New-Item -Path $key -Force | Out-Null
  foreach($name in $values.Keys){New-ItemProperty -Path $key -Name $name -Value $values[$name] -PropertyType String -Force | Out-Null}
  foreach($name in @('NoModify','NoRepair')){New-ItemProperty -Path $key -Name $name -Value 1 -PropertyType DWord -Force | Out-Null}
@@ -93,7 +93,7 @@ try {
  # Remove an older per-user shortcut only when it refers to this same application.
  $old=Join-Path ([Environment]::GetFolderPath('Desktop')) 'KohdaLab IV.lnk'
  if($old -ne (Join-Path $desktop 'KohdaLab IV.lnk') -and (Test-Path -LiteralPath $old)){
-  if($shell.CreateShortcut($old).TargetPath -eq (Join-Path $installed 'kohdalab-iv-next.exe')){Remove-Item -LiteralPath $old}
+  if($shell.CreateShortcut($old).TargetPath -in @((Join-Path $installed 'kohdalab-iv.exe'),(Join-Path $installed 'kohdalab-iv-next.exe'))){Remove-Item -LiteralPath $old}
  }
  } catch { Write-Warning "The old per-user shortcut was retained: $_" }
  Write-Output "Installed KohdaLab IV $ApplicationVersion; registered Windows uninstall and shortcuts."

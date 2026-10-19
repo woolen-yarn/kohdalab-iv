@@ -122,7 +122,7 @@ function Assert-Package([string]$Root, $Entries) {
             throw "Package contains a file that is not protected by FILES.json: $relative"
         }
     }
-    foreach ($required in @('kohdalab-iv-next.exe', 'iv-cli.exe', 'Install-Application.cmd', 'Install-Application.ps1')) {
+    foreach ($required in @('kohdalab-iv.exe', 'iv-cli.exe', 'Install-Application.cmd', 'Install-Application.ps1')) {
         if (-not $listed.Contains($required)) {
             throw "FILES.json is missing a required application file: $required"
         }
@@ -221,7 +221,10 @@ function Archive-PreviousInstall([string]$Previous, [string]$ArchiveDirectory) {
 }
 
 function Assert-NotRunning([string]$InstallPath, [bool]$IsTest) {
-    $names = @('kohdalab-iv-next', 'iv-cli', 'KohdaLab IV')
+    # Keep the legacy process name here through the rename migration.  A running
+    # old binary can still be executing from the installation directory that an
+    # update is about to replace.
+    $names = @('kohdalab-iv', 'kohdalab-iv-next', 'iv-cli', 'KohdaLab IV')
     foreach ($name in $names) {
         foreach ($process in @(Get-Process -Name $name -ErrorAction SilentlyContinue)) {
             if ($IsTest) {
@@ -360,12 +363,12 @@ try {
     Move-Item -LiteralPath $stage -Destination $installPath
     $activated = $true
     if ($TestCorruptAfterMove) {
-        Add-Content -LiteralPath (Join-Path $installPath 'kohdalab-iv-next.exe') -Value 'test corruption after staging move'
+        Add-Content -LiteralPath (Join-Path $installPath 'kohdalab-iv.exe') -Value 'test corruption after staging move'
     }
     Assert-TreeMatchesManifest $installPath $manifest 'The installed application'
     $previousShortcutBackup = Backup-DesktopShortcut $shortcutPath $archiveDirectory
     $shortcutChanged = $true
-    New-DesktopShortcut $shortcutPath (Join-Path $installPath 'kohdalab-iv-next.exe') $userData
+    New-DesktopShortcut $shortcutPath (Join-Path $installPath 'kohdalab-iv.exe') $userData
     if ($hadPrevious -and (Test-Path -LiteralPath $previous)) {
         Assert-TreeHashes $previous $previousBackup.Hashes 'The previous installation'
     }

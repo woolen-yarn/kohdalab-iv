@@ -7,9 +7,9 @@ fn main() {
             .parent()
             .ok_or("Missing application folder")?
             .join(if cfg!(windows) {
-                "kohdalab-iv-next.exe"
+                "kohdalab-iv.exe"
             } else {
-                "kohdalab-iv-next"
+                "kohdalab-iv"
             });
         let mut arguments: Vec<_> = std::env::args_os().skip(1).collect();
         if arguments.is_empty() {

@@ -35,8 +35,8 @@ fn main() {
         &version,
         &version_words,
         "KohdaLab IV",
-        "kohdalab-iv-next",
-        "kohdalab-iv-next.exe",
+        "kohdalab-iv",
+        "kohdalab-iv.exe",
     );
     fs::write(
         &resource,
@@ -50,10 +50,7 @@ fn main() {
         "application.o"
     });
     compile_resource(&resource, &object, msvc);
-    println!(
-        "cargo:rustc-link-arg-bin=kohdalab-iv-next={}",
-        object.display()
-    );
+    println!("cargo:rustc-link-arg-bin=kohdalab-iv={}", object.display());
     let cli_resource = out.join("iv-cli.rc");
     let cli_text = render_version_resource(
         &template,

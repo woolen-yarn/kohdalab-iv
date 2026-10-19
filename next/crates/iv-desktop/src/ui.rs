@@ -479,7 +479,7 @@ impl IvApp {
             settings.config.start_settle_s = 0.03;
             settings.config.settle_s = 0.02;
             settings.output_dir = std::env::temp_dir()
-                .join("kohdalab-iv-next-smoke")
+                .join("kohdalab-iv-smoke")
                 .display()
                 .to_string();
             if let Some((source, meter)) = hardware {

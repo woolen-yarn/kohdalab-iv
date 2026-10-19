@@ -74,7 +74,7 @@ jobs:
           if-no-files-found: error
           retention-days: 14
           path: |
-            ${{ steps.package.outputs.payload }}/kohdalab-iv-next.exe
+            ${{ steps.package.outputs.payload }}/kohdalab-iv.exe
             ${{ steps.package.outputs.payload }}/iv-cli.exe
             ${{ steps.package.outputs.payload }}/support/kohdalab-usbtmc-helper.exe
             ${{ steps.package.outputs.payload }}/support/kohdalab-visa-helper.exe

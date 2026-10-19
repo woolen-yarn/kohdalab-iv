@@ -8,7 +8,7 @@ or failed VISA connection is reported; it is never retried through native I/O.
 Connect supported instruments. If a device has no assigned driver, run
 `support/USB-Setup.exe` and approve any Windows administrator/driver prompts.
 The Rust GUI does not run the setup executable automatically. Afterwards,
-launch `kohdalab-iv-next.exe`, click Refresh, select the
+launch `kohdalab-iv.exe`, click Refresh, select the
 actual Source and Meter resources and connect them. No separate Python, VISA,
 manufacturer installer or Zadig download is needed for these native connections.
 

@@ -112,7 +112,7 @@ This is a communication and shutdown check, not known-resistor accuracy or
 fresh acceptance of direct USB, 82357B, or driver reinstall behavior.
 
 ```sh
-python3 scripts/benchmark_rust_optimization.py --before /path/to/alpha1/kohdalab-iv-next --after next/target/release/kohdalab-iv-next
+python3 scripts/benchmark_rust_optimization.py --before /path/to/alpha1/kohdalab-iv-next --after next/target/release/kohdalab-iv
 cargo build --manifest-path next/Cargo.toml -p iv-core --example benchmark_plan --release --locked
 python3 scripts/benchmark_rust_plan.py --before /path/to/old/benchmark_plan --after next/target/release/examples/benchmark_plan
 ```

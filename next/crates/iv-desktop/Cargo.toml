@@ -1,12 +1,12 @@
 [package]
-name = "kohdalab-iv-next"
+name = "kohdalab-iv"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
 rust-version.workspace = true
 
 [[bin]]
-name = "kohdalab-iv-next"
+name = "kohdalab-iv"
 path = "src/main.rs"
 
 [[bin]]

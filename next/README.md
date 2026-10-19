@@ -1,6 +1,6 @@
 # KohdaLab IV Native Desktop
 
-Development **1.3.0-alpha.4** ports Yokogawa 7651, Agilent 34401A, Keysight 34465A and ADCMT 7461A from the former Python drivers. Protocol mocks pass; physical validation is pending. GS200 and native ADCMT USB are not added. See the instrument matrix in the source README.
+Development **1.3.0-alpha.5** ports Yokogawa 7651, Agilent 34401A, Keysight 34465A and ADCMT 7461A from the former Python drivers. Protocol mocks pass; physical validation is pending. GS200 and native ADCMT USB are not added. See the instrument matrix in the source README.
 
 Version **1.2.0** adds a Windows Setup.exe installer and per-device official VISA preference
 on Windows.
@@ -63,8 +63,8 @@ require MinGW `windres` or Windows SDK `rc.exe`; these are build tools only.
 
 Extract the whole ZIP. On Windows run `Install-Application.cmd`, approve the
 administrator prompt, and use the **KohdaLab IV** desktop shortcut. You can also
-open `kohdalab-iv-next.exe` directly for portable use. On Apple Silicon open
-`KohdaLab IV Next.app`. No Python, Rust, or vendor VISA installation is
+open `kohdalab-iv.exe` directly for portable use. On Apple Silicon open
+`KohdaLab IV.app`. No Python, Rust, or vendor VISA installation is
 required for supported native connections. Keep the support files with the app.
 The Mac app is ad hoc signed and is not notarized.
 

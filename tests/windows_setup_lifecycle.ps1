@@ -47,7 +47,7 @@ function Verify-Install {
  $wsh=New-Object -ComObject WScript.Shell
  foreach($shortcut in @((Join-Path ([Environment]::GetFolderPath('CommonDesktopDirectory')) 'KohdaLab IV.lnk'),(Join-Path ([Environment]::GetFolderPath('CommonPrograms')) 'KohdaLab IV\KohdaLab IV.lnk'))){
   Require (Test-Path -LiteralPath $shortcut) 'Shared application shortcut missing.'
-  Require ($wsh.CreateShortcut($shortcut).TargetPath -eq (Join-Path $install 'kohdalab-iv-next.exe')) 'Shared shortcut target is wrong.'
+  Require ($wsh.CreateShortcut($shortcut).TargetPath -eq (Join-Path $install 'kohdalab-iv.exe')) 'Shared shortcut target is wrong.'
  }
  Verify-Preservation
 }
@@ -55,7 +55,7 @@ $before=Snapshot-Files
 $drivers=Driver-Snapshot
 $engine=$null
 try {
- Require ((Get-Process -Name kohdalab-iv-next,iv-cli -ErrorAction SilentlyContinue | Measure-Object).Count -eq 0) 'Close IV before lifecycle verification.'
+ Require ((Get-Process -Name kohdalab-iv,kohdalab-iv-next,iv-cli -ErrorAction SilentlyContinue | Measure-Object).Count -eq 0) 'Close IV before lifecycle verification.'
  $stage='update old portable installation'
  Run-Setup
  Verify-Install

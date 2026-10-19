@@ -43,7 +43,7 @@ export KOHDALAB_IV_HELPER_DIR="$PWD/build/replacement-helpers"
 ```
 
 Launch the GUI/CLI from that environment. Alternatively replace the helper
-inside `KohdaLab IV Next.app/Contents/MacOS/support/` and ad hoc re-sign the app.
+inside `KohdaLab IV.app/Contents/MacOS/support/` and ad hoc re-sign the app.
 
 ## Windows x64
 
