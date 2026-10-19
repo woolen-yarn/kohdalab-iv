@@ -1,6 +1,6 @@
 # KohdaLab IV Native Desktop
 
-Development **1.3.0-alpha.1** ports Yokogawa 7651, Agilent 34401A, Keysight 34465A and ADCMT 7461A from the former Python drivers. Protocol mocks pass; physical validation is pending. GS200 and native ADCMT USB are not added. See the instrument matrix in the source README.
+Development **1.3.0-alpha.2** ports Yokogawa 7651, Agilent 34401A, Keysight 34465A and ADCMT 7461A from the former Python drivers. Protocol mocks pass; physical validation is pending. GS200 and native ADCMT USB are not added. See the instrument matrix in the source README.
 
 Version **1.2.0** adds a Windows Setup.exe installer and per-device official VISA preference
 on Windows.

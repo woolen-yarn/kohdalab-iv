@@ -1007,6 +1007,32 @@ fn clean_output(
 
 // One owner serializes device I/O. Live samples use the already configured
 // sweep NPLC and never enter the CSV or resistance fit.
+// Resolution is fixed by range + the NPLC/function configured for this run.
+// Still inspect range after EVERY conversion, including each averaged sample.
+// Reconfiguration creates a new cache; never carry idle-monitor precision into a run.
+#[derive(Default)]
+struct MeterResolutionCache {
+    last: Option<(f64, f64)>,
+}
+impl MeterResolutionCache {
+    fn read(
+        &mut self,
+        range: Option<f64>,
+        query: impl FnOnce() -> Result<String, String>,
+    ) -> Result<Option<f64>, String> {
+        if let (Some(range), Some((previous, resolution))) = (range, self.last)
+            && range == previous
+        {
+            return Ok(Some(resolution));
+        }
+        // Invalidate first: failed/unknown metadata must not retain old precision.
+        self.last = None;
+        let resolution = positive_reading(&query()?);
+        self.last = range.zip(resolution);
+        Ok(resolution)
+    }
+}
+
 struct SweepMonitor<'a> {
     config: &'a RunConfig,
     control: &'a Control,
@@ -1014,6 +1040,7 @@ struct SweepMonitor<'a> {
     begin: Instant,
     last: Instant,
     source_resolution: Option<f64>,
+    meter_resolution: MeterResolutionCache,
 }
 impl SweepMonitor<'_> {
     fn record(&self, level: f64) -> Record {
@@ -1036,7 +1063,7 @@ impl SweepMonitor<'_> {
         publish(self.latest, state);
     }
 
-    fn acquire(&self, pair: Option<&mut DevicePair>, level: f64) -> Result<Record, String> {
+    fn acquire(&mut self, pair: Option<&mut DevicePair>, level: f64) -> Result<Record, String> {
         let mut record = self.record(level);
         if let Some(device) = pair {
             let measured = monitor_query(device, Role::Meter, "READ?", self.control)?;
@@ -1062,12 +1089,9 @@ impl SweepMonitor<'_> {
             {
                 record.meter_range =
                     positive_reading(&monitor_query(device, Role::Meter, range, self.control)?);
-                record.meter_resolution = positive_reading(&monitor_query(
-                    device,
-                    Role::Meter,
-                    resolution,
-                    self.control,
-                )?);
+                record.meter_resolution = self.meter_resolution.read(record.meter_range, || {
+                    monitor_query(device, Role::Meter, resolution, self.control)
+                })?;
             } else {
                 record.meter_range = None;
                 record.meter_resolution = None;
@@ -1085,7 +1109,10 @@ impl SweepMonitor<'_> {
         level: f64,
         state: &mut Snapshot,
     ) -> Result<bool, String> {
-        let end = Instant::now() + Duration::from_secs_f64(seconds.max(0.0));
+        if seconds <= 0.0 {
+            return Ok(!self.control.cancelled());
+        }
+        let end = Instant::now() + Duration::from_secs_f64(seconds);
         // Avoid starting a conversion at the end of a short ramp/settling wait.
         // Budget conservatively for 50 Hz mains, autozero and transport overhead.
         let budget = if pair.is_some() {
@@ -1201,6 +1228,7 @@ fn execute(
         begin,
         last: Instant::now(),
         source_resolution: None,
+        meter_resolution: MeterResolutionCache::default(),
     };
     let mut display_settings_changes = Vec::new();
     let mut instrument_status_events = Vec::new();
@@ -1270,7 +1298,10 @@ fn execute(
             }
             let mut record = if let Some(device) = pair.as_deref_mut() {
                 state.message.clear();
-                state.message.push_str("Reading meter…");
+                state.message = format!(
+                    "Reading meter ({} readings per point, NPLC {})…",
+                    config.average_count, config.nplc
+                );
                 publish_progress(latest, state, &mut last_progress);
                 let mut value = 0.0;
                 let mut readings_completed = 0_u32;
@@ -1317,8 +1348,11 @@ fn execute(
                                 stopped = true;
                                 break;
                             }
-                            let resolution = device.query(Role::Meter, resolution_query)?;
-                            (positive_reading(&range), positive_reading(&resolution))
+                            let range = positive_reading(&range);
+                            let resolution = live
+                                .meter_resolution
+                                .read(range, || device.query(Role::Meter, resolution_query))?;
+                            (range, resolution)
                         } else {
                             // A profile without verified display commands can still
                             // acquire readings, but its precision metadata stays unknown.
@@ -1539,6 +1573,78 @@ mod tests {
             closed: AtomicBool::new(false),
             heartbeat: Mutex::new(Instant::now()),
         }
+    }
+
+    #[test]
+    fn resolution_cache_reuses_only_the_current_range_and_recovers_unknowns() {
+        let mut cache = MeterResolutionCache::default();
+        let calls = std::cell::Cell::new(0);
+        for _ in 0..10 {
+            assert_eq!(
+                cache
+                    .read(Some(1.0), || {
+                        calls.set(calls.get() + 1);
+                        Ok("1e-6".into())
+                    })
+                    .unwrap(),
+                Some(1e-6)
+            );
+        }
+        assert_eq!(
+            calls.get(),
+            1,
+            "Repeat 10 should not query identical resolution 10 times"
+        );
+        assert_eq!(
+            cache.read(Some(10.0), || Ok("1e-5".into())).unwrap(),
+            Some(1e-5)
+        );
+        assert_eq!(
+            cache.read(Some(1.0), || Ok("2e-6".into())).unwrap(),
+            Some(2e-6),
+            "range changes must refresh, even on returning to an old range"
+        );
+        assert!(
+            cache
+                .read(Some(100.0), || Err("transport failure".into()))
+                .is_err()
+        );
+        assert_eq!(
+            cache.read(Some(1.0), || Ok("3e-6".into())).unwrap(),
+            Some(3e-6)
+        );
+        assert_eq!(cache.read(None, || Ok("NaN".into())).unwrap(), None);
+        assert_eq!(
+            cache.read(Some(1.0), || Ok("4e-6".into())).unwrap(),
+            Some(4e-6)
+        );
+        let mut new_run = MeterResolutionCache::default();
+        assert_eq!(
+            new_run.read(Some(1.0), || Ok("5e-6".into())).unwrap(),
+            Some(5e-6)
+        );
+    }
+
+    #[test]
+    fn zero_wait_does_not_acquire_or_publish_an_extra_conversion() {
+        let config = RunConfig::default();
+        let control = live_control();
+        let latest = StateFeed::default();
+        let mut monitor = SweepMonitor {
+            config: &config,
+            control: &control,
+            latest: &latest,
+            begin: Instant::now(),
+            last: Instant::now() - Duration::from_secs(1),
+            source_resolution: None,
+            meter_resolution: MeterResolutionCache::default(),
+        };
+        let mut state = Snapshot::default();
+        assert!(monitor.wait(0.0, None, 0.0, &mut state).unwrap());
+        assert!(state.live.is_none());
+        assert!(latest.pending.lock().unwrap().snapshot.is_none());
+        control.stop.store(true, Ordering::Release);
+        assert!(!monitor.wait(0.0, None, 0.0, &mut state).unwrap());
     }
 
     #[test]

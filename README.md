@@ -86,7 +86,7 @@ drivers or an incomplete existing WinUSB assignment are configured.
 
 ## Development: legacy instrument drivers
 
-The next **1.3.0-alpha.1** build ports the working Python drivers at `b754cfa^` into the Rust engine. This development work is not included in the v1.2.0 downloads above.
+The next **1.3.0-alpha.2** build ports the working Python drivers at `b754cfa^` into the Rust engine. This development work is not included in the v1.2.0 downloads above.
 
 | Instrument | Implemented development connection | Validation |
 | --- | --- | --- |

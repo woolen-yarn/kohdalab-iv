@@ -1607,6 +1607,15 @@ impl IvApp {
                 self.save_measurement();
             }
         });
+        ui.label(
+            RichText::new(format!(
+                "{} readings / point · NPLC {}",
+                iv_core::readings_per_point(&self.settings.config),
+                self.settings.config.nplc
+            ))
+            .small()
+            .color(MUTED),
+        );
         if self.preview.is_ok()
             && let Ok(effective) = iv_core::prepare_config(&self.settings.config)
         {

@@ -1,6 +1,9 @@
 # Changelog
 
-## 1.3.0-alpha.1 (unreleased)
+## 1.3.0-alpha.2 (unreleased)
+
+- Reduce sweep precision queries by caching resolution only while the observed range stays unchanged; still check autorange after each conversion and preserve source readback, every-sample compliance and CSV flush.
+- Show readings per point and NPLC beside Run controls. Zero wait never starts an extra live conversion.
 
 - Port legacy 7651, 34401A, 34465A and 7461A model protocols from Python into the Rust engine; physical validation remains pending.
 - Select model-specific range, compliance, NPLC, identity and safe shutdown behavior in GUI, CLI and Notebook control.
