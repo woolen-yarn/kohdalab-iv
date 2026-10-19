@@ -13,7 +13,7 @@ TASK_PYTHON="${KOHDALAB_PYTHON:-python3}"
 TASK_ICON="$TASK_ROOT/next/assets/kohdalab-iv.ico"
 mkdir -p "$TASK_BUILD"
 cp -R "$TASK_SOURCE/libwdi" "$TASK_BUILD/"
-cp "$TASK_SOURCE/config.h" "$TASK_BUILD/"
+cp "$TASK_ROOT/native/libwdi_inbox_config.h" "$TASK_BUILD/config.h"
 cd "$TASK_BUILD/libwdi"
 "$TASK_CC" -O2 -static -s -DUNICODE installer.c -lsetupapi -lnewdev -lole32 -o installer_x64.exe
 "$TASK_HOST_CC" -O2 -I.. embedder.c -o embedder
