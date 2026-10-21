@@ -1,6 +1,14 @@
 //! Model dialects ported from the Python drivers at b754cfa^.
 //! Commands here are internal engine operations, never arbitrary user SCPI rewrites.
 use crate::Role;
+use iv_core::{InstrumentDialect, InstrumentRole, instrument_descriptor};
+
+fn catalog_role(role: Role) -> InstrumentRole {
+    match role {
+        Role::Source => InstrumentRole::Source,
+        Role::Meter => InstrumentRole::Meter,
+    }
+}
 
 pub fn default_model(role: Role) -> &'static str {
     match role {
@@ -9,22 +17,18 @@ pub fn default_model(role: Role) -> &'static str {
     }
 }
 pub fn valid_model(role: Role, model: &str) -> bool {
-    match role {
-        Role::Source => matches!(model, "YOKOGAWA_GS210" | "YOKOGAWA_7651"),
-        Role::Meter => matches!(
-            model,
-            "AGILENT_34401A"
-                | "AGILENT_34411A"
-                | "KEYSIGHT_34411A"
-                | "KEYSIGHT_34465A"
-                | "ADCMT_7461A"
-        ),
-    }
+    instrument_descriptor(model)
+        .is_some_and(|descriptor| !descriptor.simulation && descriptor.role == catalog_role(role))
+}
+
+pub fn dialect(role: Role, model: &str) -> Result<InstrumentDialect, String> {
+    let descriptor = instrument_descriptor(model)
+        .filter(|descriptor| !descriptor.simulation && descriptor.role == catalog_role(role))
+        .ok_or_else(|| format!("Unsupported instrument model: {model}"))?;
+    Ok(descriptor.dialect)
 }
 pub fn verify_model(role: Role, model: &str, identity: &str) -> Result<(), String> {
-    if !valid_model(role, model) {
-        return Err(format!("Unsupported instrument model: {model}"));
-    }
+    let dialect = dialect(role, model)?;
     let first = identity
         .lines()
         .next()
@@ -36,18 +40,19 @@ pub fn verify_model(role: Role, model: &str, identity: &str) -> Result<(), Strin
         .filter(|s| !s.is_empty())
         .collect();
     let has = |s: &str| tokens.contains(&s);
-    let accepted = match model {
-        "YOKOGAWA_7651" => {
+    let accepted = match dialect {
+        InstrumentDialect::Yokogawa7651 => {
             (first.starts_with("7651") || first.starts_with("YOKOGAWA")) && has("7651")
         }
-        "YOKOGAWA_GS210" => has("YOKOGAWA") && has("GS210"),
-        "ADCMT_7461A" => {
+        InstrumentDialect::Scpi if role == Role::Source => has("YOKOGAWA") && has("GS210"),
+        InstrumentDialect::Adc7461 => {
             (has("ADC") || has("ADCMT") || has("ADVANTEST")) && (has("7461A") || has("AD7461A"))
         }
-        _ => {
+        InstrumentDialect::Agilent34401 | InstrumentDialect::Scpi => {
             (has("AGILENT") || has("KEYSIGHT") || has("HEWLETT") || has("HP"))
                 && has(model.rsplit('_').next().unwrap_or_default())
         }
+        InstrumentDialect::Simulation => false,
     };
     if accepted {
         Ok(())
@@ -57,11 +62,11 @@ pub fn verify_model(role: Role, model: &str, identity: &str) -> Result<(), Strin
         ))
     }
 }
-pub fn identity_command(model: &str) -> &'static str {
-    if model == "YOKOGAWA_7651" {
-        "OS;E\n"
+pub fn identity_command(role: Role, model: &str) -> Result<&'static str, String> {
+    if dialect(role, model)? == InstrumentDialect::Yokogawa7651 {
+        Ok("OS;E\n")
     } else {
-        "*IDN?\n"
+        Ok("*IDN?\n")
     }
 }
 pub fn legacy_status(reply: &str) -> Result<u8, String> {
@@ -271,6 +276,34 @@ mod tests {
         assert!(verify_model(Role::Meter, "AGILENT_34401A", "Agilent,34411A,0,1").is_err());
         assert!(verify_model(Role::Source, "YOKOGAWA_7651", "7651 REV1").is_ok());
         assert!(verify_model(Role::Source, "YOKOGAWA_7651", "76510 REV1").is_err());
+    }
+    #[test]
+    fn every_non_simulated_catalog_model_has_an_identity_contract() {
+        for descriptor in iv_core::instrument_catalog(iv_core::InstrumentRole::Source) {
+            if descriptor.simulation {
+                continue;
+            }
+            let identity = match descriptor.id {
+                "YOKOGAWA_GS210" => "YOKOGAWA,GS210,MOCK,2.0",
+                "YOKOGAWA_7651" => "7651 REV1",
+                _ => unreachable!("registered source requires identity fixture"),
+            };
+            assert!(verify_model(Role::Source, descriptor.id, identity).is_ok());
+        }
+        for descriptor in iv_core::instrument_catalog(iv_core::InstrumentRole::Meter) {
+            if descriptor.simulation {
+                continue;
+            }
+            let identity = match descriptor.id {
+                "AGILENT_34401A" => "HEWLETT-PACKARD,34401A,0,1",
+                "AGILENT_34411A" => "Agilent Technologies,34411A,0,1",
+                "KEYSIGHT_34411A" => "Keysight Technologies,34411A,0,1",
+                "KEYSIGHT_34465A" => "Keysight Technologies,34465A,0,1",
+                "ADCMT_7461A" => "ADCMT,7461A,0,1",
+                _ => unreachable!("registered meter requires identity fixture"),
+            };
+            assert!(verify_model(Role::Meter, descriptor.id, identity).is_ok());
+        }
     }
     #[test]
     fn legacy_dialect_preserves_units_and_status() {

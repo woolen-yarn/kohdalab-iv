@@ -2,12 +2,15 @@
 #![cfg_attr(all(windows, not(debug_assertions)), windows_subsystem = "windows")]
 
 mod client;
+mod compatibility;
 mod engine;
 mod protocol;
 mod run_export;
+mod state;
 mod ui;
 
 use protocol::Command;
+use state::{OutputState, Phase};
 use std::sync::{
     Arc,
     atomic::{AtomicBool, Ordering},
@@ -169,7 +172,7 @@ fn command_measure(args: &[String]) -> Result<(), String> {
             break;
         }
         if !state.error.is_empty() {
-            return Err(state.error);
+            return Err(state.error.to_string());
         }
         if Instant::now() > deadline {
             return Err("Connection timed out".into());
@@ -182,16 +185,16 @@ fn command_measure(args: &[String]) -> Result<(), String> {
         let state = client.snapshot();
         if state.run_id > 0
             && matches!(
-                state.phase.as_str(),
-                "Completed" | "Stopped" | "Failed" | "Compliance stop"
+                state.phase,
+                Phase::Completed | Phase::Stopped | Phase::Failed | Phase::ComplianceStop
             )
         {
             println!(
                 "{}",
                 serde_json::to_string(&state).map_err(|e| e.to_string())?
             );
-            if state.phase != "Completed"
-                || state.output != "Off"
+            if state.phase != Phase::Completed
+                || state.output != OutputState::Off
                 || !state.error.is_empty()
                 || state.points != state.total
             {
@@ -201,7 +204,7 @@ fn command_measure(args: &[String]) -> Result<(), String> {
             return Ok(());
         }
         if !state.error.is_empty() && state.run_id == 0 {
-            return Err(state.error);
+            return Err(state.error.to_string());
         }
         if Instant::now() > deadline {
             client.send(Command::Stop)?;

@@ -1,11 +1,32 @@
+//! Application state, event synchronization and three-panel layout.
+//! Settings, display formatting, drawing history and shared widgets live in
+//! private modules so UI work does not require changes to the device engine.
+
+use crate::state::{OutputState, Phase};
+
+mod formatting;
+mod history;
+mod settings;
+mod widgets;
+
+use formatting::{AxisScale, display_reading, display_reading_at_scale, fmt_quantity};
+use history::{LiveSample, append_live_sample, append_plot_point, extend_plot_extent, plot_series};
+use settings::{Settings, save_settings, settings_path};
+use widgets::{
+    BG, BLUE, BORDER, BUTTON, INPUT, MUTED, ORANGE, PURPLE, RED, TEAL, button, compact_field,
+    form_label, number, path_summary, quantity, resource_summary, section, state_badge, style,
+};
+
 use crate::client::Client;
 use crate::protocol::{Command, Snapshot};
 use eframe::egui::{self, Color32, RichText, Stroke, Vec2};
 use egui_plot::{
     Legend, Line, LineStyle, MarkerShape, Plot, PlotMemory, PlotPoint, PlotPoints, Points,
 };
-use iv_core::{Mode, Pattern, RunConfig};
-use serde::{Deserialize, Serialize};
+use iv_core::{
+    InstrumentRole, Mode, Pattern, RunConfig, instrument_catalog, instrument_descriptor,
+    measurement_definition, sweep_definitions,
+};
 use std::collections::VecDeque;
 use std::path::{Path, PathBuf};
 use std::sync::{
@@ -14,405 +35,13 @@ use std::sync::{
 };
 use std::time::{Duration, Instant};
 
-const BG: Color32 = Color32::from_rgb(18, 19, 23);
-const PANEL: Color32 = Color32::from_rgb(26, 27, 32);
-const INPUT: Color32 = Color32::from_rgb(20, 21, 25);
-const BUTTON: Color32 = Color32::from_rgb(45, 46, 53);
-const BORDER: Color32 = Color32::from_rgb(56, 58, 67);
-const TEXT: Color32 = Color32::from_rgb(235, 236, 241);
-const BLUE: Color32 = Color32::from_rgb(102, 174, 255);
-const ORANGE: Color32 = Color32::from_rgb(245, 183, 82);
-const PURPLE: Color32 = Color32::from_rgb(179, 155, 248);
-const TEAL: Color32 = Color32::from_rgb(63, 215, 194);
-const MUTED: Color32 = Color32::from_rgb(160, 163, 176);
-const RED: Color32 = Color32::from_rgb(255, 123, 130);
-const SOURCE_MODELS: &[&str] = &["YOKOGAWA_GS210", "YOKOGAWA_7651", "SIMULATED_SOURCE"];
-const METER_MODELS: &[&str] = &[
-    "AGILENT_34401A",
-    "AGILENT_34411A",
-    "KEYSIGHT_34411A",
-    "KEYSIGHT_34465A",
-    "ADCMT_7461A",
-    "SIMULATED_METER",
-];
 const SNAPSHOT_FIELDS: &[&str] = iv_core::CSV_FIELDS;
-
-#[derive(Clone, Serialize, Deserialize)]
-#[serde(default)]
-struct Settings {
-    config: RunConfig,
-    source: String,
-    meter: String,
-    output_dir: String,
-    filename: String,
-    simulation: bool,
-    source_model: String,
-    meter_model: String,
-    auto_suffix: bool,
-    units: [usize; 3],
-    current_compliance: f64,
-    voltage_compliance: f64,
-    compliance_units: [usize; 2],
-}
-
-impl Default for Settings {
-    fn default() -> Self {
-        Self {
-            config: RunConfig::default(),
-            source: String::new(),
-            meter: String::new(),
-            output_dir: user_dir().join("results").display().to_string(),
-            filename: "iv_run".into(),
-            simulation: false,
-            source_model: "YOKOGAWA_GS210".into(),
-            meter_model: "AGILENT_34411A".into(),
-            auto_suffix: true,
-            units: [1; 3],
-            current_compliance: 0.001,
-            voltage_compliance: 1.0,
-            compliance_units: [1, 0],
-        }
-    }
-}
-
-fn user_dir() -> PathBuf {
-    std::env::var_os("USERPROFILE")
-        .or_else(|| std::env::var_os("HOME"))
-        .map(PathBuf::from)
-        .unwrap_or_else(std::env::temp_dir)
-        .join(".kohdalab")
-}
-
-fn settings_path() -> PathBuf {
-    user_dir().join("config").join("iv-next.json")
-}
-
-fn save_settings(settings: &Settings, path: &Path) -> Result<(), String> {
-    if let Some(parent) = path.parent() {
-        std::fs::create_dir_all(parent).map_err(|e| e.to_string())?;
-    }
-    let bytes = serde_json::to_vec_pretty(settings).map_err(|e| e.to_string())?;
-    std::fs::write(path, bytes).map_err(|e| e.to_string())
-}
-
-// Preserve the original density while placing headings inside quiet cards.
-fn section(ui: &mut egui::Ui, title: &str, add: impl FnOnce(&mut egui::Ui)) {
-    let nested = matches!(title, "Output" | "Run");
-    ui.add_space(4.0);
-    let frame = egui::Frame::new()
-        .fill(if nested { Color32::TRANSPARENT } else { PANEL })
-        .corner_radius(10)
-        .stroke(Stroke::new(1.0_f32, BORDER))
-        .inner_margin(egui::Margin {
-            left: 10,
-            right: 10,
-            top: if nested { 22 } else { 24 },
-            bottom: if nested { 8 } else { 6 },
-        })
-        .show(ui, |ui| {
-            ui.set_min_width(ui.available_width());
-            add(ui);
-        });
-    ui.painter().text(
-        frame.response.rect.left_top() + Vec2::new(10.0, 6.0),
-        egui::Align2::LEFT_TOP,
-        title,
-        egui::FontId::proportional(13.0),
-        TEXT,
-    );
-}
-
-fn button(ui: &mut egui::Ui, text: &str, width: f32, enabled: bool) -> egui::Response {
-    ui.add_enabled(
-        enabled,
-        egui::Button::new(text)
-            .fill(BUTTON)
-            .min_size(Vec2::new(width, 24.0)),
-    )
-}
-
-fn form_label(ui: &mut egui::Ui, text: &str, width: f32) {
-    let (rect, _) = ui.allocate_exact_size(Vec2::new(width, 24.0), egui::Sense::hover());
-    ui.painter().text(
-        rect.right_center(),
-        egui::Align2::RIGHT_CENTER,
-        text,
-        egui::FontId::proportional(12.0),
-        MUTED,
-    );
-}
-
-// Keep paths and resource identities readable at rest; preserve full manual editing.
-fn compact_field(
-    ui: &mut egui::Ui,
-    salt: impl std::hash::Hash,
-    value: &mut String,
-    width: f32,
-    summary: String,
-) {
-    let id = ui.make_persistent_id(salt);
-    let editing = ui
-        .ctx()
-        .data_mut(|data| data.get_temp::<bool>(id).unwrap_or(false));
-    if editing {
-        let response = ui.add_sized(
-            [width, 24.0],
-            egui::TextEdit::singleline(value)
-                .id(id)
-                .margin(egui::Margin::symmetric(5, 4)),
-        );
-        if !response.has_focus() && !response.lost_focus() {
-            response.request_focus();
-        }
-        if response.lost_focus() {
-            ui.ctx().data_mut(|data| data.insert_temp(id, false));
-        }
-        response.on_hover_text(value.as_str());
-    } else {
-        let response = ui.add_sized(
-            [width, 24.0],
-            egui::Button::new(RichText::new(summary).color(TEXT))
-                .fill(INPUT)
-                .stroke(Stroke::new(0.7_f32, BORDER))
-                .wrap_mode(egui::TextWrapMode::Truncate),
-        );
-        if response.clicked() {
-            ui.ctx().data_mut(|data| data.insert_temp(id, true));
-            ui.ctx().request_repaint();
-        }
-        response.on_hover_text(format!("{value}\nClick to edit the full value."));
-    }
-}
-
-fn path_summary(value: &str) -> String {
-    let trimmed = value.trim_end_matches(['/', '\\']);
-    match trimmed.rsplit_once(['/', '\\']) {
-        Some((_, tail)) if !tail.is_empty() => format!("…/{tail}"),
-        _ => value.to_owned(),
-    }
-}
-
-fn resource_summary(value: &str) -> String {
-    if let Some(native) = value.strip_prefix("VISA::") {
-        return format!("VISA · {}", resource_summary(native));
-    }
-    let parts: Vec<_> = value.split("::").collect();
-    if value.starts_with("GPIB") && parts.len() >= 2 {
-        format!("GPIB · {}", parts[1])
-    } else if value.starts_with("USB") && parts.len() >= 4 {
-        format!("USB · {}", parts[3])
-    } else {
-        value.to_owned()
-    }
-}
-
-fn state_badge(ui: &mut egui::Ui, text: &str, color: Color32) {
-    egui::Frame::new()
-        .fill(color.gamma_multiply(0.12))
-        .corner_radius(4)
-        .inner_margin(egui::Margin::symmetric(4, 1))
-        .show(ui, |ui| {
-            ui.label(RichText::new(text).size(9.0).color(color).strong());
-        });
-}
-
-fn fmt_quantity(value: f64, unit: &str) -> String {
-    if value == 0.0 {
-        return format!("0 {unit}");
-    }
-    let mag = value.abs();
-    let (scale, prefix) = if mag >= 1e6 {
-        (1e6, "M")
-    } else if mag >= 1e3 {
-        (1e3, "k")
-    } else if mag >= 1.0 {
-        (1.0, "")
-    } else if mag >= 1e-3 {
-        (1e-3, "m")
-    } else if mag >= 1e-6 {
-        (1e-6, "µ")
-    } else if mag >= 1e-9 {
-        (1e-9, "n")
-    } else {
-        (1e-12, "p")
-    };
-    format!("{:.4} {prefix}{unit}", value / scale)
-}
-
-#[derive(Clone, Copy, Debug, PartialEq)]
-struct AxisScale {
-    factor: f64,
-    prefix: &'static str,
-}
-
-impl AxisScale {
-    fn for_magnitude(magnitude: f64) -> Self {
-        if magnitude.is_finite() && magnitude > 0.0 {
-            for (factor, prefix) in [
-                (1e12, "T"),
-                (1e9, "G"),
-                (1e6, "M"),
-                (1e3, "k"),
-                (1.0, ""),
-                (1e-3, "m"),
-                (1e-6, "µ"),
-                (1e-9, "n"),
-                (1e-12, "p"),
-                (1e-15, "f"),
-                (1e-18, "a"),
-            ] {
-                if magnitude >= factor * (1.0 - 1e-12) {
-                    return Self { factor, prefix };
-                }
-            }
-            return Self {
-                factor: 1e-18,
-                prefix: "a",
-            };
-        }
-        Self {
-            factor: 1.0,
-            prefix: "",
-        }
-    }
-
-    fn tick(self, value: f64, spacing: f64) -> String {
-        let step = spacing.abs() / self.factor;
-        let decimals = if step.is_finite() && step > 0.0 {
-            (-step.log10()).ceil().clamp(0.0, 9.0) as usize
-        } else {
-            2
-        };
-        let value = value / self.factor;
-        let value = if value.abs() < 0.5 * 10_f64.powi(-(decimals as i32)) {
-            0.0
-        } else {
-            value
-        };
-        format!("{value:.decimals$}")
-    }
-}
-
-fn extend_plot_extent(extent: &mut [f64; 2], x: f64, y: f64) {
-    for (maximum, value) in extent.iter_mut().zip([x, y]) {
-        if value.is_finite() {
-            *maximum = maximum.max(value.abs());
-        }
-    }
-}
-
-fn display_reading(value: f64, resolution: Option<f64>, unit: &str) -> String {
-    let scale = AxisScale::for_magnitude(value.abs().max(resolution.unwrap_or(0.0)));
-    display_reading_at_scale(value, resolution, unit, scale)
-}
-
-fn display_reading_at_scale(
-    value: f64,
-    resolution: Option<f64>,
-    unit: &str,
-    scale: AxisScale,
-) -> String {
-    match resolution.filter(|r| r.is_finite() && *r > 0.0) {
-        Some(resolution) => {
-            // Round the display to a decimal place supported by the instrument.
-            // The original value is never modified for plotting or persistence.
-            let place = (resolution.log10() - 1e-12).ceil();
-            let decimals = (scale.factor.log10() - place).round().clamp(0.0, 15.0) as usize;
-            let step = 10_f64.powf(place);
-            let rounded = (value / step).round() * step;
-            let shown = if rounded == 0.0 {
-                0.0
-            } else {
-                rounded / scale.factor
-            };
-            format!("{shown:.decimals$} {}{unit}", scale.prefix)
-        }
-        None => format!(
-            "{:.6e} {}{unit} (resolution unknown)",
-            value / scale.factor,
-            scale.prefix
-        ),
-    }
-}
-
-fn plot_series(samples: &[(f64, f64, String, [Option<f64>; 2])]) -> [Vec<PlotPoint>; 3] {
-    let mut series = std::array::from_fn(|_| Vec::new());
-    let mut previous = None;
-    for (x, y, direction, _) in samples {
-        append_plot_point(&mut series, previous, *x, *y, direction);
-        previous = Some(direction.as_str());
-    }
-    series
-}
-
-fn append_plot_point(
-    series: &mut [Vec<PlotPoint>; 3],
-    previous: Option<&str>,
-    x: f64,
-    y: f64,
-    direction: &str,
-) {
-    let index = |direction: &str| match direction {
-        "forward" => 0,
-        "backward" => 1,
-        _ => 2,
-    };
-    let current = index(direction);
-    if let Some(last) = previous.map(index).filter(|last| *last != current) {
-        // Share the measured turning point across the two colored segments.
-        // This is a drawing anchor only; it does not create another CSV sample.
-        if last < 2
-            && current < 2
-            && let Some(anchor) = series[last].last().copied()
-            && anchor.x.is_finite()
-            && anchor.y.is_finite()
-        {
-            series[current].push(anchor);
-        }
-        series[last].push(PlotPoint::new(f64::NAN, f64::NAN));
-    }
-    series[current].push(PlotPoint::new(x, y));
-}
-
-#[derive(Clone, Copy)]
-struct LiveSample {
-    time: f64,
-    voltage: f64,
-    current: f64,
-}
-
-fn append_live_sample(samples: &mut VecDeque<LiveSample>, record: &iv_core::Record) {
-    let source = record.source_readback.unwrap_or(record.source_set);
-    let (voltage, current) = if record.mode == Mode::Iv {
-        (source, record.meter_value)
-    } else {
-        (record.meter_value, source)
-    };
-    if ![record.elapsed_s, voltage, current]
-        .into_iter()
-        .all(f64::is_finite)
-    {
-        return;
-    }
-    samples.push_back(LiveSample {
-        time: record.elapsed_s,
-        voltage,
-        current,
-    });
-    while samples.len() > 1024
-        || samples
-            .front()
-            .is_some_and(|s| record.elapsed_s - s.time > 30.0)
-    {
-        samples.pop_front();
-    }
-}
 
 pub struct IvApp {
     client: Result<Client, String>,
     settings: Settings,
     state: Snapshot,
-    previous_phase: String,
+    previous_phase: Option<Phase>,
     previous_log: String,
     state_revision: u64,
     run_id: u64,
@@ -467,10 +96,13 @@ impl IvApp {
         style(&cc.egui_ctx);
         let ctx = cc.egui_ctx.clone();
         let client = Client::start(move || ctx.request_repaint());
-        let mut settings = std::fs::read(settings_path())
-            .ok()
-            .and_then(|b| serde_json::from_slice(&b).ok())
-            .unwrap_or_default();
+        let (mut settings, settings_notice) = match std::fs::read(settings_path()) {
+            Ok(bytes) => match settings::load_settings(&bytes) {
+                Ok(settings) => (settings, String::new()),
+                Err(error) => (Settings::default(), error),
+            },
+            Err(_) => (Settings::default(), String::new()),
+        };
         if smoke {
             settings = Settings {
                 simulation: true,
@@ -510,7 +142,7 @@ impl IvApp {
             client,
             settings,
             state: Snapshot::default(),
-            previous_phase: String::new(),
+            previous_phase: None,
             previous_log: String::new(),
             state_revision: 0,
             run_id: 0,
@@ -529,7 +161,7 @@ impl IvApp {
             timing_open: false,
             timing_before: None,
             config_path: settings_path().display().to_string(),
-            notice: String::new(),
+            notice: settings_notice,
             start_error: None,
             save_notice: None,
             logs: vec![],
@@ -570,15 +202,20 @@ impl IvApp {
 
     fn busy(&self) -> bool {
         matches!(
-            self.state.phase.as_str(),
-            "Connecting" | "Scanning" | "Switching mode" | "Preparing" | "Running" | "Cleaning up"
+            self.state.phase,
+            Phase::Connecting
+                | Phase::Scanning
+                | Phase::SwitchingMode
+                | Phase::Preparing
+                | Phase::Running
+                | Phase::CleaningUp
         )
     }
 
     fn active(&self) -> bool {
         matches!(
-            self.state.phase.as_str(),
-            "Preparing" | "Running" | "Cleaning up"
+            self.state.phase,
+            Phase::Preparing | Phase::Running | Phase::CleaningUp
         )
     }
 
@@ -679,9 +316,9 @@ impl IvApp {
                 self.samples = reduced;
                 self.rebuild_plot_series();
             }
-            if next.phase != self.previous_phase {
+            if Some(next.phase) != self.previous_phase {
                 self.phase_start = Instant::now();
-                self.previous_phase = next.phase.clone();
+                self.previous_phase = Some(next.phase);
             }
             if !next.error.is_empty()
                 && next.error != self.state.error
@@ -704,8 +341,8 @@ impl IvApp {
                     self.logs.remove(0);
                 }
             }
-            if self.pending_run && next.run_id <= self.pending_base && next.phase != "Failed" {
-                self.state.phase = "Preparing".into();
+            if self.pending_run && next.run_id <= self.pending_base && next.phase != Phase::Failed {
+                self.state.phase = Phase::Preparing;
                 self.state.message = "Sending the validated measurement plan…".into();
             } else if next.run_id >= self.run_id {
                 self.pending_run = false;
@@ -783,7 +420,7 @@ impl IvApp {
         }
         self.pending_run = true;
         self.pending_base = self.state.run_id;
-        self.state.phase = "Preparing".into();
+        self.state.phase = Phase::Preparing;
     }
 
     fn both_simulated(&self) -> bool {
@@ -888,10 +525,7 @@ impl IvApp {
                     {
                         let loaded = std::fs::read(&self.config_path)
                             .map_err(|e| e.to_string())
-                            .and_then(|bytes| {
-                                serde_json::from_slice::<Settings>(&bytes)
-                                    .map_err(|e| e.to_string())
-                            });
+                            .and_then(|bytes| settings::load_settings(&bytes));
                         match loaded {
                             Ok(mut settings) => {
                                 if settings.simulation {
@@ -1004,7 +638,7 @@ impl IvApp {
                 state_badge(
                     ui,
                     &format!("Output {}", self.state.output.to_lowercase()),
-                    if self.state.output == "Off" {
+                    if self.state.output == OutputState::Off {
                         MUTED
                     } else {
                         ORANGE
@@ -1236,9 +870,14 @@ impl IvApp {
                         .selected_text(model.as_str())
                         .show_ui(ui, |ui| {
                             ui.set_min_width(230.0);
-                            for candidate in if source { SOURCE_MODELS } else { METER_MODELS } {
+                            for descriptor in instrument_catalog(if source {
+                                InstrumentRole::Source
+                            } else {
+                                InstrumentRole::Meter
+                            }) {
+                                let candidate = descriptor.id;
                                 ui.add_enabled_ui(model_supported(candidate), |ui| {
-                                    ui.selectable_value(model, candidate.to_string(), *candidate);
+                                    ui.selectable_value(model, candidate.to_string(), candidate);
                                 })
                                 .response
                                 .on_disabled_hover_text("Not yet supported in the Rust preview");
@@ -1256,7 +895,11 @@ impl IvApp {
                 });
                 ui.end_row();
                 if !source {
-                    form_label(ui, "NPLC", 57.0);
+                    form_label(
+                        ui,
+                        iv_core::parameter_definition("nplc").unwrap().label,
+                        57.0,
+                    );
                     ui.add_enabled_ui(idle, |ui| {
                         ui.add_sized(
                             [60.0, 24.0],
@@ -1281,7 +924,8 @@ impl IvApp {
                     } else {
                         &self.settings.meter
                     };
-                    let valid = model_supported(model)
+                    let valid = instrument_descriptor(model)
+                        .is_some_and(|d| d.supports_mode(self.settings.config.mode))
                         && (model.starts_with("SIMULATED_") || !resource.is_empty());
                     if button(
                         ui,
@@ -1375,21 +1019,9 @@ impl IvApp {
                     } else {
                         self.settings.voltage_compliance = self.settings.config.compliance;
                     }
-                    self.settings.config = RunConfig {
-                        mode: self.settings.config.mode,
-                        ..Default::default()
-                    };
-                    if self.settings.config.mode == Mode::Vi {
-                        self.settings.config.start = -1e-6;
-                        self.settings.config.stop = 1e-6;
-                        self.settings.config.step = 1e-7;
-                        self.settings.config.source_limit = 1e-6;
-                        self.settings.config.compliance = 1.0;
-                        self.settings.config.ramp_step = 1e-7;
-                        self.settings.units = [2; 3];
-                    } else {
-                        self.settings.units = [1; 3];
-                    }
+                    let definition = measurement_definition(self.settings.config.mode);
+                    self.settings.config = definition.default_config();
+                    self.settings.units = [definition.preferred_unit_index; 3];
                     self.settings.config.compliance = if self.settings.config.mode == Mode::Iv {
                         self.settings.current_compliance
                     } else {
@@ -1412,12 +1044,8 @@ impl IvApp {
                     .selected_text(pattern_name(self.settings.config.pattern))
                     .show_ui(ui, |ui| {
                         ui.set_min_width(230.0);
-                        for pattern in [
-                            Pattern::Linear,
-                            Pattern::RoundTrip,
-                            Pattern::ZeroCentered,
-                            Pattern::CustomList,
-                        ] {
+                        for definition in sweep_definitions() {
+                            let pattern = definition.pattern;
                             ui.selectable_value(
                                 &mut self.settings.config.pattern,
                                 pattern,
@@ -1432,9 +1060,18 @@ impl IvApp {
                     "A"
                 };
                 for (index, (label, value)) in [
-                    ("Start", &mut self.settings.config.start),
-                    ("End", &mut self.settings.config.stop),
-                    ("Step", &mut self.settings.config.step),
+                    (
+                        iv_core::parameter_definition("start").unwrap().label,
+                        &mut self.settings.config.start,
+                    ),
+                    (
+                        iv_core::parameter_definition("stop").unwrap().label,
+                        &mut self.settings.config.stop,
+                    ),
+                    (
+                        iv_core::parameter_definition("step").unwrap().label,
+                        &mut self.settings.config.step,
+                    ),
                 ]
                 .into_iter()
                 .enumerate()
@@ -1704,7 +1341,7 @@ impl IvApp {
                 egui::ScrollArea::vertical().max_height((ctx.content_rect().height() - 150.0).clamp(200.0, 600.0)).show(ui, |ui| {
                     ui.add_enabled_ui(!self.busy(), |ui| {
                         section(ui, "Timing", |ui| {
-                            number(ui, "Wait time (s)", &mut self.settings.config.settle_s, 1.0, "", 0.0..=iv_core::MAX_SECONDS);
+                            number(ui, iv_core::parameter_definition("settle_s").unwrap().label, &mut self.settings.config.settle_s, 1.0, "", 0.0..=iv_core::MAX_SECONDS);
 
                         });
                         ui.add_space(8.0);
@@ -1725,12 +1362,12 @@ impl IvApp {
                         ui.add_space(8.0);
                         egui::CollapsingHeader::new("Advanced").show(ui, |ui| {
                             let unit = if self.settings.config.mode == Mode::Iv { "mV" } else { "mA" };
-                            number(ui, "Source limit", &mut self.settings.config.source_limit, 0.001, unit, 0.0..=f64::MAX);
-                            number(ui, "First wait (s)", &mut self.settings.config.start_settle_s, 1.0, "", 0.0..=iv_core::MAX_SECONDS);
+                            number(ui, iv_core::parameter_definition("source_limit").unwrap().label, &mut self.settings.config.source_limit, 0.001, unit, 0.0..=f64::MAX);
+                            number(ui, iv_core::parameter_definition("start_settle_s").unwrap().label, &mut self.settings.config.start_settle_s, 1.0, "", 0.0..=iv_core::MAX_SECONDS);
                             ui.label("Ramp step: automatic (at least the sweep step)");
-                            number(ui, "Ramp wait (s)", &mut self.settings.config.ramp_wait_s, 1.0, "", 0.0..=iv_core::MAX_SECONDS);
+                            number(ui, iv_core::parameter_definition("ramp_wait_s").unwrap().label, &mut self.settings.config.ramp_wait_s, 1.0, "", 0.0..=iv_core::MAX_SECONDS);
                             ui.horizontal(|ui| {
-                                ui.label("Readings per point (Repeat)");
+                                ui.label(iv_core::parameter_definition("repeat").unwrap().label);
                                 let mut count = iv_core::readings_per_point(&self.settings.config);
                                 if ui.add(egui::DragValue::new(&mut count).range(1..=10000)).changed() {
                                     self.settings.config.repeat = count;
@@ -1809,8 +1446,10 @@ impl IvApp {
                                                 if !self.state.error.is_empty() {
                                                     ui.add(
                                                         egui::Label::new(
-                                                            RichText::new(&self.state.error)
-                                                                .color(RED),
+                                                            RichText::new(
+                                                                self.state.error.as_str(),
+                                                            )
+                                                            .color(RED),
                                                         )
                                                         .wrap(),
                                                     );
@@ -1936,11 +1575,8 @@ impl IvApp {
         });
         ui.add_space(8.0);
         let graph_height = (ui.clip_rect().bottom() - ui.cursor().top() - 2.0).max(320.0);
-        let (x_name, x_unit, y_name, y_unit) = if self.settings.config.mode == Mode::Iv {
-            ("Voltage", "V", "Current", "A")
-        } else {
-            ("Current", "A", "Voltage", "V")
-        };
+        let [x_axis, y_axis] = measurement_definition(self.settings.config.mode).axes;
+        let (x_name, x_unit, y_name, y_unit) = (x_axis.name, x_axis.unit, y_axis.name, y_axis.unit);
         let mut extent = self.plot_extent;
         if self.samples.is_empty() {
             extent[0] = self
@@ -2092,7 +1728,7 @@ impl eframe::App for IvApp {
         if self.screenshot.is_some()
             && !self.screenshot_requested
             && self.started.elapsed() > Duration::from_secs(2)
-            && (!self.smoke || self.state.phase == "Completed")
+            && (!self.smoke || self.state.phase == Phase::Completed)
         {
             self.screenshot_requested = true;
             ctx.send_viewport_cmd(egui::ViewportCommand::Screenshot(Default::default()));
@@ -2116,9 +1752,9 @@ impl eframe::App for IvApp {
         }
         if self.smoke {
             ctx.request_repaint_after(Duration::from_millis(30));
-            if self.state.phase == "Completed"
+            if self.state.phase == Phase::Completed
                 && self.state.points == self.state.total
-                && self.state.output == "Off"
+                && self.state.output == OutputState::Off
                 && self.state.error.is_empty()
                 && self.started.elapsed() > Duration::from_secs(4)
                 && (self.screenshot.is_none() || self.screenshot_saved)
@@ -2141,138 +1777,6 @@ impl eframe::App for IvApp {
         self.ui_cpu_s += ui_start.elapsed().as_secs_f64();
         self.ui_frames += 1;
     }
-}
-
-fn style(ctx: &egui::Context) {
-    ctx.set_theme(egui::ThemePreference::Dark);
-    let mut visuals = egui::Visuals::dark();
-    visuals.panel_fill = BG;
-    visuals.window_fill = PANEL;
-    visuals.window_corner_radius = egui::CornerRadius::same(12);
-    visuals.window_stroke = Stroke::new(1.0_f32, BORDER);
-    visuals.extreme_bg_color = INPUT;
-    visuals.text_edit_bg_color = Some(INPUT);
-    visuals.faint_bg_color = PANEL;
-    visuals.override_text_color = Some(TEXT);
-    visuals.selection.bg_fill = Color32::from_rgb(48, 91, 158);
-    visuals.selection.stroke = Stroke::new(1.0_f32, TEXT);
-    for widget in [
-        &mut visuals.widgets.inactive,
-        &mut visuals.widgets.hovered,
-        &mut visuals.widgets.active,
-    ] {
-        widget.bg_stroke = Stroke::new(1.0_f32, BORDER);
-        widget.corner_radius = egui::CornerRadius::same(6);
-        widget.fg_stroke = Stroke::new(1.0_f32, TEXT);
-    }
-    visuals.widgets.inactive.bg_stroke = Stroke::new(0.7_f32, BORDER);
-    visuals.widgets.inactive.bg_fill = BUTTON;
-    visuals.widgets.inactive.weak_bg_fill = INPUT;
-    visuals.widgets.hovered.bg_fill = Color32::from_rgb(62, 64, 74);
-    visuals.widgets.active.bg_fill = Color32::from_rgb(48, 91, 158);
-    visuals.widgets.noninteractive.bg_stroke = Stroke::new(1.0_f32, BORDER);
-    ctx.set_visuals(visuals);
-    ctx.style_mut(|style| {
-        style.spacing.item_spacing = Vec2::new(8.0, 4.0);
-        style.spacing.button_padding = Vec2::new(8.0, 4.0);
-        style.spacing.interact_size = Vec2::new(36.0, 24.0);
-        style.spacing.combo_width = 100.0;
-        style.spacing.slider_width = 120.0;
-        for text in [
-            egui::TextStyle::Body,
-            egui::TextStyle::Button,
-            egui::TextStyle::Small,
-        ] {
-            style
-                .text_styles
-                .insert(text, egui::FontId::proportional(12.0));
-        }
-        style
-            .text_styles
-            .insert(egui::TextStyle::Heading, egui::FontId::proportional(12.0));
-    });
-}
-
-fn number(
-    ui: &mut egui::Ui,
-    label: &str,
-    value: &mut f64,
-    scale: f64,
-    unit: &str,
-    range: std::ops::RangeInclusive<f64>,
-) {
-    ui.horizontal(|ui| {
-        ui.label(label);
-        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-            if !unit.is_empty() {
-                ui.label(unit);
-            }
-            let mut display = *value / scale;
-            if ui
-                .add_sized(
-                    [100.0, 24.0],
-                    egui::DragValue::new(&mut display)
-                        .range((*range.start() / scale)..=(*range.end() / scale))
-                        .speed(0.01)
-                        .max_decimals(6)
-                        .min_decimals(3),
-                )
-                .changed()
-            {
-                *value = display * scale;
-            }
-        });
-    });
-}
-
-fn quantity(
-    ui: &mut egui::Ui,
-    id: impl std::hash::Hash,
-    value: &mut f64,
-    unit_index: &mut usize,
-    base: &str,
-    width: f32,
-    nonnegative: bool,
-) {
-    let scales = [1.0, 1e-3, 1e-6, 1e-9, 1e-12];
-    let names = [
-        base.to_string(),
-        format!("m{base}"),
-        format!("u{base}"),
-        format!("n{base}"),
-        format!("p{base}"),
-    ];
-    *unit_index = (*unit_index).min(4);
-    let scale = scales[*unit_index];
-    ui.horizontal(|ui| {
-        let mut display = *value / scale;
-        if ui
-            .add_sized(
-                [(width - 54.0 - ui.spacing().item_spacing.x).max(65.0), 24.0],
-                egui::DragValue::new(&mut display)
-                    .range(if nonnegative {
-                        0.0..=f64::MAX
-                    } else {
-                        f64::MIN..=f64::MAX
-                    })
-                    .speed(0.01)
-                    .min_decimals(3)
-                    .max_decimals(6),
-            )
-            .changed()
-        {
-            *value = display * scale;
-        }
-        egui::ComboBox::from_id_salt(id)
-            .width(54.0)
-            .selected_text(&names[*unit_index])
-            .show_ui(ui, |ui| {
-                ui.set_min_width(100.0);
-                for (index, name) in names.iter().enumerate() {
-                    ui.selectable_value(unit_index, index, name);
-                }
-            });
-    });
 }
 
 fn start_block_reason(config: &RunConfig, connected: bool, matching_modes: bool) -> Option<String> {
@@ -2299,39 +1803,25 @@ fn start_block_reason(config: &RunConfig, connected: bool, matching_modes: bool)
 }
 
 fn mode_name(mode: Mode) -> &'static str {
-    if mode == Mode::Iv {
-        "V-I (source V, measure I)"
-    } else {
-        "I-V (source I, measure V)"
-    }
+    measurement_definition(mode).label
 }
 
 fn pattern_name(pattern: Pattern) -> &'static str {
-    match pattern {
-        Pattern::Linear => "linear",
-        Pattern::RoundTrip => "round_trip",
-        Pattern::ZeroCentered => "zero_centered",
-        Pattern::CustomList => "custom_list",
-    }
+    sweep_definitions()
+        .iter()
+        .find(|definition| definition.pattern == pattern)
+        .expect("every built-in pattern has a definition")
+        .label
 }
 
 fn model_supported(model: &str) -> bool {
-    matches!(
-        model,
-        "YOKOGAWA_GS210"
-            | "YOKOGAWA_7651"
-            | "AGILENT_34401A"
-            | "KEYSIGHT_34465A"
-            | "ADCMT_7461A"
-            | "AGILENT_34411A"
-            | "KEYSIGHT_34411A"
-            | "SIMULATED_SOURCE"
-            | "SIMULATED_METER"
-    )
+    instrument_descriptor(model).is_some()
 }
 
 #[cfg(test)]
 mod tests {
+    use super::*;
+
     #[test]
     fn saved_data_inspector_has_exact_native_csv_fields_and_values() {
         assert_eq!(SNAPSHOT_FIELDS, iv_core::CSV_FIELDS);
@@ -2370,149 +1860,6 @@ mod tests {
     }
 
     #[test]
-    fn live_history_is_bounded_and_iv_vi_values_keep_their_channel_units() {
-        let mut samples = VecDeque::new();
-        let config = iv_core::RunConfig::default();
-        let point = iv_core::SweepPoint {
-            target: 0.001,
-            direction: "forward".into(),
-            repeat_index: 1,
-            sweep_index: 1,
-            point_index: 1,
-            total_points: 1,
-        };
-        for i in 0..2000 {
-            append_live_sample(
-                &mut samples,
-                &iv_core::simulate_record(&config, &point, i as f64 * 0.01),
-            );
-        }
-        assert_eq!(samples.len(), 1024);
-        assert_eq!(samples.back().unwrap().voltage, 0.001);
-        assert_eq!(samples.back().unwrap().current, 1e-6);
-        let mut record = iv_core::simulate_record(
-            &iv_core::RunConfig {
-                mode: Mode::Vi,
-                ..config
-            },
-            &point,
-            50.0,
-        );
-        append_live_sample(&mut samples, &record);
-        assert_eq!(samples.len(), 1);
-        assert_eq!(samples[0].current, 0.001);
-        assert_eq!(samples[0].voltage, 1.0);
-        record.meter_value = f64::NAN;
-        append_live_sample(&mut samples, &record);
-        assert_eq!(samples.len(), 1);
-    }
-
-    use super::*;
-
-    #[test]
-    fn timing_inputs_clamp_negative_values_but_accept_zero() {
-        let context = egui::Context::default();
-        let mut value = -0.25;
-        let _ = context.run(Default::default(), |ctx| {
-            egui::CentralPanel::default().show(ctx, |ui| {
-                number(
-                    ui,
-                    "Wait time",
-                    &mut value,
-                    1.0,
-                    "s",
-                    0.0..=iv_core::MAX_SECONDS,
-                );
-            });
-        });
-        assert_eq!(value, 0.0);
-        value = iv_core::MAX_SECONDS + 1.0;
-        let _ = context.run(Default::default(), |ctx| {
-            egui::CentralPanel::default().show(ctx, |ui| {
-                number(
-                    ui,
-                    "Wait time",
-                    &mut value,
-                    1.0,
-                    "s",
-                    0.0..=iv_core::MAX_SECONDS,
-                );
-            });
-        });
-        assert_eq!(value, iv_core::MAX_SECONDS);
-    }
-
-    #[test]
-    fn limits_reject_negative_ui_values_without_clamping_sweep_targets() {
-        let context = egui::Context::default();
-        let mut target = -0.001;
-        let mut compliance = -0.001;
-        let mut units = [1, 1];
-        let _ = context.run(Default::default(), |ctx| {
-            egui::CentralPanel::default().show(ctx, |ui| {
-                quantity(ui, "target", &mut target, &mut units[0], "V", 200.0, false);
-                quantity(
-                    ui,
-                    "compliance",
-                    &mut compliance,
-                    &mut units[1],
-                    "A",
-                    200.0,
-                    true,
-                );
-            });
-        });
-        assert_eq!(target, -0.001);
-        assert_eq!(compliance, 0.0);
-    }
-
-    #[test]
-    fn engineering_axis_labels_and_ticks_share_the_same_scale() {
-        for (value, expected_factor, prefix) in [
-            (2.0, 1.0, ""),
-            (0.001, 1e-3, "m"),
-            (1e-6, 1e-6, "µ"),
-            (7e-9, 1e-9, "n"),
-            (3e-12, 1e-12, "p"),
-            (5e-15, 1e-15, "f"),
-        ] {
-            let scale = AxisScale::for_magnitude(value);
-            assert_eq!(scale.factor, expected_factor);
-            assert_eq!(scale.prefix, prefix);
-        }
-        let millivolts = AxisScale::for_magnitude(0.001);
-        assert_eq!(millivolts.tick(-0.001, 0.0005), "-1.0");
-        assert_eq!(millivolts.tick(0.0005, 0.0005), "0.5");
-        assert_eq!(millivolts.tick(-0.0, 0.0005), "0.0");
-        let microamps = AxisScale::for_magnitude(1e-6);
-        assert_eq!(microamps.tick(1e-6, 2e-7), "1.0");
-        assert_eq!(microamps.tick(2e-7, 2e-7), "0.2");
-        assert_eq!(AxisScale::for_magnitude(0.0).prefix, "");
-        assert_eq!(AxisScale::for_magnitude(f64::NAN).factor, 1.0);
-        assert_eq!(AxisScale::for_magnitude(1e-6 * (1.0 - 1e-15)).prefix, "µ");
-    }
-
-    #[test]
-    fn axis_extent_ignores_breaks_and_keeps_plot_coordinates_in_si() {
-        let samples = vec![
-            (-0.001, -1e-6, "forward".into(), [None; 2]),
-            (0.001, 1e-6, "backward".into(), [None; 2]),
-        ];
-        let mut extent = [0.0; 2];
-        for (x, y, _, _) in &samples {
-            extend_plot_extent(&mut extent, *x, *y);
-        }
-        extend_plot_extent(&mut extent, f64::NAN, f64::INFINITY);
-        assert_eq!(extent, [0.001, 1e-6]);
-        let plotted = plot_series(&samples);
-        assert_eq!(plotted[0][0], PlotPoint::new(-0.001, -1e-6));
-        assert_eq!(plotted[1][0], plotted[0][0]);
-        assert_eq!(plotted[1][1], PlotPoint::new(0.001, 1e-6));
-        assert_eq!(AxisScale::for_magnitude(extent[0]).prefix, "m");
-        assert_eq!(AxisScale::for_magnitude(extent[1]).prefix, "µ");
-    }
-
-    #[test]
     fn start_failures_explain_connection_limits_and_resolution() {
         let mut config = RunConfig::default();
         assert!(
@@ -2543,15 +1890,6 @@ mod tests {
     }
 
     #[test]
-    fn earlier_preview_config_keeps_safe_defaults() {
-        let settings: Settings =
-            serde_json::from_str(r#"{"filename":"experiment","simulation":true}"#).unwrap();
-        assert!(settings.auto_suffix);
-        assert_eq!(settings.units, [1; 3]);
-        assert_eq!(settings.config.compliance, 0.001);
-    }
-
-    #[test]
     fn only_implemented_instruments_are_enabled() {
         assert!(model_supported("KEYSIGHT_34411A"));
         assert!(model_supported("AGILENT_34401A"));
@@ -2560,42 +1898,4 @@ mod tests {
         assert!(!model_supported("YOKOGAWA_GS200"));
         assert!(model_supported("YOKOGAWA_7651"));
     }
-
-    #[test]
-    fn cached_plot_series_preserves_direction_breaks() {
-        let samples = vec![
-            (0.0, 1.0, "forward".into(), [None; 2]),
-            (1.0, 2.0, "backward".into(), [None; 2]),
-            (2.0, 3.0, "forward".into(), [None; 2]),
-            (3.0, 4.0, "custom-a".into(), [None; 2]),
-            (4.0, 5.0, "custom-b".into(), [None; 2]),
-        ];
-        let series = plot_series(&samples);
-
-        assert_eq!(series[0].len(), 5);
-        assert_eq!(series[0][0], PlotPoint::new(0.0, 1.0));
-        assert!(series[0][1].x.is_nan() && series[0][1].y.is_nan());
-        assert_eq!(series[0][2], PlotPoint::new(1.0, 2.0));
-        assert_eq!(series[0][3], PlotPoint::new(2.0, 3.0));
-        assert!(series[0][4].x.is_nan() && series[0][4].y.is_nan());
-        assert_eq!(series[1].len(), 3);
-        assert_eq!(series[1][0], PlotPoint::new(0.0, 1.0));
-        assert_eq!(series[1][1], PlotPoint::new(1.0, 2.0));
-        assert!(series[1][2].x.is_nan() && series[1][2].y.is_nan());
-        assert_eq!(
-            series[2],
-            vec![PlotPoint::new(3.0, 4.0), PlotPoint::new(4.0, 5.0)]
-        );
-    }
-}
-#[test]
-fn display_digits_follow_resolution_without_modifying_measurement() {
-    let value = 2.123456789e-9_f64;
-    let bits = value.to_bits();
-    assert_eq!(display_reading(value, Some(1e-11), "A"), "2.12 nA");
-    assert_eq!(display_reading(value, Some(1e-10), "A"), "2.1 nA");
-    assert_eq!(display_reading(value, Some(1e-12), "A"), "2.123 nA");
-    assert_eq!(value.to_bits(), bits);
-    assert_eq!(display_reading(-0.0, Some(1e-9), "A"), "0 nA");
-    assert!(display_reading(value, None, "A").contains("resolution unknown"));
 }

@@ -20,8 +20,8 @@ uv pip install ./bindings/python
 Install directly from the matching GitHub release:
 
 ```text
-python -m pip install "kohdalab-iv-native @ git+https://github.com/woolen-yarn/kohdalab-iv.git@preview-v1.3.0-alpha.6#subdirectory=bindings/python"
-uv add "kohdalab-iv-native @ git+https://github.com/woolen-yarn/kohdalab-iv.git@preview-v1.3.0-alpha.6#subdirectory=bindings/python"
+python -m pip install "kohdalab-iv-native @ git+https://github.com/woolen-yarn/kohdalab-iv.git@preview-v1.3.0-alpha.7#subdirectory=bindings/python"
+uv add "kohdalab-iv-native @ git+https://github.com/woolen-yarn/kohdalab-iv.git@preview-v1.3.0-alpha.7#subdirectory=bindings/python"
 ```
 
 The discovery enhancements below are included in v1.3.0-alpha.6 and newer.
@@ -116,3 +116,11 @@ The package installation must target your Notebook kernel's Python environment.
 In Jupyter, `%pip install /path/to/kohdalab-iv/bindings/python` installs this client
 into the active kernel. Restart the kernel after upgrading an imported client.
 No Python measurement engine or VISA dependency is installed by this package.
+
+The client checks protocol compatibility from the engine's first normal state,
+before connecting to instruments. Older engines without a declaration retain
+the legacy v1 behavior. An incompatible declaration produces an English upgrade
+message and requests engine shutdown. `iv.protocol` exposes the accepted contract;
+`iv.snapshot["error"]` remains the original error text, while newer engines also
+provide `error_kind` and `activity` for programmatic diagnostics. These additions
+do not change the existing client methods or CSV columns.

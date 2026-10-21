@@ -10,6 +10,105 @@ import threading
 import time
 
 
+# Keep this contract deliberately independent of the package release number.
+# It describes the JSON-lines engine protocol, not the Python distribution.
+API_VERSION = 1
+SETTINGS_SCHEMA_VERSION = 1
+RUN_METADATA_SCHEMA_VERSION = 3
+CSV_SCHEMA = "compact_v2"
+_MISSING = object()
+
+
+def _protocol_integer(value, field):
+    if isinstance(value, bool) or not isinstance(value, int) or value < 0:
+        raise RuntimeError(
+            f"Invalid engine protocol declaration: '{field}' must be a non-negative integer."
+        )
+    return value
+
+
+def _negotiate_protocol(declaration=_MISSING):
+    """Validate the first engine state before any device command is sent.
+
+    Engines published before protocol declarations intentionally remain v1
+    compatible.  A present declaration must be complete so a newer engine is
+    never used under an assumed, incompatible contract.
+    """
+    if declaration is _MISSING:
+        return {
+            "version": 1,
+            "minimum_client_version": 1,
+            "settings_schema_version": 0,
+            "run_metadata_schema_version": RUN_METADATA_SCHEMA_VERSION,
+            "csv_schema": CSV_SCHEMA,
+            "legacy": True,
+        }
+    if not isinstance(declaration, dict):
+        raise RuntimeError("Invalid engine protocol declaration: expected an object.")
+    required = (
+        "version",
+        "minimum_client_version",
+        "settings_schema_version",
+        "run_metadata_schema_version",
+        "csv_schema",
+    )
+    missing = [field for field in required if field not in declaration]
+    if missing:
+        raise RuntimeError(
+            "Invalid engine protocol declaration: missing " + ", ".join(missing) + "."
+        )
+    version = _protocol_integer(declaration["version"], "version")
+    minimum = _protocol_integer(
+        declaration["minimum_client_version"], "minimum_client_version"
+    )
+    settings = _protocol_integer(
+        declaration["settings_schema_version"], "settings_schema_version"
+    )
+    metadata = _protocol_integer(
+        declaration["run_metadata_schema_version"], "run_metadata_schema_version"
+    )
+    csv_schema = declaration["csv_schema"]
+    if not isinstance(csv_schema, str) or not csv_schema:
+        raise RuntimeError(
+            "Invalid engine protocol declaration: 'csv_schema' must be a non-empty string."
+        )
+    if version == 0 or minimum == 0 or minimum > version:
+        raise RuntimeError("Invalid engine protocol declaration: incompatible version range.")
+    if version > API_VERSION:
+        raise RuntimeError(
+            f"Engine protocol version {version} is newer than this Python client "
+            f"(supports version {API_VERSION}). Upgrade kohdalab-iv-native."
+        )
+    if minimum > API_VERSION:
+        raise RuntimeError(
+            f"Engine requires Python client protocol {minimum}, but this client supports "
+            f"version {API_VERSION}. Upgrade kohdalab-iv-native."
+        )
+    if settings > SETTINGS_SCHEMA_VERSION:
+        raise RuntimeError(
+            f"Engine declares settings schema {settings}, but this client supports up to "
+            f"{SETTINGS_SCHEMA_VERSION}. Upgrade kohdalab-iv-native."
+        )
+    if metadata == 0 or metadata > RUN_METADATA_SCHEMA_VERSION:
+        raise RuntimeError(
+            f"Engine declares run metadata schema {metadata}, but this client supports up to "
+            f"{RUN_METADATA_SCHEMA_VERSION}. Upgrade kohdalab-iv-native."
+        )
+    if csv_schema != CSV_SCHEMA:
+        raise RuntimeError(
+            f"Engine declares CSV schema '{csv_schema}', but this client supports "
+            f"'{CSV_SCHEMA}'. Upgrade kohdalab-iv-native."
+        )
+    return {
+        "version": version,
+        "minimum_client_version": minimum,
+        "settings_schema_version": settings,
+        "run_metadata_schema_version": metadata,
+        "csv_schema": csv_schema,
+        "legacy": False,
+    }
+
+
 def _cli_path(value):
     """Accept a CLI file, an installation directory, or a macOS app bundle."""
     path = Path(value).expanduser()
@@ -103,6 +202,7 @@ class NativeIV:
         self._write_lock = threading.Lock()
         self._stop_heartbeat = threading.Event()
         self._state = {}
+        self._received_snapshot = False
         self._reader_error = None
         self._eof = False
         self._closed = False
@@ -111,8 +211,27 @@ class NativeIV:
             stdin=subprocess.PIPE, stdout=subprocess.PIPE, text=True, bufsize=1)
         self._reader = threading.Thread(target=self._read, daemon=True)
         self._reader.start()
+        try:
+            # Protocol negotiation uses the first normal --engine Snapshot.
+            # Do not add an informational CLI flag: old engines treat unknown
+            # flags as a GUI launch.
+            first_snapshot = self.wait(lambda _: self._received_snapshot, timeout=15)
+            self.protocol = _negotiate_protocol(first_snapshot.get("protocol", _MISSING))
+        except BaseException:
+            self._close_after_startup_error()
+            raise
         self._heartbeat = threading.Thread(target=self._beat, daemon=True)
         self._heartbeat.start()
+
+    def _close_after_startup_error(self):
+        """Use the normal engine shutdown path before exposing construction failure."""
+        try:
+            self.close(timeout=10)
+        except Exception:
+            # No device command was sent before negotiation.  Preserve the
+            # compatibility error while the existing shutdown path has made
+            # its best safe attempt to stop the fresh engine.
+            self._stop_heartbeat.set()
 
     def _read(self):
         try:
@@ -121,6 +240,7 @@ class NativeIV:
                 if event.get("event") == "state":
                     with self._condition:
                         self._state = event["data"]
+                        self._received_snapshot = True
                         self._source_was_connected |= self._state.get("source_connected", False)
                         self._condition.notify_all()
         except Exception as error:

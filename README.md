@@ -4,6 +4,13 @@ A Rust desktop for DC I-V and V-I measurements with GS210 and 34411A over direct
 USB or USB-GPIB. The three-column interface keeps setup on the left, measurement
 and the I-V graph in the center, and detailed values/logs on the right.
 
+## Interface
+
+![KohdaLab IV interface](docs/images/kohdalab-iv.png)
+
+Simulation example: instrument setup and live readouts on the left, sweep
+controls and plot in the center, and the saved-data inspector and log on the right.
+
 ## Native version: 1.2.0
 
 The refreshed charcoal interface preserves the original three-column layout,
@@ -28,17 +35,37 @@ separate processes with their own licenses and OS boundaries.
 
 ## Supported instruments
 
-The v1.2.0 Rust desktop and automation engine support these instruments in both DC modes (source V / measure I and source I / measure V):
+Stable **v1.2.0** supports GS210 and Agilent/Keysight 34411A. The current
+**1.3 development source** also implements the additional models below. A protocol
+implementation or successful mock test does not establish physical validation.
+Both DC modes are available: source voltage / measure current and source current /
+measure voltage. Model IDs are also used by the Notebook client.
 
-| Role | Instrument | Connection |
-| --- | --- | --- |
-| Source | Yokogawa GS210 | Direct USB in communication mode, or GPIB |
-| Meter | Agilent / Keysight 34411A | Direct USB, or GPIB |
-| Simulation | Built-in source and meter | No hardware required |
+| Instrument | Role / model ID | Direct USB | GPIB | Availability and validation |
+| --- | --- | --- | --- | --- |
+| Yokogawa GS210 | Source · `YOKOGAWA_GS210` | Control/communication mode | Yes | Stable + development; previous hardware operation retained |
+| Yokogawa 7651 | Source · `YOKOGAWA_7651` | No | Legacy protocol | Development; protocol tests, physical validation pending |
+| Agilent 34401A | Meter · `AGILENT_34401A` | No | Yes | Development; protocol tests, physical validation pending |
+| Agilent / Keysight 34411A | Meter · `AGILENT_34411A`, `KEYSIGHT_34411A` | USBTMC | Yes | Stable + development; previous hardware operation retained |
+| Keysight 34465A | Meter · `KEYSIGHT_34465A` | USBTMC | Yes | Development; protocol tests, physical validation pending; fast NPLC depends on options |
+| ADCMT 7461A | Meter · `ADCMT_7461A` | Windows official 64-bit VISA, ADC mode | SCPI mode | Development; protocol tests, physical validation pending |
+| Simulated source | Source · `SIMULATED_SOURCE` | Not needed | Not needed | Built-in, automated simulation tests |
+| Simulated meter | Meter · `SIMULATED_METER` | Not needed | Not needed | Built-in, automated simulation tests |
 
-Supported USB-GPIB adapters are **NI GPIB-USB-HS+** and **Agilent 82357B**. The 82357B must already be initialized using separately authorized firmware/software; the distribution does not acquire or upload firmware. Windows can use an available official 64-bit VISA runtime or supported native WinUSB devices. Native USB/GPIB is available on macOS Apple Silicon. Multiple simultaneous GPIB controllers are not supported.
+GS210 USB must use communication mode, rather than storage mode. Native WinUSB
+ADCMT USB and a separate GS200 driver are not implemented. Discovery and model
+selection are separate: a discovered resource still needs a matching model.
 
-Yokogawa 7651 / GS200, Agilent 34401A, Keysight 34465A and ADCMT 7461A are **not implemented as instrument drivers in this Rust release**. Some have retained specification metadata or disabled UI entries; that does not provide measurement support. Refresh discovery alone does not establish model compatibility. See [instrument precision and limitations](docs/instrument_precision.md).
+| USB-GPIB adapter | Requirement |
+| --- | --- |
+| NI GPIB-USB-HS+ | Supported native helper or an available Windows official VISA runtime |
+| Agilent / Keysight 82357B | Must already be initialized using separately authorized software/firmware |
+
+The distribution never obtains or uploads 82357B firmware. Windows prefers an
+available official 64-bit VISA runtime and otherwise uses supported native
+WinUSB devices. macOS Apple Silicon uses the native USB/GPIB helpers. Multiple
+simultaneous GPIB controllers are not supported. See
+[instrument precision and limitations](docs/instrument_precision.md).
 
 ## Downloads
 
@@ -87,18 +114,10 @@ drivers or an incomplete existing WinUSB assignment are configured.
 
 ## Development: legacy instrument drivers
 
-The next **1.3.0-alpha.6** build ports the working Python drivers at `b754cfa^` into the Rust engine. This development work is not included in the v1.2.0 downloads above.
-
-| Instrument | Implemented development connection | Validation |
-| --- | --- | --- |
-| Yokogawa GS210 | Direct USB / GPIB | Existing support retained |
-| Yokogawa 7651 | GPIB, legacy commands | Protocol mock tests; hardware pending |
-| Agilent 34401A | GPIB | Protocol port; hardware pending |
-| Agilent / Keysight 34411A | Direct USB / GPIB | Existing support retained |
-| Keysight 34465A | USBTMC / GPIB | Protocol port; hardware pending; fast NPLC depends on options |
-| ADCMT 7461A | GPIB in SCPI mode; Windows official VISA USB in ADC mode | Protocol mock tests; hardware pending |
-
-7461A direct USB through the native WinUSB helper is not implemented. GS200 has no separate legacy driver to port and is not newly enabled. Device selection and resource discovery are separate; a discovered resource still needs a matching model.
+The **1.3.0-alpha.7** development line ports working Python protocols at
+`b754cfa^` into the Rust engine. See the [supported-instrument matrix](#supported-instruments)
+for model IDs, connection requirements and physical validation status. These
+additional drivers are not included in the stable v1.2.0 downloads above.
 
 The executables currently have no publisher Authenticode signature. See [Windows code signing and execution warnings](docs/windows_code_signing.md). Setup packaging alone does not remove SmartScreen or Smart App Control warnings.
 
@@ -120,14 +139,15 @@ Source and Meter connection settings, including Meter NPLC, are grouped in
 collapsible Device sections. Live readouts remain visible when folded. Output
 and Run have separate rounded outlines.
 
-The latest development download is **v1.3.0-alpha.6**, including legacy protocol
-ports, reduced zero-wait metadata traffic, signing preparation and automatic
-Notebook application discovery with a migration tutorial. Additional
+The latest development download is **v1.3.0-alpha.7**, including legacy protocol
+ports, reduced zero-wait metadata traffic, signing preparation, automatic
+Notebook application discovery and shared instrument/measurement contracts.
+Versioned settings and Notebook negotiation retain legacy compatibility. Additional
 instrument hardware validation is pending. The stable v1.2.0 links above remain
 available.
 
-- [Development downloads (Kohdalab)](https://github.com/Kohdalab/kohdalab-iv/releases/tag/preview-v1.3.0-alpha.6)
-- [Development downloads (personal)](https://github.com/woolen-yarn/kohdalab-iv/releases/tag/preview-v1.3.0-alpha.6)
+- [Development downloads (Kohdalab)](https://github.com/Kohdalab/kohdalab-iv/releases/tag/preview-v1.3.0-alpha.7)
+- [Development downloads (personal)](https://github.com/woolen-yarn/kohdalab-iv/releases/tag/preview-v1.3.0-alpha.7)
 
 ## Build and validation
 
