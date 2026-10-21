@@ -1,4 +1,7 @@
-# Rust performance optimization, alpha.2
+# Rust performance optimization, alpha.2 / Rust 性能最適化、alpha.2
+
+> English source is followed by a complete Japanese counterpart. Hashes, commands,
+> benchmark conditions, API identifiers, and measured values are identical in both sections.
 
 Measured on 13 October 2026 against the preserved 0.3.0-alpha.1 release.
 The 0.3.0-alpha.2 update preserves the original three-column UI, measurement
@@ -150,3 +153,88 @@ alpha.2 fc42a53506645f35bbc4b01126c806a636150b94ba0b3592f06cd90441955b8b
 
 Preview packages are local under `dist/`; stable Python releases and
 GitHub downloads were not replaced.
+
+---
+
+# Rust 性能最適化、alpha.2
+
+保存した 0.3.0-alpha.1 release に対して 2026 年 10 月 13 日に計測しました。0.3.0-alpha.2 は元の三列 UI、測定条件、全点 CSV flush を保持します。application crates は引き続き unsafe code を禁止し、native USB/GPIB helpers と driver assignments は不変です。
+
+## 同一 Mac の測定処理
+
+24 GB RAM の Apple M4 Mac mini で両 release binaries を実行しました。各 workload は -1 mV から +1 mV の 1 kOhm circuit、zero waits、NPLC 1、averaging 1 を simulation しました。各 workload は warm-up 一回の後に順番を交互にして七 trials を行いました。全 CSV は元の 46-column schema、exact row count、ordered target/readback/current values、元の numerical tolerances で検証しました。成功 runs はすべて simulated output OFF で完了しました。
+
+| Metric、median | Alpha.1 | Alpha.2 | Before / after |
+| --- | ---: | ---: | ---: |
+| 1001-point measurement and CSV loop | 6.476 ms | 3.074 ms | 2.11 |
+| 10001-point measurement and CSV loop | 64.895 ms | 29.440 ms | 2.20 |
+| 10001-point Run command to completed state | 115.116 ms | 31.785 ms | 3.62 |
+| 1001-point fresh engine through disconnect/exit | 369.745 ms | 11.313 ms | 32.68 |
+| 10001-point fresh engine through disconnect/exit | 438.710 ms | 38.790 ms | 11.31 |
+
+loop timer は planning と CSV header creation の後に開始し cleanup 後に終了し、両 version で同一です。fresh-process timing は startup、connections、IPC、disconnect、exit を含みます。大きな改善は主に fixed polling/shutdown waits の除去で、GUI startup measurement ではありません。physical throughput には依然 instrument conversion、communication、configured NPLC、settling、ramp waits が含まれます。
+
+## 大規模スイープ計画
+
+standalone release benchmark は 990099 points を計画しました。これは 200 nV increments の valid 10001-point linear sweep を 99 回繰返すものです。両 builds は同じ example/release profile を使い、old core source hash は元 benchmark/distributed alpha.1 source と一致します。warm-up 一回の後、交互に五 trials を行いました。point count、endpoint metadata、direction counts、repeat/point indices、range、compliance、configuration は一致し、小さな directional edge cases も元 Decimal algorithm に対して試験しました。
+
+| Metric、median | Alpha.1 | Alpha.2 |
+| --- | ---: | ---: |
+| Planning time | 80.297 ms | 17.543 ms |
+| Standalone planner peak RSS | 123.641 MiB | 70.688 MiB |
+
+planning は **4.58 倍高速**で、isolated workload の peak RSS は **42.8% 低下**です。macOS `/usr/bin/time -l` が peak resident memory を供給しました。これらは GUI、native helpers、measurement records、CSV writing を除外し、total application memory として提示してはいけません。
+
+## Windows GUI
+
+同じ Ryzen 5 5500GT / 16 GB Windows host で packaged x64 release binaries を実行しました。isolated simulated profiles は instrument connections を作りません。各 version で warm-up 一回の後に order を交互にして五 launches、同じ 1240 by 760 window、one-second settle、two-second idle sample を使いました。
+
+| Metric、median | Alpha.1 | Alpha.2 |
+| --- | ---: | ---: |
+| Visible main-window proxy | 123.202 ms | 137.907 ms |
+| Early idle process-tree working set | 112.902 MiB | 113.355 MiB |
+| Early idle process-tree Private Bytes | 103.398 MiB | 103.684 MiB |
+
+この test は GUI launch time や idle resident memory の改善を**示しません**。window appearance は 25 ms ごとに poll しており first paint/interaction latency ではありません。working-set sums は shared pages を複数回数え得て GPU memory は除外します。元の idle-memory objective は未達です。cached plot update は ordinary redraws の full-history scans/temporary plot copies を除きますが、large-graph frame rate はここで定量化していません。
+
+## 変更と保持した safeguards
+
+- CSV persistence は field/number buffers を再利用し invariant timing fields を cache、同一 numerical representations を再利用します。元の owned serializer は literal negative-zero/escaped-field fixtures を持つ compatibility oracle のままです。CSV quoting、exponent padding、optional blanks、exclusive file creation は互換で、header/every row は引き続き flush します。
+- planning は各 base target を一回だけ convert し、repeated points を emit しながら directions を計算して duplicate repeated Decimal/direction arrays を除きます。range/resolution limits と one-million-point cap は残ります。
+- progress snapshots は最大 50 ms ごとです。connection/completion/safety transitions は即時 publish します。condition variable が IPC writer を wake し、reusable buffers が bounded line formats を変えず JSON を batch します。shutdown は actual final-state delivery を待ち、blocked consumer 用 bounded fallback を持ちます。acquisition/output cleanup は GUI drawing を待ちません。
+- GUI は revision が変わる場合のみ new state を読み、newly received points を cached directional series へ append し borrowed slices を render します。existing extrema reduction/direction breaks は残り、table values/reader buffers を再利用します。live point queues は alpha.1 と同様 load 時に display updates を coalesce/drop できますが、CSV は全 acquired point を保持します。
+- Stop、Output Off、heartbeat expiry、scientific limits、source identity checks、resource locks、verified output shutdown は残ります。unsafe code、fast-math、shortened integration waits、reduced persistence は導入していません。
+
+## 検証と再現
+
+30 Rust unit/fake-helper tests、strict Clippy、両 platform release builds、independent review が成功しました。engine integration checks は compatible three-point CSV、independent connections、simulated output OFF を伴う 0.016 s の Stop、2.008 s の heartbeat loss cleanup を通過しました。これらは failed hardware の guaranteed deadlines ではありません。Mac GUI simulation は全 41 points を保存して output OFF を報告し、packaged Windows GUI も 41 simulated points 保存、output OFF 報告、code zero で exit しました。
+
+Windows packaged application は authorized open-circuit NI GPIB setup を -1 mV、0、+1 mV、1 mA compliance で測定しました。全三 targets/source readbacks は一致し、全 46 CSV fields が存在し、separate post-run connection が output OFF を検証しました。physical sweep は 2.142 s で、GS210 serial 91T729315 と 34411A serial MY53000981 は earlier test と一致しました。これは communication/shutdown check であり、known-resistor accuracy、direct USB、82357B、driver reinstall behavior の fresh acceptance ではありません。
+
+```sh
+python3 scripts/benchmark_rust_optimization.py --before /path/to/alpha1/kohdalab-iv-next --after target/release/kohdalab-iv
+cargo build --manifest-path Cargo.toml -p iv-core --example benchmark_plan --release --locked
+python3 scripts/benchmark_rust_plan.py --before /path/to/old/benchmark_plan --after target/release/examples/benchmark_plan
+```
+
+```powershell
+.\scripts\benchmark_rust_gui.ps1 -BeforePackage C:\alpha1 -AfterPackage C:\alpha2 -OutputDir C:\bench\rust -Repeats 5
+```
+
+local raw evidence は distributions から除外します: `next/validation/optimization/run-20261013-234231/benchmark.json` と全 CSVs/logs、`next/validation/optimization/plan-20261013-234357/benchmark.json` と OS counter logs、`next/validation/optimization/windows-gui-benchmark.json`、`next/validation/optimization/engine-safety/` と packaged GUI/hardware evidence。earlier exploratory timing run は packaging と重なったため除外し、validated CSVs/report は保存しています。failed restricted OS-counter read と initial Windows validation-script enumeration error も保存し、OS-counter test は read access で再開、physical sweep は一回実行して saved CSV を再測定なしに revalidate しました。
+
+before/after unsigned Mac engine SHA-256:
+
+```text
+alpha.1 bfa2eb96c1221ea3d44ce3de7518dd62b17765b1cad1c2097e9f2f2032180f47
+alpha.2 23109e15230c44145cf561dd87fb68c7b208ccdc4498ccf84df1a4e3d26edf75
+```
+
+Windows executable SHA-256:
+
+```text
+alpha.1 ba79a93a5cf899a8b5c0d88d406ede3318e5faa58c163b2600dbe1999ebb316d
+alpha.2 fc42a53506645f35bbc4b01126c806a636150b94ba0b3592f06cd90441955b8b
+```
+
+preview packages は `dist/` 下の local にあり、stable Python releases/GitHub downloads は置換していません。

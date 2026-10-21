@@ -48,3 +48,27 @@ upstream libwdi DLL/GPIB adaptation to it without Foundation review.
 The Foundation's acceptance decision, account access and MFA confirmation cannot
 be supplied by repository code. See [official terms](https://signpath.org/terms)
 and [GitHub integration](https://docs.signpath.io/trusted-build-systems/github).
+
+---
+
+# SignPath 申請準備（日本語）
+
+状態: ここでは application preparation のみです。account、organization ID、API token、certificate、accepted Foundation subscription は設定していません。
+
+application の public policy link には [CODE_SIGNING_POLICY.md](../CODE_SIGNING_POLICY.md) と [PRIVACY.md](../PRIVACY.md) を使用します。application-review repository は public `woolen-yarn/kohdalab-iv` であり、application にはその public README、policy、build log、release link を使用します。laboratory mirror は access を要する場合があり public evidence source ではありません。public application は root README に既存 installer/portable release とともに記述されています。`release-build.yml` は GitHub-hosted runner 上で Windows helper/Rust application を source から build し、metadata/signature を記録して review 用 unsigned workflow artifact を公開します。manual workflow run は signing credential を必要とせず GitHub release を publish しません。
+
+別の `signing-input-<commit>` workflow artifact は、下記 ZIP path（GUI/CLI は root、helper は `support/`）にある five allowlisted PE file を含みます。version-rooted portable ZIP は別の review artifact であり flat signing configuration で submit してはいけません。
+
+`application-pe.xml` は GitHub workflow ZIP 内 first-party PE file の product/version constraint 付き proposed exact allowlist です。activated configuration/full installer-signing pipeline ではありません。Foundation review なしに `**/*.exe` や upstream libwdi DLL/GPIB adaptation を追加してはいけません。
+
+## acceptance 後の maintainer 手順 / Maintainer steps after acceptance
+
+1. responsible owner、reviewer、signing approver、MFA、repository access を SignPath と確認し、上記 public build repository を確認します。
+2. SignPath GitHub App を install し trusted GitHub build system を link、production signing policy に必要な manual approval を設定します。
+3. fully signed distribution と主張する前に upstream GPIB/libwdi、NSIS installer/uninstaller signing boundary を SignPath と解決します。
+4. protected GitHub environment に organization/project/policy ID と restricted API token を設定します。同じ trusted workflow が upload した artifact にのみ official SignPath submit action を使います。verified-build policy の下で maintainer PC から手動 upload した artifact を署名してはいけません。
+5. allowlisted payload を署名し product/version/signer identity を validate、次に FILES.json/portable ZIP を regenerate します。Setup.exe の compile/sign 前に approved NSIS hook で generated uninstaller を署名します。current unsigned NSIS builder にはこの hook がなく、この integration は必要なままです。
+6. signature/timestamp を verify、final checksum を regenerate、installation/update/removal を test し、identical final file を両 repository に mirror します。
+7. Foundation credit は acceptance 後にのみ publish します。current preview/workflow artifact を signed と表現してはいけません。
+
+Foundation の acceptance decision、account access、MFA confirmation は repository code では提供できません。[official terms](https://signpath.org/terms) と [GitHub integration](https://docs.signpath.io/trusted-build-systems/github) を参照してください。

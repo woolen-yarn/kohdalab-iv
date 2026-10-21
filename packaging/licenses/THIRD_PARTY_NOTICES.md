@@ -34,3 +34,20 @@ Do not add manufacturer firmware or vendor VISA installers to this package.
 Keep SOURCE.zip, licenses, notices and REDISTRIBUTION.md with redistributed
 binaries. If you modify a GPL/LGPL binary, provide its actual modified source
 and update the modification notices. No manufacturer endorsement is implied.
+
+---
+
+# 第三者通知 — native portable（日本語）
+
+KohdaLab IV は別々の license を持つ native program/library の distribution です。root MIT license は third-party/GPL-only code を対象にしません。obligation は REDISTRIBUTION.md、library の rebuild/relink/replace は SOURCE.zip/native/REBUILDING.md を参照してください。
+
+- Rust application / CLI / thin Python control client: MIT。target-specific dependency/font の全 license notice は licenses/rust/ に供給します。Qt、PySide、PyInstaller、Python interpreter、NumPy、PyVISA runtime は同梱しません。
+- kohdalab-gpib-helper[.exe]: combined executable は GPL-2.0-only。KAME userspace NI driver/Linux-GPIB は GPLv2-or-later、Agilent adaptation は GPLv2-only を許可します。original attribution は source に保持し、upstream Linux-GPIB portion は Frank Mori Hess の work を含みます。GPL-2.0.txt と complete corresponding source/build script を供給します。
+- kohdalab-usbtmc-helper[.exe]: MIT application source。libusb 1.0.30（LGPL-2.1-or-later、Copyright libusb contributors）と static link します。
+- libusb 1.0.30 は GPIB helper にも static link します。unmodified source archive、COPYING、helper source、relinking instruction は SOURCE.zip、LGPL-2.1.txt は別途供給します。
+- Windows USB-Setup.exe: MIT application。replaceable libwdi.dll（LGPL-3.0-or-later、Pete Batard and contributors）と dynamic link します。full libwdi source/configuration/dated change/rebuild instruction は SOURCE.zip、GPL-3.0.txt/LGPL-3.0.txt は同梱します。bundled Microsoft kernel driver/WDK coinstaller ではなく Windows inbox WinUSB を使います。
+- Windows MinGW runtime notice/GCC runtime exception は licenses/ に供給します。system OS API は installed operating system から取得します。
+
+82357B firmware は GPL driver が upload できても上記 open-source license で license されるものではありません。この distribution は firmware を含めず、取得/upload もしません。既に initialized された adapter のみ対応します。manufacturer firmware/vendor VISA installer をこの package に追加してはいけません。
+
+redistributed binary には SOURCE.zip、license、notice、REDISTRIBUTION.md を同梱してください。GPL/LGPL binary を変更した場合は実際の modified source を提供し modification notice を更新します。manufacturer endorsement は含意しません。

@@ -127,3 +127,109 @@ logs so log rotation does not block installation. On the instrument test PC,
 full NI driver-package removal/reinstallation dropped from about 70 seconds to
 about 3 seconds. Timing varies with Windows policy, approval, and hardware.
 Normal startup reuses active drivers. Installer phases remain visible in the GUI.
+
+---
+
+# Windows USB セットアップ
+
+開発プレビューは、列挙する機器に対して最初にインストール済み 64-bit official VISA runtime を使います。
+メーカー driver package だけは VISA runtime ではありません。既存 WinUSB device は従来どおり native helpers を
+使います。busy または失敗した VISA connection は報告し、native I/O で再試行しません。
+
+対応機器を接続します。device に割当 driver がなければ `support/USB-Setup.exe` を実行し、Windows の
+administrator/driver prompt を承認します。Rust GUI が setup executable を自動実行することはありません。
+その後 `kohdalab-iv.exe` を起動し、Refresh を押して実際の Source/Meter resources を選び接続します。
+これら native connections には別の Python、VISA、manufacturer installer、Zadig download は不要です。
+
+direct USB と両 adapter 経由 GPIB communication は、利用者の Windows instrument PC で動作報告があります。
+NI HS+ Windows fix は 2026-10-07、GPIB と direct USB を通す physical open-output GS210/34411A sweep
+（3 points、-1 から +1 mV、1 mA hardware current limit）で確認しました。Windows は publisher/driver 確認、
+reconnect、restart を求め得ます。system administrator policy は生成 driver package を禁止し得ます。
+
+Device Manager で device driver を削除した場合は `support/USB-Setup.exe` を再実行します。USB parent があれば
+setup tool は失われた NI communication child を復旧できます。device startup/interface GUID を確認し、activation を
+最大 15 seconds 待ちます。setup が失敗したら reconnect/restart message に従ってから GUI の Refresh を再試行します。
+初回 driver installation は設定済み check より長くかかることがあり、Windows approval が必要です。
+
+## 対応デバイス
+
+| デバイス | USB vendor:product ID | 必要モード |
+| --- | --- | --- |
+| YOKOGAWA GS210（GS200 と表示される場合あり） | 0B21:0039 | TMC |
+| Agilent/Keysight 34411A | 0957:0A07 | USBTMC |
+| NI GPIB-USB-HS+ | 3923:7618 | GPIB adapter |
+| Agilent 82357B | 0957:0718 のみ | 別途得た firmware rights で初期化済み |
+
+接続前に GS210 を TMC mode に設定します。storage-mode devices、nonzero composite interfaces、その他 USB IDs は
+この setup の選択対象外です。native measurement connection 中に Storage mode へ変更しないでください。NI HS+
+Analyzer interface は本アプリで使わないため driver なしで構いません。communication interface (MI_00) は WinUSB を
+使う必要があります。一度に接続できる対応 GPIB adapter は一台です。GPIB0 は controller address 0 を使い、
+未登録モデルを含む primary addresses 1-30 の listeners を scan します。secondary addresses と multiple adapters は
+未対応です。
+
+## 初期セットアップが行うこと
+
+- 固定 supported-device allowlist と既存 WinUSB interface GUID を確認します。
+- 既存の非 WinUSB driver assignment をすべて保持します。VISA が現在見えないからといって vendor driver を廃棄可能とは判断しません。
+- configuration が必要な場合だけ administrator privileges を要求します。
+- bundled で置換可能な libwdi DLL を用い、Windows 自身の WinUSB driver を指す小さい device-specific package を生成、署名、インストールします。生成 publisher certificate を machine certificate stores に入れます。
+- すべての一致 device ではなく、選択した PnP instance に driver を割り当てます。
+- 初期化済み 82357B (0957:0718) だけを設定します。firmware を download/upload せず、boot 0957:0518 を設定せず、firmware re-enumeration 用 driver を stage しません。boot 82357B 接続中でも他の対応 devices は設定します。これらの setup steps に Internet connection は不要です。
+
+アプリと installer は Windows driver-signature enforcement や boot security settings を無効化しません。Setup は
+既存 manufacturer driver を置換しません。古い native-only release はその代わりに WinUSB を割り当てることが
+ありました。これらの device を official VISA で使うには manufacturer driver を手動復元してください。元の
+system restore settings は保存されます。USB setup は SCPI commands や measurement sweeps を送信しません。
+interface GUID を持つ既存 WinUSB configurations は再利用します。手動確認／再試行は `support` 内の `USB-Setup.exe`
+を実行し、`libwdi.dll` を USB-Setup.exe の隣に保ちます。これは一回限りの USB configuration で、KohdaLab
+application の installation ではありません。
+
+## Logs と除外 firmware
+
+Setup logs は `%LOCALAPPDATA%\KohdaLab IV` にあります。
+
+```text
+usb-setup.log
+usb-drivers/
+```
+
+setup log は target device IDs と previous driver services を記録します。Windows も SetupAPI log に driver
+installation を記録します。setup 失敗時は正確な error messages を保持します。driver installation 実行中に
+setup を繰返し開始せず、pending Windows installation/restart requests を先に解決してください。
+
+firmware rights は確立していません。以前の release が利用者 PC に file を残していても、firmware files、
+automatic acquisition、cache loading、upload は除外します。boot adapter は説明 message と共に拒否します。
+適切に licensed workflow で別途 initialization を得て、その files を本 distribution に追加しないでください。
+`REDISTRIBUTION.md` と `SOURCE.zip/docs/redistribution_audit.md` を参照してください。setup 中に source output は
+有効化せず、後の GPIB identification が IFC/REN を初期化します。
+
+## 計測器確認
+
+GUI を閉じた状態で測定前に完全な identities を確認します。GPIB addresses 3 と 7 は実際の instruments の
+addresses へ置換してください。
+
+```powershell
+& '.\support\diagnostics\usbtmc-probe.exe' --idn
+& '.\support\diagnostics\gpib-probe.exe' --idn 3 7
+```
+
+diagnostic probes は同じ source から再ビルドしますが、minimal portable でなく build kit にしかない場合があります。
+82357B には初期化済み 0957:0718 device が既に必要で、本アプリは boot 0957:0518 を初期化できません。example
+serials/addresses を残さず、app の Refresh と実際の resources を使います。hardware identification、measurement、
+Stop、output-off には Windows tests が必要です。
+
+## Source と代替手段
+
+`support/SOURCE.zip` 展開後、完全な setup/helper/dependency source、licenses、rebuild scripts は `native` と
+`scripts` にあります。libwdi modifications は `native/vendor/libwdi/KOHDALAB-MODIFICATIONS.md` に記録します。
+LGPL DLL は互換のある modified build に置換できます。専用 installer が失敗する場合、Zadig は任意の manual
+fallback で通常経路には不要です。listed USB IDs と TMC interfaces だけを使います。
+
+- libwdi: https://github.com/pbatard/libwdi
+- WinUSB: https://learn.microsoft.com/en-us/windows-hardware/drivers/usbcon/winusb-installation
+- Optional Zadig fallback: https://zadig.akeo.ie/
+
+2026-10-07 installer は Windows SetupAPI logs 読取り時に deletion access を共有するため、log rotation が
+installation を block しません。instrument test PC では完全な NI driver-package removal/reinstallation が約
+70 seconds から約 3 seconds へ短縮しました。timing は Windows policy、approval、hardware により変動します。
+通常 startup は active drivers を再利用し、installer phases は GUI に表示されたままです。
