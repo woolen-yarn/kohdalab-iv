@@ -9,7 +9,7 @@ build/
 dist/
 target/
 target-windows/
-validation/
+/validation/
 tools/
 results/
 *.log
@@ -25,4 +25,4 @@ dist-upstream/*.tar.gz
 releases/**/*.zip
 
 # Local remote-hardware acceptance logs and test staging.
-validation/
+/validation/
