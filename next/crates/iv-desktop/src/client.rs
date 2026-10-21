@@ -1,4 +1,5 @@
 use crate::protocol::{Command, Event, Snapshot};
+use crate::state::{OutputState, Phase};
 use std::io::{BufRead, BufReader, Read, Write};
 use std::process::{Child, Command as Process, Stdio};
 use std::sync::atomic::{AtomicBool, AtomicU8, AtomicU64, Ordering};
@@ -77,12 +78,12 @@ impl Client {
                 }
             }
             if let Ok(mut state) = reader_state.lock() {
-                if !matches!(state.phase.as_str(), "Completed" | "Stopped" | "Idle") {
-                    state.phase = "Failed".into();
+                if !matches!(state.phase, Phase::Completed | Phase::Stopped | Phase::Idle) {
+                    state.phase = Phase::Failed;
                     state.error =
                         "The measurement engine exited. Reconnect before continuing.".into();
-                    if !state.simulation && state.output != "Off" {
-                        state.output = "Unknown".into();
+                    if !state.simulation && state.output != OutputState::Off {
+                        state.output = OutputState::Unknown;
                         state
                             .error
                             .push_str(" Check the instrument output manually.");

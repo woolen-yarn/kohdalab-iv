@@ -6,6 +6,7 @@
 
 #![forbid(unsafe_code)]
 
+mod drivers;
 mod instruments;
 #[cfg(all(test, unix))]
 mod legacy_models;
@@ -402,7 +403,7 @@ impl DevicePair {
             return Err("Disconnect before changing instrument model.".into());
         }
         let kind = preferred_kind(&self.paths, resource)?;
-        if model == "ADCMT_7461A" && matches!(kind, ResourceKind::Usb { .. }) {
+        if drivers::is_adc_meter(model) && matches!(kind, ResourceKind::Usb { .. }) {
             return Err("ADCMT 7461A USB requires the official Windows 64-bit VISA driver/runtime and a VISA USB resource. Native WinUSB ADCMT USB is not implemented; GPIB is available.".into());
         }
         if let Some(current) = self.kind_option(role) {
@@ -445,7 +446,7 @@ impl DevicePair {
         } else {
             self.open_single_endpoint(&kind)?
         };
-        let identity = match identify_endpoint(&endpoint, model).and_then(|id| {
+        let identity = match identify_endpoint(&endpoint, role, model).and_then(|id| {
             instruments::verify_model(role, model, &id)?;
             Ok(id)
         }) {
@@ -484,7 +485,7 @@ impl DevicePair {
             Role::Meter => {
                 self.meter_identity = identity;
                 self.meter_model = model.into();
-                self.meter_discard = model == "ADCMT_7461A";
+                self.meter_discard = drivers::is_adc_meter(model);
                 self.meter_kind = Some(kind);
                 self.meter = Some(endpoint);
             }
@@ -499,7 +500,7 @@ impl DevicePair {
         let Some(endpoint) = self.endpoint_option(role).cloned() else {
             return Ok(());
         };
-        if role == Role::Meter && self.meter_model == "ADCMT_7461A" {
+        if role == Role::Meter && drivers::is_adc_meter(&self.meter_model) {
             let mut session = lock_session(&endpoint.session)?;
             session.request(
                 "CLEAR",
@@ -618,27 +619,13 @@ impl DevicePair {
 
     pub fn write(&mut self, role: Role, command: &str) -> Result<(), String> {
         self.ensure_usable()?;
-        let commands = if role == Role::Source && self.source_model == "YOKOGAWA_7651" {
-            instruments::source_write(command)?.into_iter().collect()
-        } else if role == Role::Meter && self.meter_model == "ADCMT_7461A" {
-            instruments::adc_configuration(command, self.meter_usb())?
-                .unwrap_or_else(|| vec![command.into()])
-        } else if role == Role::Meter
-            && self.meter_model == "AGILENT_34401A"
-            && command.to_ascii_uppercase().contains(":ZERO:AUTO ")
-        {
-            vec![]
-        } else {
-            vec![command.into()]
-        };
+        let model = self.model(role).to_owned();
+        let commands = drivers::write_commands(role, &model, self.meter_usb(), command)?;
         for command in commands {
-            let terminated = format!("{}\n", command.trim_end_matches(['\r', '\n']));
+            let terminated = drivers::terminated(&command);
             self.endpoint(role)?.request("WRITE", &terminated)?;
         }
-        if role == Role::Source
-            && command.to_ascii_uppercase().contains("SOUR:LEV:FIX ")
-            && self.meter_model == "ADCMT_7461A"
-        {
+        if drivers::source_write_marks_adc_discard(role, &self.meter_model, command) {
             self.meter_discard = true;
         }
         Ok(())
@@ -646,72 +633,13 @@ impl DevicePair {
 
     pub fn query(&mut self, role: Role, command: &str) -> Result<String, String> {
         self.ensure_usable()?;
-        let canonical = command.trim().trim_start_matches(':').to_ascii_uppercase();
         let endpoint = self.endpoint(role)?.clone();
-        if role == Role::Source && self.source_model == "YOKOGAWA_7651" {
-            return match canonical.as_str() {
-                "*IDN?" => identify_endpoint(&endpoint, &self.source_model),
-                "SOUR:FUNC?" => {
-                    let panel = legacy_panel(&endpoint)?;
-                    match instruments::panel_value(&panel, b'F')?.as_str() {
-                        "1" => Ok("VOLT".into()),
-                        "5" => Ok("CURR".into()),
-                        _ => Err("Unsupported 7651 source function".into()),
-                    }
-                }
-                "SOUR:RANG?" => instruments::panel_value(&legacy_panel(&endpoint)?, b'R'),
-                "SOUR:LEV?" | "SOUR:LEV:FIX?" | "SOUR:LEV:AUTO?" => {
-                    instruments::numeric_reading(&endpoint.request("QUERY", "OD;E\n")?)
-                }
-                "OUTP?" => Ok(
-                    if instruments::legacy_output(&endpoint.request("QUERY", "OC;E\n")?)? {
-                        "1"
-                    } else {
-                        "0"
-                    }
-                    .into(),
-                ),
-                "SYST:ERR?" => {
-                    let reply = endpoint.request("QUERY", "OC;E\n")?;
-                    let status = instruments::legacy_status(&reply)?;
-                    Ok(if status & 4 != 0 {
-                        "1,7651 command error"
-                    } else {
-                        "0,No error"
-                    }
-                    .into())
-                }
-                _ => Err(format!("Unsupported internal 7651 query: {command}")),
-            };
-        }
-        if role == Role::Meter && self.meter_model == "ADCMT_7461A" {
-            if canonical == "READ?" {
-                let usb = self.meter_usb();
-                let read = || -> Result<String, String> {
-                    if usb {
-                        thread::sleep(Duration::from_millis(20));
-                        instruments::numeric_reading(&endpoint.request("READ", "")?)
-                    } else {
-                        instruments::numeric_reading(&endpoint.request("QUERY", "READ?\n")?)
-                    }
-                };
-                if self.meter_discard {
-                    read()?;
-                    self.meter_discard = false;
-                }
-                return read();
-            }
-            if canonical == "SYST:ERR?" {
-                if self.meter_usb() {
-                    endpoint.request("WRITE", "ERR?\n")?;
-                    thread::sleep(Duration::from_millis(20));
-                    return endpoint.request("READ", "");
-                }
-                return endpoint.request("QUERY", ":SYSTem:ERRor?\n");
-            }
-        }
-        let terminated = format!("{}\n", command.trim_end_matches(['\r', '\n']));
-        endpoint.request("QUERY", &terminated)
+        let model = self.model(role).to_owned();
+        let usb = self.meter_usb();
+        let mut io = EndpointIo {
+            endpoint: &endpoint,
+        };
+        drivers::query(&mut io, role, &model, usb, &mut self.meter_discard, command)
     }
 
     /// Attempts emergency source shutdown. It sends output-off first, verifies
@@ -847,7 +775,7 @@ impl DevicePair {
         let source = self.source.as_ref().ok_or_else(|| {
             "Cannot turn output off because the source is not connected.".to_owned()
         })?;
-        let legacy = self.source_model == "YOKOGAWA_7651";
+        let legacy = drivers::is_legacy_source(&self.source_model);
         source.request_before(
             "WRITE",
             if legacy { "O0;E\n" } else { ":OUTP OFF\n" },
@@ -934,7 +862,7 @@ impl DevicePair {
         {
             meter.session = fresh.clone();
         }
-        let identity = if self.source_model == "YOKOGAWA_7651" {
+        let identity = if drivers::is_legacy_source(&self.source_model) {
             // Re-identification shares the same emergency deadline, including all OS lines.
             let panel = legacy_panel_before(&candidate, deadline)?;
             panel.lines().next().unwrap_or_default().trim().to_owned()
@@ -994,6 +922,32 @@ impl Endpoint {
     }
 }
 
+/// Adapter used only by the private dialect layer. DevicePair keeps ownership
+/// of sessions, deadlines, recovery and leases; drivers only sequence protocol
+/// operations through this narrow interface.
+struct EndpointIo<'a> {
+    endpoint: &'a Endpoint,
+}
+
+impl drivers::InstrumentIo for EndpointIo<'_> {
+    fn request(&mut self, operation: &str, command: &str) -> Result<String, String> {
+        self.endpoint.request(operation, command)
+    }
+
+    fn request_before(
+        &mut self,
+        operation: &str,
+        command: &str,
+        deadline: Instant,
+    ) -> Result<String, String> {
+        self.endpoint.request_before(operation, command, deadline)
+    }
+
+    fn wait(&mut self, duration: Duration) {
+        thread::sleep(duration);
+    }
+}
+
 fn lock_session(
     session: &Arc<Mutex<HelperSession>>,
 ) -> Result<std::sync::MutexGuard<'_, HelperSession>, String> {
@@ -1016,20 +970,8 @@ fn legacy_panel_before(endpoint: &Endpoint, deadline: Instant) -> Result<String,
     }
     Err("Incomplete 7651 panel response: END was not received".into())
 }
-fn legacy_panel(endpoint: &Endpoint) -> Result<String, String> {
-    legacy_panel_before(endpoint, Instant::now() + Duration::from_secs(6))
-}
-fn identify_endpoint(endpoint: &Endpoint, model: &str) -> Result<String, String> {
-    if model == "YOKOGAWA_7651" {
-        Ok(legacy_panel(endpoint)?
-            .lines()
-            .next()
-            .unwrap_or_default()
-            .trim()
-            .into())
-    } else {
-        endpoint.request("QUERY", instruments::identity_command(model))
-    }
+fn identify_endpoint(endpoint: &Endpoint, role: Role, model: &str) -> Result<String, String> {
+    drivers::identify(&mut EndpointIo { endpoint }, role, model)
 }
 
 fn spawn_for_resource(
@@ -1902,6 +1844,10 @@ exit 1
 
     #[test]
     fn exclusive_lease_prevents_a_second_owner() {
+        // A concurrent fork can briefly inherit the lock before exec closes it.
+        // Keep this assertion isolated from the helper-spawning contract tests.
+        #[cfg(unix)]
+        let _guard = GPIB_TEST_LOCK.lock().unwrap();
         let key = format!("transport-test-{}", std::process::id());
         let first = DeviceLease::acquire(&key).unwrap();
         assert!(DeviceLease::acquire(&key).is_err());

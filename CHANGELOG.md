@@ -1,5 +1,14 @@
 # Changelog
 
+## 1.3.0-alpha.7
+
+- Centralize instrument capabilities, specifications and measurement definitions without changing supported models, controls or measurement behavior.
+- Share ramp/cleanup sequencing and use typed execution, output and error states while retaining existing safety decisions and protocol strings.
+- Version settings, run metadata and Notebook API compatibility; accept legacy configurations/clients and protect newer settings from accidental overwrite.
+- Split desktop formatting, settings, history and widgets into focused modules, with cross-platform driver contracts and regression coverage.
+- Document all supported instruments and adapters, include an actual GUI screenshot, and update portable, Setup and build-kit sources.
+- Preserve the 14-column CSV format, numeric output, device command ordering and output-off behavior.
+
 ## 1.3.0-alpha.6
 
 - Find the installed Rust engine automatically from Windows installer registration and native Program Files, including 32-bit Notebook kernels, or macOS user/system Applications folders.
