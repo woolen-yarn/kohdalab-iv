@@ -46,7 +46,7 @@ class DistributionPolicyTests(unittest.TestCase):
         # under the outer portable directory. Both locations must be checked.
         source_files = {name: b"source" for name in SOURCE_FILES}
         source_files.update({f"native/licenses/{name}": b"license" for name in LICENSES})
-        source_files["portable/licenses/THIRD_PARTY_NOTICES.md"] = b"source notices"
+        source_files["packaging/licenses/THIRD_PARTY_NOTICES.md"] = b"source notices"
         source_files["REDISTRIBUTION.md"] = b"source terms"
         source_files["native/vendor/libusb-1.0.30.tar.bz2"] = (
             Path(__file__).resolve().parents[1] / "native/vendor/libusb-1.0.30.tar.bz2"

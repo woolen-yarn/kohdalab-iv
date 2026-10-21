@@ -1,8 +1,8 @@
 # Instrument precision and display policy audit
 
 Reviewed on 2026-10-14. The authoritative per-model configuration is in
-`next/specs/sources.toml` and
-`next/specs/meters.toml`. Each model now has a
+`specs/sources.toml` and
+`specs/meters.toml`. Each model now has a
 `display_precision` table with provenance, policy, review status and limitations.
 Rust embeds those files; its setting-resolution table and display query
 commands are no longer independently hardcoded. Parsing is cached.

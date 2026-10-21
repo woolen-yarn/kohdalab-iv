@@ -1,7 +1,16 @@
 # KohdaLab IV Measurement Specification / 測定仕様
 
+> Historical Python measurement specification. Numerical and behavior descriptions
+> are retained as migration reference; Python source paths, CLI commands, and
+> configuration examples below describe the former implementation. For the
+> current Rust application, use the [application guide](../guides/application-guide.md),
+> [quick start](../guides/quick-start.md), [CSV reference](csv-format.md), and
+> [Python client](../../bindings/python/README.md). Historical Python source is
+> available at [the pre-migration commit](https://github.com/woolen-yarn/kohdalab-iv/tree/5f35cbaf88175bc9f5068a51bac639b1bdb0943d).
+
+
 > Historical reference for an earlier edition. For Rust v1.0.0 operation, use
-> [the current desktop guide](../next/README.md) and `next/specs/`. The current
+> [the current desktop guide](../guides/application-guide.md) and `specs/`. The current
 > GUI has Start / Stop / Save; output-off remains an engine/API function.
 
 

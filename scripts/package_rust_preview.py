@@ -22,7 +22,6 @@ EXCLUDED = {
     "target-windows",
     "dist",
     "build",
-    "validation",
     "tools",
     ".git",
     "__pycache__",
@@ -50,7 +49,12 @@ def mac_versions(version: str) -> tuple[str, str]:
 def source_archive(path: Path) -> None:
     with ZipFile(path, "w", ZIP_DEFLATED, strict_timestamps=False) as archive:
         for name in (
-            "next",
+            "Cargo.toml",
+            "Cargo.lock",
+            "rust-toolchain.toml",
+            "crates",
+            "assets",
+            "specs",
             "bindings",
             ".github",
             "CONTRIBUTING.md",
@@ -63,8 +67,8 @@ def source_archive(path: Path) -> None:
             "scripts",
             "docs",
             "tests",
-            "portable/windows",
-            "portable/licenses",
+            "packaging/windows",
+            "packaging/licenses",
             "README.md",
             "LICENSE",
             "REDISTRIBUTION.md",
@@ -75,6 +79,7 @@ def source_archive(path: Path) -> None:
                 relative = file.relative_to(ROOT)
                 if (
                     file.is_file()
+                    and relative.parts[0] != "validation"
                     and not any(part in EXCLUDED for part in relative.parts)
                     and file.suffix not in {".pyc", ".exe", ".dll"}
                 ):
@@ -89,7 +94,7 @@ def dependency_notices(destination: Path, target: str) -> None:
                 cargo,
                 "metadata",
                 "--manifest-path",
-                str(ROOT / "next/Cargo.toml"),
+                str(ROOT / "Cargo.toml"),
                 "--locked",
                 "--format-version",
                 "1",
@@ -141,12 +146,12 @@ def main() -> None:
     )
     parser.add_argument("--native-dir", type=Path, help="Rebuilt Windows helpers with SHA256.json")
     args = parser.parse_args()
-    version = tomllib.loads((ROOT / "next/Cargo.toml").read_text())["workspace"][
+    version = tomllib.loads((ROOT / "Cargo.toml").read_text())["workspace"][
         "package"
     ]["version"]
     edition = "preview" if "-" in version else "portable"
     name = f"kohdalab-iv-{version}-{args.platform}-{edition}"
-    stage = ROOT / "next/dist" / name
+    stage = ROOT / "dist" / name
     if stage.exists():
         shutil.rmtree(stage)
     stage.mkdir(parents=True)
@@ -154,15 +159,15 @@ def main() -> None:
     if windows:
         binaries = (
             args.binaries_dir
-            or ROOT / "next/target-windows/x86_64-pc-windows-gnu/release"
+            or ROOT / "target-windows/x86_64-pc-windows-gnu/release"
         )
         shutil.copy2(binaries / "kohdalab-iv.exe", stage / "kohdalab-iv.exe")
         shutil.copy2(binaries / "iv-cli.exe", stage / "iv-cli.exe")
         for filename in ("Install-Application.cmd", "Install-Application.ps1", "Uninstall-Application.ps1"):
-            shutil.copy2(ROOT / "portable/windows" / filename, stage / filename)
+            shutil.copy2(ROOT / "packaging/windows" / filename, stage / filename)
         support = stage / "support"
     else:
-        binaries = args.binaries_dir or ROOT / "next/target/release"
+        binaries = args.binaries_dir or ROOT / "target/release"
         app = stage / "KohdaLab IV.app"
         contents = app / "Contents"
         macos = contents / "MacOS"
@@ -170,7 +175,7 @@ def main() -> None:
         resources = contents / "Resources"
         resources.mkdir()
         shutil.copy2(
-            ROOT / "next/assets/kohdalab-iv.icns", resources / "KohdaLabIV.icns"
+            ROOT / "assets/kohdalab-iv.icns", resources / "KohdaLabIV.icns"
         )
         shutil.copy2(binaries / "kohdalab-iv", macos / "kohdalab-iv")
         shutil.copy2(binaries / "iv-cli", macos / "iv-cli")
@@ -199,7 +204,7 @@ def main() -> None:
     documentation = support if windows else stage / "support"
     documentation.mkdir(parents=True, exist_ok=True)
     if windows:
-        helpers = args.native_dir or ROOT / "portable/windows/native"
+        helpers = args.native_dir or ROOT / "packaging/windows/native"
         known = json.loads((helpers / "SHA256.json").read_text())
         for filename in (
             "kohdalab-gpib-helper.exe",
@@ -211,7 +216,7 @@ def main() -> None:
             if digest(helpers / filename) != known[filename]:
                 raise SystemExit(f"Native helper checksum mismatch: {filename}")
             shutil.copy2(helpers / filename, support / filename)
-        shutil.copy2(ROOT / "portable/windows/DRIVERS.md", support / "DRIVERS.md")
+        shutil.copy2(ROOT / "packaging/windows/DRIVERS.md", support / "DRIVERS.md")
         (support / "NATIVE-SOURCE-HASHES.json").write_text(
             json.dumps(known, indent=2) + "\n"
         )
@@ -230,11 +235,11 @@ def main() -> None:
         documentation / "licenses/libwdi-LGPL.txt",
     )
     shutil.copy2(ROOT / "LICENSE", documentation / "licenses/KohdaLab-IV-MIT.txt")
-    shutil.copy2(ROOT / "portable/licenses/NSIS-LICENSE.txt", documentation / "licenses/NSIS-LICENSE.txt")
+    shutil.copy2(ROOT / "packaging/licenses/NSIS-LICENSE.txt", documentation / "licenses/NSIS-LICENSE.txt")
     shutil.copy2(ROOT / "REDISTRIBUTION.md", stage / "REDISTRIBUTION.md")
     shutil.copy2(ROOT / "native/REBUILDING.md", documentation / "REBUILDING.md")
     shutil.copy2(
-        ROOT / "portable/licenses/THIRD_PARTY_NOTICES.md",
+        ROOT / "packaging/licenses/THIRD_PARTY_NOTICES.md",
         documentation / "THIRD_PARTY_NOTICES.md",
     )
     shutil.copytree(ROOT / "bindings/python", stage / "python-control", ignore=shutil.ignore_patterns("__pycache__"))
@@ -245,7 +250,7 @@ def main() -> None:
         else "aarch64-apple-darwin"
     )
     dependency_notices(documentation / "licenses/rust", target)
-    shutil.copy2(ROOT / "next/README.md", stage / "README.md")
+    shutil.copy2(ROOT / "README.md", stage / "README.md")
     if not windows:
         for binary in (
             support / "kohdalab-gpib-helper",

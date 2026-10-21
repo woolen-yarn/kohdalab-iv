@@ -1,5 +1,7 @@
 # KohdaLab IV Next Version Implementation Plan
 
+Historical migration plan. Current source and commands are described in [repository layout](repository-layout.md). Retired Python links below are pinned to their historical source.
+
 Date: 2026-10-13. Baseline: the working v0.2.3 portable application, including
 the Windows driver recovery update published on 2026-10-07.
 
@@ -479,14 +481,14 @@ workflows outside the successor's validated support matrix.
 
 ## Existing implementation references
 
-- [Measurement specification](iv_measurement_spec.md)
-- [Usage and configuration](usage.md)
-- [Portable release guide](portable_release.md)
-- [Hardware smoke test](hardware_smoke_test.md)
-- [Safety notes](../SAFETY.md)
-- [Sweep planning](../src/kohdalab_iv/api/scan_plan.py)
-- [Measurement execution](../src/kohdalab_iv/api/measurements.py)
-- [CSV field contract](../src/kohdalab_iv/api/measurement_rows.py)
-- [Session identity and ownership](../src/kohdalab_iv/api/session.py)
-- [Current GUI and plotting](../src/kohdalab_iv/apps/iv_gui.py)
-- [Native helper build and licensing](../native/README.md)
+- [Measurement specification](../reference/measurement-spec.md)
+- [Usage and configuration](https://github.com/woolen-yarn/kohdalab-iv/blob/5f35cbaf88175bc9f5068a51bac639b1bdb0943d/docs/usage.md)
+- [Portable release guide](https://github.com/woolen-yarn/kohdalab-iv/blob/5f35cbaf88175bc9f5068a51bac639b1bdb0943d/docs/portable_release.md)
+- [Hardware smoke test](../guides/hardware-validation.md)
+- [Safety notes](../../SAFETY.md)
+- [Sweep planning](https://github.com/woolen-yarn/kohdalab-iv/blob/5f35cbaf88175bc9f5068a51bac639b1bdb0943d/src/kohdalab_iv/api/scan_plan.py)
+- [Measurement execution](https://github.com/woolen-yarn/kohdalab-iv/blob/5f35cbaf88175bc9f5068a51bac639b1bdb0943d/src/kohdalab_iv/api/measurements.py)
+- [CSV field contract](https://github.com/woolen-yarn/kohdalab-iv/blob/5f35cbaf88175bc9f5068a51bac639b1bdb0943d/src/kohdalab_iv/api/measurement_rows.py)
+- [Session identity and ownership](https://github.com/woolen-yarn/kohdalab-iv/blob/5f35cbaf88175bc9f5068a51bac639b1bdb0943d/src/kohdalab_iv/api/session.py)
+- [Current GUI and plotting](https://github.com/woolen-yarn/kohdalab-iv/blob/5f35cbaf88175bc9f5068a51bac639b1bdb0943d/src/kohdalab_iv/apps/iv_gui.py)
+- [Native helper build and licensing](../../native/README.md)

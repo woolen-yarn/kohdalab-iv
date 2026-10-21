@@ -51,11 +51,11 @@ This update reuses CSV formatting buffers, builds sweep plans without
 duplicate intermediate arrays, updates display state only when needed, and
 appends to cached graph series. CSV still flushes every point; settling, NPLC,
 limits and verified output shutdown are unchanged. See
-`docs/rust_optimization.md` in the included source for the measured comparison.
+`docs/development/rust-optimization.md` in the included source for the measured comparison.
 
 The blue and orange I-V sweep icon appears in the Windows executables, Mac app
 bundle and application window. Its editable source and platform formats are
-included under `next/assets/`. To rebuild them, install Pillow and run
+included under `assets/`. To rebuild them, install Pillow and run
 `python3 scripts/build_iv_icons.py` from the source root. Windows builds also
 require MinGW `windres` or Windows SDK `rc.exe`; these are build tools only.
 
@@ -171,9 +171,9 @@ still require administrator approval separately.
 Install rustup and the pinned Rust toolchain, then run from the source root:
 
 ```sh
-cargo test --manifest-path next/Cargo.toml --workspace --locked
-cargo clippy --manifest-path next/Cargo.toml --workspace --all-targets --locked -- -D warnings
-cargo build --manifest-path next/Cargo.toml --release --locked
+cargo test --manifest-path Cargo.toml --workspace --locked
+cargo clippy --manifest-path Cargo.toml --workspace --all-targets --locked -- -D warnings
+cargo build --manifest-path Cargo.toml --release --locked
 ```
 
 The native helpers can be rebuilt with `scripts/build_native_gpib.sh` and
@@ -183,8 +183,8 @@ or use the bundled support folder. New instrument PCs do not need these tools.
 
 Windows cross builds use the `x86_64-pc-windows-gnu` target and MinGW, with a
 static compiler runtime. The packager expects Windows binaries under
-`next/target-windows/x86_64-pc-windows-gnu/release`. Mac binaries use
-`next/target/release`. Package from the source root:
+`target-windows/x86_64-pc-windows-gnu/release`. Mac binaries use
+`target/release`. Package from the source root:
 
 ```sh
 python3 scripts/package_rust_preview.py --platform macos-arm64
@@ -192,14 +192,14 @@ python3 scripts/package_rust_preview.py --platform windows-x64
 python3 scripts/package_rust_build_kit.py
 ```
 
-The source project also contains `next/build-macos.command` and
-`next/build-windows.ps1`. The Windows script needs the Rust MSVC development
+The source project also contains `scripts/build-macos.command` and
+`scripts/build-windows.ps1`. The Windows script needs the Rust MSVC development
 toolchain, Visual C++ Build Tools, and Python 3.11 or newer on the build PC.
 It packages the native Cargo output with the hash checked existing helpers.
 These development tools are not needed on instrument PCs. The build scripts
 and packager are included in SOURCE.zip.
 For a Windows build from SOURCE.zip alone, place the original bundled support
-binaries in `portable/windows/native` before packaging, or rebuild the native
+binaries in `packaging/windows/native` before packaging, or rebuild the native
 helpers and setup tool using the existing C/C++ build instructions. A source
 archive deliberately contains source rather than a second copy of the EXEs.
 
@@ -232,10 +232,10 @@ Official downloads are available at
 https://github.com/Kohdalab/kohdalab-iv/releases/tag/portable-v1.2.0 and the
 personal mirror at https://github.com/woolen-yarn/kohdalab-iv/releases/tag/portable-v1.2.0.
 Earlier releases remain archived on GitHub. Historical preview validation is
-recorded in `docs/rust_preview.md`; current behavior and limitations are described here.
+recorded in `docs/guides/portable-guide.md`; current behavior and limitations are described here.
 
 Per-model display policies, primary sources and audit limitations are documented
-in `docs/instrument_precision.md` and the shared source/meter `specs.toml` files.
+in `docs/reference/instrument-precision.md` and the shared source/meter `specs.toml` files.
 
 Native CSV columns: `timestamp`, `elapsed_s`, `point_index`, `repeat_index`,
 `sweep_index`, `direction`, `target_value`, `target_unit`, `voltage_V`,
@@ -286,7 +286,7 @@ app bundle. See `python-control/README.md` and
 
 
 Use `python-control/kohdalab_iv_native.py` from the portable package, or
-[the source client](../bindings/python/README.md). It uses only the Python standard
+[the source client](../../bindings/python/README.md). It uses only the Python standard
 library and invokes `iv-cli --engine`. The engine owns devices and safety cleanup;
 its defaults are available through `iv-cli --default-config`.
 
@@ -355,7 +355,7 @@ use Setup.exe for that update, or run the portable executable separately.
 Build an installer after producing the Windows portable directory:
 
 ```sh
-python scripts/build_windows_installer.py --payload-dir next/dist/<windows-directory> --version <version> --output next/dist/KohdaLab-IV-Setup.exe
+python scripts/build_windows_installer.py --payload-dir dist/<windows-directory> --version <version> --output dist/KohdaLab-IV-Setup.exe
 ```
 
 The pinned NSIS compiler is a build tool only. Its zlib notices and the complete
@@ -363,7 +363,7 @@ installer scripts are included in the build kit. Downloaded tool archives are
 checked against the source-pinned SHA-256 before use. Python is only required
 on this build machine, not on an end user's Windows PC.
 
-See `docs/windows_code_signing.md` in the included source for publisher signing and execution warnings. No security controls are disabled by the app or installer.
+See `docs/development/windows-signing.md` in the included source for publisher signing and execution warnings. No security controls are disabled by the app or installer.
 
 
 ## Code signing policy

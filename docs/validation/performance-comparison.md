@@ -7,7 +7,7 @@ Windows archive size is 90.7% smaller. Resident working-set totals after
 60 seconds are 6.1% higher in Rust, so lower resident memory is still
 an outstanding objective.
 
-The later [alpha.2 optimization report](rust_optimization.md) compares the
+The later [alpha.2 optimization report](../development/rust-optimization.md) compares the
 Rust versions directly. The historical alpha.1 measurements below are retained.
 
 ## Windows portable GUI
@@ -118,8 +118,8 @@ bytes are retained in `next/validation/performance-summary.json`.
 
 ## Reproduction and evidence
 
-The development benchmark scripts are [benchmark_portable_gui.ps1](../scripts/benchmark_portable_gui.ps1)
-and [benchmark_iv_engines.py](../scripts/benchmark_iv_engines.py). They do not
+The development benchmark scripts are [benchmark_portable_gui.ps1](../../scripts/benchmark_portable_gui.ps1)
+and [benchmark_iv_engines.py](https://github.com/woolen-yarn/kohdalab-iv/blob/5f35cbaf88175bc9f5068a51bac639b1bdb0943d/scripts/benchmark_iv_engines.py). They do not
 modify shipping app code or access physical instruments. Windows launches need
 the existing logged-in interactive desktop; SSH session zero is unsuitable for
 GUI timing. The temporary interactive tasks and observed apps were removed or

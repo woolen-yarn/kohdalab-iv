@@ -359,7 +359,7 @@ mod tests {
 
     #[test]
     fn every_registered_model_is_listed_in_the_readme_and_supports_its_dc_modes() {
-        let readme = include_str!("../../../../README.md");
+        let readme = include_str!("../../../README.md");
         for role in [InstrumentRole::Source, InstrumentRole::Meter] {
             for descriptor in instrument_catalog(role) {
                 assert!(

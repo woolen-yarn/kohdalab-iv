@@ -17,10 +17,10 @@ Windows assigns its inbox WinUSB to the supported communication interfaces.
   Microsoft kernel binary. It points to the installed Windows WinUSB driver.
 
 See root [REDISTRIBUTION.md](../REDISTRIBUTION.md),
-[licensing evidence](../docs/redistribution_audit.md),
+[licensing evidence](../docs/reference/redistribution-audit.md),
 [provenance](vendor/README.md), and [rebuild/relink instructions](REBUILDING.md).
 The standalone framed byte protocol is documented in
-[docs/native_helper_protocol.md](../docs/native_helper_protocol.md).
+[docs/native_helper_protocol.md](../docs/reference/helper-protocol.md).
 
 ## Supported connections
 

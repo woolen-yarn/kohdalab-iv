@@ -45,8 +45,8 @@ RequestExecutionLevel admin
 ShowInstDetails show
 ShowUninstDetails show
 BrandingText "KohdaLab IV"
-Icon "${PROJECT_ROOT}\\next\\assets\\kohdalab-iv.ico"
-UninstallIcon "${PROJECT_ROOT}\\next\\assets\\kohdalab-iv.ico"
+Icon "${PROJECT_ROOT}\\assets\\kohdalab-iv.ico"
+UninstallIcon "${PROJECT_ROOT}\\assets\\kohdalab-iv.ico"
 
 VIAddVersionKey /LANG=1033 "ProductName" "KohdaLab IV"
 VIProductVersion ${VERSION_FILE}

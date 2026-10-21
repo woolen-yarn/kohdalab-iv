@@ -17,7 +17,7 @@ for debugging modifications to LGPL libraries.
 
 | Component | Distribution license | Corresponding source / notices |
 | --- | --- | --- |
-| Rust GUI, engine, CLI, thin Python client | MIT, plus dependency licenses | `SOURCE.zip`: `next/`, `bindings/`; `licenses/rust/DEPENDENCIES.json` and individual notices |
+| Rust GUI, engine, CLI, thin Python client | MIT, plus dependency licenses | `SOURCE.zip`: `Cargo.toml`, `Cargo.lock`, `crates/`, `bindings/`; `licenses/rust/DEPENDENCIES.json` and individual notices |
 | Combined NI/Agilent GPIB helper | GPL-2.0-only for the combined executable | `SOURCE.zip`: `native/kohdalab_gpib_helper.cpp`, `native/agilent_82357b.*`, `native/vendor/ni-gpib/`, build scripts; `licenses/GPL-2.0.txt` |
 | USBTMC helper | MIT application code, statically linked LGPL-2.1-or-later libusb | `SOURCE.zip`: `native/usbtmc_helper.cpp`, headers, scripts, libusb source archive; `licenses/LGPL-2.1.txt` |
 | Windows USB-Setup | MIT application, dynamically linked LGPL-3.0-or-later libwdi | `SOURCE.zip`: `native/windows_usb_setup.cpp`, headers, `native/vendor/libwdi/`, build script; `licenses/LGPL-3.0.txt` and `GPL-3.0.txt` |
@@ -36,7 +36,7 @@ definitions. It runs a replaceable GPIB program through standard input/output.
 That program also runs independently (`--available`, `--idn`, framed byte-I/O).
 The interface exchanges instrument addresses, timeouts, raw command bytes and
 raw response bytes, not Rust application structures, plans, plots, or records.
-Its interface is documented in `docs/native_helper_protocol.md` in SOURCE.zip.
+Its interface is documented in `docs/reference/helper-protocol.md` in SOURCE.zip.
 `KOHDALAB_IV_HELPER_DIR` selects an alternative helper directory. Direct USB
 transfers use the USBTMC program rather than the GPL driver; simulation opens
 no native helper. The portable lookup expects both named helper files in its
@@ -44,7 +44,7 @@ helper directory, even when a measurement uses only direct USB.
 
 This is a distribution of independent programs with their own license terms,
 not a claim that process separation automatically exempts every combination
-from the GPL. See the recorded evidence in `docs/redistribution_audit.md`.
+from the GPL. See the recorded evidence in `docs/reference/redistribution-audit.md`.
 
 ## Rebuilding and replacing LGPL components
 

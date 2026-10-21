@@ -51,6 +51,8 @@ impl HelperPaths {
             }
         }
         if cfg!(windows) {
+            roots.push(PathBuf::from("packaging/windows/native"));
+            // Keep old source-tree layouts usable for existing local rebuild kits.
             roots.push(PathBuf::from("portable/windows/native"));
             roots.push(PathBuf::from("build/native-windows"));
         } else {

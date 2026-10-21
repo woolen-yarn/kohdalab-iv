@@ -7,7 +7,7 @@ $directory=Join-Path ([IO.Path]::GetTempPath()) ('iv-install-tests-'+[Guid]::New
 New-Item -ItemType Directory $directory | Out-Null
 $package=Join-Path $directory 'download with spaces'
 $testRoot=Join-Path $directory 'isolated user'
-$installer=Join-Path $RepositoryRoot 'portable\windows\Install-Application.ps1'
+$installer=Join-Path $RepositoryRoot 'packaging\windows\Install-Application.ps1'
 function Assert-True($value,[string]$message){if(!$value){throw $message}}
 function New-Package([string]$revision){
  New-Item -ItemType Directory (Join-Path $package 'support') -Force | Out-Null
@@ -16,7 +16,7 @@ function New-Package([string]$revision){
  Set-Content (Join-Path $package 'support\native.txt') "support $revision" -Encoding ASCII
  Set-Content (Join-Path $package 'README.md') "Install fixture $revision" -Encoding ASCII
  Set-Content (Join-Path $package 'REDISTRIBUTION.md') "Test notices $revision" -Encoding ASCII
- foreach($name in @('Install-Application.cmd','Install-Application.ps1')){Copy-Item (Join-Path $RepositoryRoot "portable\windows\$name") (Join-Path $package $name) -Force}
+ foreach($name in @('Install-Application.cmd','Install-Application.ps1')){Copy-Item (Join-Path $RepositoryRoot "packaging\windows\$name") (Join-Path $package $name) -Force}
  $manifest=[ordered]@{}
  foreach($file in Get-ChildItem $package -Recurse -File | Where-Object Name -ne 'FILES.json'){$manifest[$file.FullName.Substring($package.Length+1).Replace('\','/')]=(Get-FileHash $file.FullName -Algorithm SHA256).Hash.ToLower()}
  $manifest | ConvertTo-Json | Set-Content (Join-Path $package 'FILES.json') -Encoding UTF8

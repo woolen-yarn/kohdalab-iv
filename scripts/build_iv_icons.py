@@ -9,7 +9,7 @@ from pathlib import Path
 from PIL import Image, ImageDraw
 
 ROOT = Path(__file__).resolve().parents[1]
-DEST = ROOT / "next/assets"
+DEST = ROOT / "assets"
 BLUE = "#55ADFF"
 ORANGE = "#FFAD58"
 CURVES = [

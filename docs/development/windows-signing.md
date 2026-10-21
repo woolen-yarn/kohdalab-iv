@@ -85,8 +85,8 @@ verify the published SHA-256 checksum before running it.
 
 ## SignPath preparation (1.3.0-alpha.3)
 
-Public policy: [Code signing policy](../CODE_SIGNING_POLICY.md). Application
-notes and the proposed first-party PE configuration live in [`.signpath`](../.signpath/README.md).
+Public policy: [Code signing policy](../../CODE_SIGNING_POLICY.md). Application
+notes and the proposed first-party PE configuration live in [`.signpath`](../../.signpath/README.md).
 The manual `release-build.yml` workflow rebuilds native helpers and Rust binaries
 on GitHub-hosted Windows runners and uploads unsigned artifacts with build-origin
 metadata, PE metadata and signature reports. It has no signing token, no signing

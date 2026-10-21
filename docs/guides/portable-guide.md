@@ -1,18 +1,18 @@
 # Rust desktop release and validation
 
 > Historical reference for an earlier edition. For Rust v1.0.0 operation, use
-> [the current desktop guide](../next/README.md) and `next/specs/`. The current
+> [the current desktop guide](application-guide.md) and `specs/`. The current
 > GUI has Start / Stop / Save; output-off remains an engine/API function.
 
 
 Version: **0.3.4**. This is the native desktop release,
 separate from the stable Python portable. The full migration plan is in
-[next_version_plan.md](next_version_plan.md).
+[next_version_plan.md](../development/next-version-plan.md).
 
 Version 0.3.4 adds nonnegative timing inputs, automatic engineering units on
 graph axes, and display precision from shared instrument TOML specifications.
 CSV uses 17-digit scientific notation without display rounding. See
-[instrument_precision.md](instrument_precision.md) for reviewed models, sources
+[instrument_precision.md](../reference/instrument-precision.md) for reviewed models, sources
 and limitations; literal front-panel matching remains unverified.
 
 Alpha.3 adds the blue/orange I-V application icon to both Windows executables,
@@ -21,7 +21,7 @@ are included in the source; `scripts/build_iv_icons.py` rebuilds them.
 
 Alpha.2 optimizes CSV allocation, repeated sweep planning, engine IPC and graph
 updates while preserving measurement and persistence settings. The
-[measured optimization report](rust_optimization.md) compares it with alpha.1;
+[measured optimization report](../development/rust-optimization.md) compares it with alpha.1;
 the historical acceptance observations below retain their original context.
 
 ## Implemented
@@ -141,7 +141,7 @@ separately from these UI and independent-connection checks.
 
 ## Known limitations and future acceptance work
 
-The [Python and Rust performance comparison](performance_comparison.md) records
+The [Python and Rust performance comparison](../validation/performance-comparison.md) records
 warm Windows window appearance around 0.125 s versus 0.503 s, simulated Mac
 processing-loop improvements, and the remaining resident-memory issue:
 110.7 MiB versus Python's 104.4 MiB after sixty seconds. These are specific
@@ -160,7 +160,7 @@ USB-Setup support tool. The current run did not uninstall the driver.
   meter power loss, and process failure acceptance with actual hardware.
 - Installer/signing/notarization and general-release documentation.
 
-The release ZIPs are built into `next/dist/` and published as `portable-v0.3.0`
+The release ZIPs are built into `dist/` and published as `portable-v0.3.0`
 in the Kohdalab repository and personal mirror. The earlier measurements above
 retain their preview-version context; release promotion does not imply that
 the remaining acceptance work has been completed.

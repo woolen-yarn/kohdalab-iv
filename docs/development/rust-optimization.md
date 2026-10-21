@@ -112,9 +112,9 @@ This is a communication and shutdown check, not known-resistor accuracy or
 fresh acceptance of direct USB, 82357B, or driver reinstall behavior.
 
 ```sh
-python3 scripts/benchmark_rust_optimization.py --before /path/to/alpha1/kohdalab-iv-next --after next/target/release/kohdalab-iv
-cargo build --manifest-path next/Cargo.toml -p iv-core --example benchmark_plan --release --locked
-python3 scripts/benchmark_rust_plan.py --before /path/to/old/benchmark_plan --after next/target/release/examples/benchmark_plan
+python3 scripts/benchmark_rust_optimization.py --before /path/to/alpha1/kohdalab-iv-next --after target/release/kohdalab-iv
+cargo build --manifest-path Cargo.toml -p iv-core --example benchmark_plan --release --locked
+python3 scripts/benchmark_rust_plan.py --before /path/to/old/benchmark_plan --after target/release/examples/benchmark_plan
 ```
 
 ```powershell
@@ -148,5 +148,5 @@ alpha.1 ba79a93a5cf899a8b5c0d88d406ede3318e5faa58c163b2600dbe1999ebb316d
 alpha.2 fc42a53506645f35bbc4b01126c806a636150b94ba0b3592f06cd90441955b8b
 ```
 
-Preview packages are local under `next/dist/`; stable Python releases and
+Preview packages are local under `dist/`; stable Python releases and
 GitHub downloads were not replaced.

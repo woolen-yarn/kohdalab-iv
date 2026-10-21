@@ -23,18 +23,18 @@ def main() -> None:
     parser.add_argument("--native-dir", type=Path)
     args = parser.parse_args()
     root = Path(__file__).resolve().parents[1]
-    version = tomllib.loads((root / "next/Cargo.toml").read_text())["workspace"][
+    version = tomllib.loads((root / "Cargo.toml").read_text())["workspace"][
         "package"
     ]["version"]
     edition = "preview" if "-" in version else "portable"
     source = (
         root
-        / "next/dist"
+        / "dist"
         / f"kohdalab-iv-{version}-windows-x64-{edition}/support/SOURCE.zip"
     )
     name = f"kohdalab-iv-{version}-build-kit"
-    destination = root / "next/dist" / f"{name}.zip"
-    native = args.native_dir or root / "portable/windows/native"
+    destination = root / "dist" / f"{name}.zip"
+    native = args.native_dir or root / "packaging/windows/native"
     known = json.loads((native / "SHA256.json").read_text())
     for filename, expected in known.items():
         if digest(native / filename) != expected:
@@ -42,20 +42,20 @@ def main() -> None:
     with ZipFile(source) as original, ZipFile(destination, "w", ZIP_DEFLATED) as kit:
         included = set(original.namelist())
         for entry in original.infolist():
-            if entry.filename == "portable/windows/native/SHA256.json":
+            if entry.filename == "packaging/windows/native/SHA256.json":
                 continue
             metadata = copy.copy(entry)
             metadata.filename = f"{name}/{entry.filename}"
             kit.writestr(metadata, original.read(entry.filename))
         for file in sorted(native.iterdir()):
-            relative = "portable/windows/native/" + file.name
+            relative = "packaging/windows/native/" + file.name
             if file.is_file() and (relative not in included or file.name == "SHA256.json"):
                 kit.write(file, f"{name}/{relative}")
         kit.writestr(
             f"{name}/BUILD-README.txt",
             f"KohdaLab IV {version} build kit\n\n"
-            "Start with next/README.md. Mac: next/build-macos.command. "
-            "Windows: next/build-windows.ps1.\n"
+            "Start with README.md. Mac: scripts/build-macos.command. "
+            "Windows: scripts/build-windows.ps1.\n"
             "Pinned Windows helpers, full native source, licenses and icons are included.\n"
             "Rust and platform compiler tools are needed only on the build PC.\n",
         )
