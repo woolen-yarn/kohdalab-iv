@@ -31,16 +31,12 @@ jobs:
           if (-not $rc) { throw 'Windows resource compiler missing' }
           "RC=$($rc.FullName)" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
       - name: Install Rust toolchain
-        working-directory: next
         run: rustup toolchain install 1.99.0 --profile minimal --component clippy,rustfmt
       - name: Format
-        working-directory: next
         run: cargo fmt --all --check
       - name: Lints
-        working-directory: next
         run: cargo clippy --workspace --all-targets --locked -- -D warnings
       - name: Tests
-        working-directory: next
         run: cargo test --workspace --locked
       - name: Official VISA helper (isolated mock, no drivers or instruments)
         if: runner.os == 'Windows'
@@ -50,9 +46,9 @@ jobs:
         shell: bash
         run: |
           if [ "${{ runner.os }}" = Windows ]; then
-            export KOHDALAB_IV_EXE="$PWD/next/target/debug/iv-cli.exe"
+            export KOHDALAB_IV_EXE="$PWD/target/debug/iv-cli.exe"
           else
-            export KOHDALAB_IV_EXE="$PWD/next/target/debug/iv-cli"
+            export KOHDALAB_IV_EXE="$PWD/target/debug/iv-cli"
           fi
           python -m unittest discover -s bindings/python -p 'test_*.py' -v
       - name: Redistribution packaging policy

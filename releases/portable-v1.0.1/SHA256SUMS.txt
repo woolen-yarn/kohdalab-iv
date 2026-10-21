@@ -1,3 +1,0 @@
-4be1d42097ea34c659459c8a4797c209ee529345c6170200a7107f8d38a3e7bc  kohdalab-iv-1.0.1-build-kit.zip
-a6f807eb9d3540c3cee4094eb5cdedde65af606cd2d2b6adae1e166e90dc4041  kohdalab-iv-1.0.1-macos-arm64-portable.zip
-db94a9e749f903bceb8f8bb18914226b54278b727e499df86bf3950d510ebc07  kohdalab-iv-1.0.1-windows-x64-portable.zip

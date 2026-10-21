@@ -7,6 +7,10 @@ htmlcov/
 .venv/
 build/
 dist/
+target/
+target-windows/
+validation/
+tools/
 results/
 *.log
 
