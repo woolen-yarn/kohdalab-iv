@@ -1846,6 +1846,7 @@ exit 1
     fn exclusive_lease_prevents_a_second_owner() {
         // A concurrent fork can briefly inherit the lock before exec closes it.
         // Keep this assertion isolated from the helper-spawning contract tests.
+        #[cfg(unix)]
         let _guard = GPIB_TEST_LOCK.lock().unwrap();
         let key = format!("transport-test-{}", std::process::id());
         let first = DeviceLease::acquire(&key).unwrap();
