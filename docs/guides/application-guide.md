@@ -183,7 +183,7 @@ or use the bundled support folder. New instrument PCs do not need these tools.
 
 Windows cross builds use the `x86_64-pc-windows-gnu` target and MinGW, with a
 static compiler runtime. The packager expects Windows binaries under
-`next/target-windows/x86_64-pc-windows-gnu/release`. Mac binaries use
+`target-windows/x86_64-pc-windows-gnu/release`. Mac binaries use
 `target/release`. Package from the source root:
 
 ```sh
