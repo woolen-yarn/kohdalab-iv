@@ -1,4 +1,7 @@
+mod workflow;
+use crate::compatibility::{CSV_SCHEMA, RUN_METADATA_SCHEMA_VERSION};
 use crate::protocol::{Command, Snapshot};
+use crate::state::{Activity, ErrorKind, Failure, OutputState, Phase};
 use iv_core::{CsvWriter, Mode, Record, RunConfig, plan, simulate_record};
 use iv_transport::{DevicePair, HelperPaths, Role};
 use std::io::{BufRead, Read, Write};
@@ -9,6 +12,7 @@ use std::sync::{
     mpsc,
 };
 use std::time::{Duration, Instant};
+use workflow::{RampPolicy, completion_phase};
 
 struct Control {
     stop: AtomicBool,
@@ -239,8 +243,9 @@ pub fn serve() -> Result<(), String> {
                         Err(error) => {
                             state.live_error = error.clone();
                             state.error =
-                                format!("Live monitor failed: {error}. Reconnect the instruments.");
-                            state.phase = "Failed".into();
+                                format!("Live monitor failed: {error}. Reconnect the instruments.")
+                                    .into();
+                            state.phase = Phase::Failed;
                             clean_output(pair.as_mut(), &mut state, None, &control);
                         }
                     }
@@ -262,7 +267,7 @@ pub fn serve() -> Result<(), String> {
         let result = match command {
             Command::Discover => discover(pair.as_mut(), &mut state, &latest),
             Command::SetLiveMode { mode } => {
-                state.phase = "Switching mode".into();
+                state.phase = Phase::SwitchingMode;
                 state.message = "Verifying output off before switching live channels…".into();
                 publish(&latest, &state);
                 let result = set_live_mode(pair.as_mut(), &mut state, mode);
@@ -352,8 +357,8 @@ pub fn serve() -> Result<(), String> {
             }
             Command::OutputOff => {
                 clean_output(pair.as_mut(), &mut state, None, &control);
-                if state.output == "Off" {
-                    state.phase = "Ready".into();
+                if state.output == OutputState::Off {
+                    state.phase = Phase::Ready;
                     state.message = "Output off verified.".into();
                 }
                 Ok(())
@@ -362,12 +367,12 @@ pub fn serve() -> Result<(), String> {
                 .and_then(|()| disconnect_role(&mut pair, &mut state, Role::Meter, &control)),
             _ => Ok(()),
         };
-        if result.is_ok() && resume_monitor && state.output == "Off" {
+        if result.is_ok() && resume_monitor && state.output == OutputState::Off {
             control.off.store(false, Ordering::Release);
         }
         if let Err(error) = result {
-            state.phase = "Failed".into();
-            state.error = error;
+            state.phase = Phase::Failed;
+            state.error = error.into();
             state.message = "Review the error and reconnect if needed.".into();
         }
         publish(&latest, &state);
@@ -411,7 +416,7 @@ fn model_label(role: Role, model: &str) -> String {
 }
 
 fn begin_connect(state: &mut Snapshot, latest: &StateFeed) {
-    state.phase = "Connecting".into();
+    state.phase = Phase::Connecting;
     state.message = "Verifying instrument identity…".into();
     state.error.clear();
     state.live_error.clear();
@@ -462,7 +467,7 @@ fn connect_role(
             && previous_model == Some(model)
             && (simulation || resource == previous_resource)
         {
-            state.phase = "Ready".into();
+            state.phase = Phase::Ready;
             state.message = "Instrument already connected.".into();
             return Ok(());
         }
@@ -499,7 +504,11 @@ fn connect_role(
         } else {
             resource.into()
         };
-        state.output = if simulation { "Off" } else { "Unknown" }.into();
+        state.output = if simulation {
+            OutputState::Off
+        } else {
+            OutputState::Unknown
+        };
     } else {
         state.meter_connected = true;
         state.meter_simulation = simulation;
@@ -511,7 +520,7 @@ fn connect_role(
         };
     }
     refresh_connections(state);
-    state.phase = "Ready".into();
+    state.phase = Phase::Ready;
     state.message = format!("Connected {}: {identity}", model_label(role, model));
     Ok(())
 }
@@ -538,8 +547,8 @@ fn disconnect_role(
     };
     if source {
         clean_output(pair.as_mut(), state, None, control);
-        if state.output != "Off" {
-            return Err(state.error.clone());
+        if state.output != OutputState::Off {
+            return Err(state.error.to_string());
         }
     }
     let detach = if !simulation && let Some(device) = pair.as_mut() {
@@ -567,11 +576,10 @@ fn disconnect_role(
         device.close()?;
     }
     state.phase = if state.source_connected || state.meter_connected {
-        "Ready"
+        Phase::Ready
     } else {
-        "Idle"
-    }
-    .into();
+        Phase::Idle
+    };
     state.message = format!("Disconnected {}.", if source { "source" } else { "meter" });
     detach?;
     Ok(())
@@ -596,7 +604,7 @@ fn discover(
     state: &mut Snapshot,
     latest: &StateFeed,
 ) -> Result<(), String> {
-    state.phase = "Scanning".into();
+    state.phase = Phase::Scanning;
     state.message = "Discovering USB instruments and GPIB listeners…".into();
     state.error.clear();
     publish(latest, state);
@@ -608,7 +616,11 @@ fn discover(
     };
     state.resources = found.resources;
     state.warnings = found.warnings;
-    state.phase = if state.connected { "Ready" } else { "Idle" }.into();
+    state.phase = if state.connected {
+        Phase::Ready
+    } else {
+        Phase::Idle
+    };
     state.message = format!("Found {} connected resources.", state.resources.len());
     Ok(())
 }
@@ -679,11 +691,12 @@ fn configure(
     pair.write(Role::Source, ":OUTP OFF")?;
     pair.write(Role::Source, "*CLS")?;
     pair.write(Role::Meter, "*CLS")?;
-    let (function, protect, measure) = if config.mode == Mode::Iv {
-        ("VOLT", "CURR", "CURR")
-    } else {
-        ("CURR", "VOLT", "VOLT")
-    };
+    let definition = iv_core::measurement_definition(config.mode);
+    let (function, protect, measure) = (
+        definition.source_function,
+        definition.protection_function,
+        definition.meter_function,
+    );
     pair.write(Role::Source, &format!(":SOUR:FUNC {function}"))?;
     pair.write(Role::Source, &format!(":SOUR:RANG {range:.12e}"))?;
     pair.write(
@@ -734,7 +747,7 @@ fn set_live_mode(
     mode: Mode,
 ) -> Result<(), String> {
     if !state.error.is_empty() {
-        return Err(state.error.clone());
+        return Err(state.error.to_string());
     }
     if !state.source_connected {
         return Err("Connect the source before changing live mode".into());
@@ -749,7 +762,7 @@ fn set_live_mode(
         if !report.output_off_verified {
             return Err("Output OFF was not verified; live mode unchanged".into());
         }
-        state.output = "Off".into();
+        state.output = OutputState::Off;
         device.write(Role::Source, ":SOUR:LEV:FIX 0")?;
         let zero = device
             .query(Role::Source, ":SOUR:LEV?")?
@@ -796,9 +809,9 @@ fn set_live_mode(
             }
         }
     }
-    state.output = "Off".into();
+    state.output = OutputState::Off;
     state.live_error.clear();
-    state.phase = "Ready".into();
+    state.phase = Phase::Ready;
     state.message = format!("Live mode {} · output off verified", mode.as_str());
     Ok(())
 }
@@ -808,7 +821,7 @@ fn monitor_reading(
     configured: &mut Option<Mode>,
     elapsed: f64,
     control: &Control,
-    output: &mut String,
+    output: &mut OutputState,
 ) -> Result<Record, String> {
     let function = monitor_query(pair, Role::Source, ":SOUR:FUNC?", control)?;
     let mode = match function
@@ -869,11 +882,10 @@ fn monitor_reading(
     };
     let raw_output = monitor_query(pair, Role::Source, ":OUTP?", control)?;
     *output = match raw_output.trim() {
-        "0" | "+0" | "OFF" => "Off",
-        "1" | "+1" | "ON" => "On",
+        "0" | "+0" | "OFF" => OutputState::Off,
+        "1" | "+1" | "ON" => OutputState::On,
         _ => return Err("Unknown source output state".into()),
-    }
-    .into();
+    };
     let config = RunConfig {
         mode,
         ..Default::default()
@@ -939,10 +951,10 @@ fn clean_output(
     ramp: Option<(&RunConfig, f64)>,
     control: &Control,
 ) {
-    state.phase = "Cleaning up".into();
-    state.output = "Unknown".into();
+    state.phase = Phase::CleaningUp;
+    state.output = OutputState::Unknown;
     if state.source_simulation && state.source_connected {
-        state.output = "Off".into();
+        state.output = OutputState::Off;
         return;
     }
     if !state.source_connected {
@@ -960,29 +972,30 @@ fn clean_output(
     {
         let mut level = current;
         let budget = Instant::now();
-        while level != 0.0 && budget.elapsed() < Duration::from_secs(10) {
-            if control.off.load(Ordering::Acquire) {
-                break;
-            }
-            level = if level.abs() <= config.ramp_step {
-                0.0
-            } else {
-                level - level.signum() * config.ramp_step
-            };
-            if let Err(error) = set_level(pair, level) {
-                errors.push(error);
-                break;
-            }
-            if config.ramp_wait_s > 0.0 {
-                std::thread::sleep(Duration::from_secs_f64(config.ramp_wait_s.min(0.1)));
-            }
+        state.activity = Activity::ReturningToZero;
+        if let Err(error) = workflow::ramp(
+            &mut level,
+            0.0,
+            config.ramp_step,
+            RampPolicy::ReturnToZero,
+            || budget.elapsed() >= Duration::from_secs(10) || control.off.load(Ordering::Acquire),
+            |level| {
+                set_level(pair, level)?;
+                if config.ramp_wait_s > 0.0 {
+                    std::thread::sleep(Duration::from_secs_f64(config.ramp_wait_s.min(0.1)));
+                }
+                Ok(true)
+            },
+        ) {
+            errors.push(error);
         }
     }
     // Emergency/error cleanup never queues a level write ahead of Output Off.
     // The transport replaces poisoned helpers before trying this operation.
+    state.activity = Activity::VerifyingOutputOff;
     match pair.force_output_off() {
         Ok(report) if report.output_off_verified => {
-            state.output = "Off".into();
+            state.output = OutputState::Off;
             if let Some(warning) = report.zeroing_warning {
                 state.warnings.push(format!(
                     "Output off was verified; resetting the source level to zero failed: {warning}"
@@ -996,12 +1009,13 @@ fn clean_output(
         state.error = format!(
             "{} {}",
             errors.join(" · "),
-            if state.output == "Off" {
+            if state.output == OutputState::Off {
                 "Output off was verified."
             } else {
                 "Check the instrument output manually."
             }
-        );
+        )
+        .into();
     }
 }
 
@@ -1171,6 +1185,7 @@ fn execute(
             ));
         }
     }
+    state.activity = Activity::Preflight;
     let requested_config = config;
     let effective_config = iv_core::prepare_config(config)?;
     let config = &effective_config;
@@ -1178,7 +1193,7 @@ fn execute(
     // Cached UI state is not proof that a real source is safe to reconfigure.
     // Enforce this here so GUI, CLI and notebook runs share the same preflight.
     if !state.source_simulation {
-        state.output = "Unknown".into();
+        state.output = OutputState::Unknown;
         let device = pair
             .as_deref_mut()
             .ok_or("Cannot start: reconnect the source and meter before measuring.")?;
@@ -1188,14 +1203,14 @@ fn execute(
         if !report.output_off_verified {
             return Err("Cannot start: source output OFF was not verified. Turn output off on the instrument and reconnect.".into());
         }
-        state.output = "Off".into();
+        state.output = OutputState::Off;
         if let Some(warning) = report.zeroing_warning {
             return Err(format!(
                 "Cannot start: output OFF was verified, but resetting the source level to zero failed. Reconnect before measuring. {warning}"
             ));
         }
     }
-    state.phase = "Preparing".into();
+    state.phase = Phase::Preparing;
     state.message = "Creating the result file before enabling output…".into();
     state.error.clear();
     state.points = 0;
@@ -1210,7 +1225,7 @@ fn execute(
     }
     let mut writer = CsvWriter::create(path)?;
     let manifest = path.with_extension("run.json");
-    let initial_metadata = serde_json::json!({"schema_version":3,"csv_schema":"compact_v2","csv_fields":iv_core::CSV_FIELDS,"csv_numeric_format":"shortest_roundtrip_scientific","application_version":env!("CARGO_PKG_VERSION"),"config":config,"requested_config":requested_config,"outcome":state,"in_progress":true,
+    let initial_metadata = serde_json::json!({"schema_version":RUN_METADATA_SCHEMA_VERSION,"csv_schema":CSV_SCHEMA,"csv_fields":iv_core::CSV_FIELDS,"csv_numeric_format":"shortest_roundtrip_scientific","application_version":env!("CARGO_PKG_VERSION"),"config":config,"requested_config":requested_config,"outcome":state,"in_progress":true,
         "source_range_setting":planned.source_range,"hardware_compliance_setting":planned.hardware_compliance,"display_settings_changes":[],"simulation":state.simulation,"csv":path.display().to_string()});
     write_json_new(&manifest, &initial_metadata)
         .map_err(|error| format!("Cannot save settings before enabling output: {error}"))?;
@@ -1234,6 +1249,7 @@ fn execute(
     let mut instrument_status_events = Vec::new();
     let mut previous_display_settings = None;
     let work = (|| -> Result<(), String> {
+        state.activity = Activity::Configuring;
         if let Some(device) = pair.as_deref_mut() {
             configure(
                 device,
@@ -1255,8 +1271,8 @@ fn execute(
             }
             device.write(Role::Source, ":OUTP ON")?;
         }
-        state.output = "On".into();
-        state.phase = "Running".into();
+        state.output = OutputState::On;
+        state.phase = Phase::Running;
         publish(latest, state);
         for point in &planned.points {
             if control.cancelled() {
@@ -1269,17 +1285,19 @@ fn execute(
                 .push_str("Setting source and waiting for settling…");
             publish_progress(latest, state, &mut last_progress);
             if let Some(device) = pair.as_deref_mut() {
-                while (level - point.target).abs() > config.ramp_step {
-                    if control.cancelled() {
-                        stopped = true;
-                        break;
-                    }
-                    level += (point.target - level).signum() * config.ramp_step;
-                    set_level(device, level)?;
-                    if !live.wait(config.ramp_wait_s, Some(device), level, state)? {
-                        stopped = true;
-                        break;
-                    }
+                state.activity = Activity::Ramping;
+                if !workflow::ramp(
+                    &mut level,
+                    point.target,
+                    config.ramp_step,
+                    RampPolicy::ApproachTarget,
+                    || control.cancelled(),
+                    |level| {
+                        set_level(device, level)?;
+                        live.wait(config.ramp_wait_s, Some(device), level, state)
+                    },
+                )? {
+                    stopped = true;
                 }
                 if stopped {
                     break;
@@ -1287,6 +1305,7 @@ fn execute(
                 set_level(device, point.target)?;
             }
             level = point.target;
+            state.activity = Activity::Settling;
             let settling = if state.points == 0 {
                 config.start_settle_s
             } else {
@@ -1296,6 +1315,7 @@ fn execute(
                 stopped = true;
                 break;
             }
+            state.activity = Activity::Acquiring;
             let mut record = if let Some(device) = pair.as_deref_mut() {
                 state.message.clear();
                 state.message = format!(
@@ -1430,6 +1450,7 @@ fn execute(
                 display_settings_changes.push(serde_json::json!({"point_index":record.point.point_index,"source_resolution":record.source_resolution,"meter_range":record.meter_range,"meter_resolution":record.meter_resolution}));
                 previous_display_settings = Some(display_settings);
             }
+            state.activity = Activity::Saving;
             writer.append(&record)?;
             let source_value = record.source_readback.unwrap_or(record.source_set);
             let (voltage, current) = if config.mode == Mode::Iv {
@@ -1456,7 +1477,8 @@ fn execute(
         }
         Ok(())
     })();
-    state.phase = "Cleaning up".into();
+    state.phase = Phase::CleaningUp;
+    state.activity = Activity::ReturningToZero;
     state.message = "Returning source to zero and verifying output off…".into();
     publish(latest, state);
     clean_output(
@@ -1470,16 +1492,13 @@ fn execute(
         control,
     );
     state.elapsed = begin.elapsed().as_secs_f64();
-    state.phase = if work.is_err() || !state.error.is_empty() {
-        "Failed"
-    } else if compliance_hit {
-        "Compliance stop"
-    } else if stopped {
-        "Stopped"
-    } else {
-        "Completed"
-    }
-    .into();
+    state.phase = completion_phase(
+        work.is_err(),
+        !state.error.is_empty(),
+        compliance_hit,
+        stopped,
+    );
+    state.activity = Activity::Idle;
     state.message = format!(
         "{} · {} points saved · output {}",
         state.phase,
@@ -1488,12 +1507,15 @@ fn execute(
     );
     if let Err(error) = work {
         state.error = if state.error.is_empty() {
-            error
+            Failure::from(error)
         } else {
-            format!("{error} · {}", state.error)
+            Failure::new(
+                ErrorKind::OutputSafety,
+                format!("{error} · {}", state.error),
+            )
         };
     }
-    let metadata = serde_json::json!({"schema_version":3,"csv_schema":"compact_v2","csv_fields":iv_core::CSV_FIELDS,"csv_numeric_format":"shortest_roundtrip_scientific","application_version":env!("CARGO_PKG_VERSION"),"config":config,"requested_config":requested_config,"outcome":state,"in_progress":false,
+    let metadata = serde_json::json!({"schema_version":RUN_METADATA_SCHEMA_VERSION,"csv_schema":CSV_SCHEMA,"csv_fields":iv_core::CSV_FIELDS,"csv_numeric_format":"shortest_roundtrip_scientific","application_version":env!("CARGO_PKG_VERSION"),"config":config,"requested_config":requested_config,"outcome":state,"in_progress":false,
         "source_range_setting":planned.source_range,"hardware_compliance_setting":planned.hardware_compliance,"display_settings_changes":display_settings_changes,"instrument_status_events":instrument_status_events,"simulation":state.simulation,"csv":path.display().to_string()});
     if let Err(error) = replace_json(&manifest, &metadata) {
         state
@@ -1653,8 +1675,8 @@ mod tests {
         let point = plan(&config).unwrap().points[0].clone();
         let record = simulate_record(&config, &point, 0.25);
         let state = Snapshot {
-            phase: "Completed".into(),
-            output: "Off".into(),
+            phase: Phase::Completed,
+            output: OutputState::Off,
             ..Default::default()
         };
         let (tx, rx) = mpsc::sync_channel(2);
@@ -1684,8 +1706,8 @@ mod tests {
     fn progress_is_coalesced_but_safety_state_is_immediate() {
         let shared = StateFeed::default();
         let mut state = Snapshot {
-            phase: "Running".into(),
-            output: "On".into(),
+            phase: Phase::Running,
+            output: OutputState::On,
             ..Default::default()
         };
         let mut tick = Instant::now();
@@ -1705,8 +1727,8 @@ mod tests {
                 .points,
             123
         );
-        state.output = "Off".into();
-        state.phase = "Completed".into();
+        state.output = OutputState::Off;
+        state.phase = Phase::Completed;
         publish(&shared, &state);
         let latest = shared.pending.lock().unwrap().snapshot.take().unwrap();
         assert_eq!(latest.output, "Off");

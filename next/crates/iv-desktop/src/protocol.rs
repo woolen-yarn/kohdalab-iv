@@ -1,3 +1,5 @@
+use crate::compatibility::ProtocolInfo;
+use crate::state::{Activity, Failure, OutputState, Phase};
 use iv_core::{Mode, Record, RunConfig};
 use iv_transport::ResourceInfo;
 use serde::{Deserialize, Serialize};
@@ -45,7 +47,7 @@ pub enum Command {
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct Snapshot {
-    pub phase: String,
+    pub phase: Phase,
     pub message: String,
     pub connected: bool,
     pub source_connected: bool,
@@ -57,7 +59,7 @@ pub struct Snapshot {
     pub meter_identity: String,
     pub source_resource: String,
     pub meter_resource: String,
-    pub output: String,
+    pub output: OutputState,
     pub points: usize,
     pub total: usize,
     pub elapsed: f64,
@@ -68,7 +70,12 @@ pub struct Snapshot {
     #[serde(default)]
     pub live_error: String,
     pub path: String,
-    pub error: String,
+    #[serde(flatten)]
+    pub error: Failure,
+    #[serde(default)]
+    pub activity: Activity,
+    #[serde(default)]
+    pub protocol: ProtocolInfo,
     pub resources: Vec<ResourceInfo>,
     pub warnings: Vec<String>,
     pub run_id: u64,
@@ -77,7 +84,7 @@ pub struct Snapshot {
 impl Default for Snapshot {
     fn default() -> Self {
         Self {
-            phase: "Idle".into(),
+            phase: Phase::Idle,
             message: "Choose your instruments or explore Simulation.".into(),
             connected: false,
             source_connected: false,
@@ -87,7 +94,7 @@ impl Default for Snapshot {
             simulation: false,
             source_identity: String::new(),
             meter_identity: String::new(),
-            output: "Unknown".into(),
+            output: OutputState::Unknown,
             points: 0,
             total: 0,
             elapsed: 0.0,
@@ -98,7 +105,9 @@ impl Default for Snapshot {
             source_resource: String::new(),
             meter_resource: String::new(),
             resistance: None,
-            error: String::new(),
+            error: Failure::default(),
+            activity: Activity::default(),
+            protocol: ProtocolInfo::default(),
             resources: vec![],
             warnings: vec![],
             run_id: 0,

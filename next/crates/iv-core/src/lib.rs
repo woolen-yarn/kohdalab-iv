@@ -14,6 +14,19 @@ use serde::{Deserialize, Serialize};
 mod instrument_specs;
 pub use instrument_specs::{meter_display_queries, source_display_resolution, source_range_query};
 
+mod catalog;
+mod measurements;
+pub use catalog::{
+    InstrumentCapabilities, InstrumentDescriptor, InstrumentDialect, InstrumentProfile,
+    InstrumentRole, MeterCapabilities, MeterProfile, NplcProfile, SourceCapabilities,
+    SourceLimitProfile, SourceProfile, SourceRangeProfile, instrument_catalog,
+    instrument_descriptor, instrument_profile,
+};
+pub use measurements::{
+    MeasurementDefinition, ParameterDefinition, ParameterUnit, PlotAxis, SweepDefinition,
+    measurement_definition, parameter_definition, sweep_definitions,
+};
+
 /// Native result schema: acquired values, origins, sweep identity and status.
 pub const CSV_FIELDS: &[&str] = &[
     "timestamp",
