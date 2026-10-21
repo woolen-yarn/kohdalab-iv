@@ -15,7 +15,7 @@ its executable directory, test without hardware:
 ```
 
 Confirm that the run completes and writes CSV. Source builds can use
-`cargo run -p iv-desktop --bin kohdalab-iv -- --measure --simulate --output /tmp/iv-simulation.csv`.
+`cargo run -p kohdalab-iv --bin kohdalab-iv -- --measure --simulate --output /tmp/iv-simulation.csv`.
 This simulation does not qualify physical communication or measurement accuracy.
 
 ## Prepare the physical setup
