@@ -9,7 +9,7 @@ use std::{
 fn main() {
     let manifest = PathBuf::from(env::var_os("CARGO_MANIFEST_DIR").unwrap());
     let icon = manifest.join("../../assets/kohdalab-iv.ico");
-    let template = manifest.join("../../../native/windows_version.rc");
+    let template = manifest.join("../../native/windows_version.rc");
     println!("cargo:rerun-if-changed={}", icon.display());
     println!("cargo:rerun-if-changed={}", template.display());
     println!("cargo:rerun-if-env-changed=WINDRES");
