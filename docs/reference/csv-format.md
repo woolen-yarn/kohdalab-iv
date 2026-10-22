@@ -3,7 +3,7 @@
 > **日本語の案内:** 列名、単位、数値の直列化規則は互換性契約です。CSV の列名は翻訳せず、
 > 本文の原表記を使用してください。
 
-The native CSV uses 14 columns (`compact_v2`), with run metadata schema 4.
+The native CSV uses 14 columns (`compact_v2`), with run metadata schema 5.
 The 46-column compatibility API has been removed. `CsvWriter::create` writes the native 14-column schema.
 
 | Former fields | Retained information |
@@ -41,6 +41,8 @@ The CSV serializes every finite in-memory `f64` using shortest round-trip scient
 
 Each new run also writes `<name>.readings.jsonl`. It is an append-only, flushed audit stream. `transport_exchange` entries retain exact helper text for physical exchanges within audited conversion, range/resolution and source-readback queries, before legacy/ADC driver header stripping or discarded ADC conversions; reading entries retain normalized values; transport errors and final run errors remain traceable. Configuration, idle monitoring and output-cleanup traffic are not a complete bus journal. Available range/resolution, source readback, identities/resources, and partial/compliance state are also retained. Simulation is labelled synthetic and never invents a hardware reply. Keep the CSV, `.run.json`, and `.readings.jsonl` together. Older CSV files lack this audit stream, so their original reply spelling and per-repeat provenance cannot be reconstructed.
 
+`timestamp` and `elapsed_s` in each saved CSV row describe host-observed completion of the final accepted meter conversion for that point. They are captured before later audit writes, display range/resolution work, source readback, and CSV disk I/O. The `iv_readings_v2` audit records microsecond RFC3339 UTC and monotonic elapsed start/completion times for each audited logical query, the first-to-last conversion window of an average, and the post-flush CSV write window. These are host timing observations, not an instrument clock; `device_timestamp_utc` is null unless a future verified device-clock interface is added. Simulation marks its time as synthetic logical host time.
+
 ## Metadata durability
 
 The CSV header, readings audit and JSON run settings are created before output is enabled.
@@ -69,7 +71,7 @@ autorange history and output cleanup. Full legacy CSV tests remain intact.
 
 ## 日本語 — 全文対訳
 
-ネイティブCSVは14列の`compact_v2`で、run metadata schemaは4です。46列の互換APIは削除済みで、`CsvWriter::create`はネイティブ14列を書き込みます。
+ネイティブCSVは14列の`compact_v2`で、run metadata schemaは5です。46列の互換APIは削除済みで、`CsvWriter::create`はネイティブ14列を書き込みます。
 
 | 旧フィールド | 保持する情報 |
 | --- | --- |
@@ -101,6 +103,8 @@ GS210のprogrammed-level照会は、負荷へ供給された電圧・電流の�
 CSVはengine内の有限`f64`を最短往復可能な指数表記で直列化します。これは取得・計算済みの値を表示書式で失わないためであり、全桁が実験的に有意であることを示すものではありません。既存の照会で得られる機器のrange・resolutionはprovenanceとして記録します。resolutionはaccuracyではなく、instrument replyの末尾zeroもuncertaintyを決めません。traceableな機器別uncertainty modelが追加されるまで、uncertaintyは明示的にunknownです。
 
 新しいrunでは`<name>.readings.jsonl`も作成します。これはappend-onlyで各行をflushする監査streamです。`transport_exchange` entryは、legacy/ADC driverによるheader stripやdiscarded ADC conversionの前に、保存対象の変換・レンジ/分解能・出力readback照会内の通信応答を保持します。reading entryは正規化した値を保持し、通信エラーと最終エラーを追跡できます。設定処理・待機モニター・出力終了処理の全通信を記録するものではありません。利用可能なrange/resolution、source readback、identity/resource、partial/compliance状態も保持します。simulationはsyntheticと明記し、hardware replyを作りません。CSV・`.run.json`・`.readings.jsonl`は一緒に保管してください。旧CSVにはこのaudit streamがないため、元の応答表記やrepeatごとのprovenanceは復元できません。
+
+各保存CSV行の`timestamp`と`elapsed_s`は、そのpointで受理された最終meter conversionのhost観測完了を表します。後続のaudit write、表示用range/resolution、source readback、CSV disk I/Oより前に取得します。`iv_readings_v2` auditは、各監査対象logical query、averageのfirst-to-last conversion window、flush後CSV write windowについて、microsecond RFC3339 UTCとmonotonic elapsedの開始・完了時刻を記録します。これはhostの時刻観測でありinstrument clockではありません。検証済みのdevice-clock interfaceが追加されるまで`device_timestamp_utc`はnullです。simulationではsynthetic logical host timeと明記します。
 
 ### Metadataの耐久性
 

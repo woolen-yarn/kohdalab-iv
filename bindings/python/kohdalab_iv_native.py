@@ -14,7 +14,7 @@ import time
 # It describes the JSON-lines engine protocol, not the Python distribution.
 API_VERSION = 1
 SETTINGS_SCHEMA_VERSION = 1
-RUN_METADATA_SCHEMA_VERSION = 4
+RUN_METADATA_SCHEMA_VERSION = 5
 CSV_SCHEMA = "compact_v2"
 _MISSING = object()
 

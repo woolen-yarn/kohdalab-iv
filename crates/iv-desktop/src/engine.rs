@@ -627,28 +627,90 @@ fn discover(
 }
 
 fn timestamp() -> String {
-    time::OffsetDateTime::now_utc()
-        .format(&time::format_description::well_known::Rfc3339)
-        .unwrap_or_default()
+    let now = time::OffsetDateTime::now_utc();
+    format!(
+        "{:04}-{:02}-{:02}T{:02}:{:02}:{:02}.{:06}Z",
+        now.year(),
+        now.month() as u8,
+        now.day(),
+        now.hour(),
+        now.minute(),
+        now.second(),
+        now.nanosecond() / 1_000,
+    )
+}
+
+#[derive(Clone, Debug)]
+struct HostTiming {
+    started_at_utc: String,
+    completed_at_utc: String,
+    started_elapsed_s: f64,
+    completed_elapsed_s: f64,
+}
+
+impl HostTiming {
+    fn start(begin: Instant) -> (String, f64) {
+        (timestamp(), begin.elapsed().as_secs_f64())
+    }
+
+    fn finish(begin: Instant, started_at_utc: String, started_elapsed_s: f64) -> Self {
+        Self {
+            started_at_utc,
+            completed_at_utc: timestamp(),
+            started_elapsed_s,
+            completed_elapsed_s: begin.elapsed().as_secs_f64(),
+        }
+    }
+
+    fn logical_now(begin: Instant) -> Self {
+        let utc = timestamp();
+        let elapsed = begin.elapsed().as_secs_f64();
+        Self {
+            started_at_utc: utc.clone(),
+            completed_at_utc: utc,
+            started_elapsed_s: elapsed,
+            completed_elapsed_s: elapsed,
+        }
+    }
+
+    fn json(&self) -> serde_json::Value {
+        serde_json::json!({
+            "host_started_at_utc":self.started_at_utc,
+            "host_completed_at_utc":self.completed_at_utc,
+            "host_started_elapsed_s":self.started_elapsed_s,
+            "host_completed_elapsed_s":self.completed_elapsed_s,
+            "device_timestamp_utc":serde_json::Value::Null,
+        })
+    }
+}
+
+#[derive(Clone, Debug)]
+struct RecordedObservation {
+    reply: String,
+    timing: HostTiming,
 }
 
 fn read_level(
     pair: &mut DevicePair,
     audit: &mut ReadingsAudit,
     point_index: usize,
+    begin: Instant,
 ) -> Result<Option<f64>, String> {
     for command in [":SOUR:LEV?", ":SOUR:LEV:FIX?", ":SOUR:LEV:AUTO?"] {
         // A transport timeout poisons the session and requires output-off
         // recovery. Only a received, unparsable reply can try another dialect.
-        let reply = query_with_audit(pair, Role::Source, command, audit, point_index, None)?;
-        let parsed = reply
+        let observation =
+            query_with_audit(pair, Role::Source, command, audit, point_index, None, begin)?;
+        let parsed = observation
+            .reply
             .trim()
             .parse::<f64>()
             .ok()
             .filter(|value| value.is_finite());
         audit.append(&serde_json::json!({
             "event":"source_readback", "point_index":point_index,
-            "command":command, "normalized_response":reply, "parsed_value":parsed,
+            "command":command, "normalized_response":observation.reply, "parsed_value":parsed,
+            "timing":observation.timing.json(),
         }))?;
         if let Some(value) = parsed {
             return Ok(Some(value));
@@ -721,8 +783,11 @@ fn query_with_audit(
     audit: &mut ReadingsAudit,
     point_index: usize,
     reading_index: Option<u32>,
-) -> Result<String, String> {
+    begin: Instant,
+) -> Result<RecordedObservation, String> {
+    let (started_at_utc, started_elapsed_s) = HostTiming::start(begin);
     let recorded = pair.query_recorded(role, command);
+    let timing = HostTiming::finish(begin, started_at_utc, started_elapsed_s);
     let role_name = if role == Role::Source {
         "source"
     } else {
@@ -735,9 +800,10 @@ fn query_with_audit(
         point_index,
         reading_index,
         &recorded.exchanges,
+        &timing,
     );
     match (recorded.result, audit_result) {
-        (Ok(value), Ok(())) => Ok(value),
+        (Ok(reply), Ok(())) => Ok(RecordedObservation { reply, timing }),
         (Err(query_error), Ok(())) => Err(query_error),
         (Ok(_), Err(audit_error)) => Err(audit_error),
         (Err(query_error), Err(audit_error)) => Err(format!(
@@ -753,6 +819,7 @@ fn append_transport_exchanges(
     point_index: usize,
     reading_index: Option<u32>,
     exchanges: &[TransportExchange],
+    timing: &HostTiming,
 ) -> Result<(), String> {
     for (exchange_index, exchange) in exchanges.iter().enumerate() {
         audit.append(&serde_json::json!({
@@ -761,6 +828,7 @@ fn append_transport_exchanges(
             "logical_command":logical_command, "exchange_index":exchange_index,
             "operation":exchange.operation, "wire_command":exchange.command,
             "wire_response":exchange.response, "wire_error":exchange.error,
+            "timing":timing.json(),
         }))?;
     }
     Ok(())
@@ -1369,14 +1437,15 @@ fn execute(
         })
     };
     let provenance_policy = serde_json::json!({
-        "schema":"iv_readings_v1",
+        "schema":"iv_readings_v2",
         "numeric_precision":"csv uses shortest f64 round-trip scientific notation; raw instrument replies are retained verbatim in readings.jsonl",
         "resolution":"recorded only when an existing display query supplies it; otherwise null/unknown",
         "uncertainty":"unknown; neither raw text nor resolution is treated as accuracy or uncertainty",
         "simulation":"synthetic records have no fabricated hardware replies",
+        "timing":"host UTC timestamps use RFC3339 microsecond precision and monotonic elapsed seconds relative to run start; they are host observation times, not instrument/device-clock timestamps",
     });
     let audit_start = serde_json::json!({
-        "event":"run_started", "schema":"iv_readings_v1", "csv":path.display().to_string(),
+        "event":"run_started", "schema":"iv_readings_v2", "csv":path.display().to_string(),
         "run_metadata":manifest.display().to_string(), "config":config,
         "requested_config":requested_config, "instruments":instruments,
         "provenance_policy":provenance_policy,
@@ -1391,7 +1460,7 @@ fn execute(
         }
     };
     let initial_metadata = serde_json::json!({"schema_version":RUN_METADATA_SCHEMA_VERSION,"csv_schema":CSV_SCHEMA,"csv_fields":iv_core::CSV_FIELDS,"csv_numeric_format":"shortest_roundtrip_scientific","application_version":env!("CARGO_PKG_VERSION"),"config":config,"requested_config":requested_config,"outcome":state,"in_progress":true,
-        "source_range_setting":planned.source_range,"hardware_compliance_setting":planned.hardware_compliance,"display_settings_changes":[],"simulation":state.simulation,"csv":path.display().to_string(),"instruments":instruments,"readings_audit":{"path":readings_path.display().to_string(),"filename":readings_filename,"schema":"iv_readings_v1","provenance_policy":provenance_policy}});
+        "source_range_setting":planned.source_range,"hardware_compliance_setting":planned.hardware_compliance,"display_settings_changes":[],"simulation":state.simulation,"csv":path.display().to_string(),"instruments":instruments,"readings_audit":{"path":readings_path.display().to_string(),"filename":readings_filename,"schema":"iv_readings_v2","provenance_policy":provenance_policy}});
     if let Err(error) = write_json_new(&manifest, &initial_metadata) {
         let _ = std::fs::remove_file(path);
         let _ = std::fs::remove_file(&readings_path);
@@ -1431,12 +1500,20 @@ fn execute(
             // the 7651 that do not use GS210 SCPI directly.
             let range_query =
                 iv_core::source_range_query(&device.source_model)?.unwrap_or(":SOUR:RANG?");
-            let range = query_with_audit(device, Role::Source, range_query, &mut audit, 0, None)?;
+            let range = query_with_audit(
+                device,
+                Role::Source,
+                range_query,
+                &mut audit,
+                0,
+                None,
+                begin,
+            )?;
             audit.append(&serde_json::json!({
-                "event":"source_range", "command":range_query, "normalized_response":range,
-                "parsed_range":positive_reading(&range),
+                "event":"source_range", "command":range_query, "normalized_response":range.reply,
+                "parsed_range":positive_reading(&range.reply), "timing":range.timing.json(),
             }))?;
-            actual_source_resolution = positive_reading(&range)
+            actual_source_resolution = positive_reading(&range.reply)
                 .and_then(|range| source_resolution(&device.source_model, config.mode, range));
             live.source_resolution = actual_source_resolution;
             if control.cancelled() {
@@ -1505,6 +1582,8 @@ fn execute(
                 let mut meter_resolution: Option<f64> = None;
                 let mut meter_range: Option<f64> = None;
                 let mut resolution_known = true;
+                let mut first_conversion_timing: Option<HostTiming> = None;
+                let mut last_conversion_timing: Option<HostTiming> = None;
                 let display_queries =
                     iv_core::meter_display_queries(&device.meter_model, config.mode)?;
                 for reading_index in 1..=config.average_count {
@@ -1513,24 +1592,31 @@ fn execute(
                         break;
                     }
                     live.last = Instant::now();
-                    let text = query_with_audit(
+                    let observation = query_with_audit(
                         device,
                         Role::Meter,
                         "READ?",
                         &mut audit,
                         point.point_index,
                         Some(reading_index),
+                        begin,
                     )?;
+                    let text = observation.reply.clone();
                     let parsed = text.trim().parse::<f64>();
                     audit.append(&serde_json::json!({
                         "event":"meter_reading", "point_index":point.point_index,
                         "reading_index":reading_index, "command":"READ?", "normalized_response":text,
                         "parsed_value":parsed.as_ref().ok(),
+                        "timing":observation.timing.json(),
                     }))?;
                     let measured = parsed.map_err(|_| format!("Invalid meter reading: {text}"))?;
                     if !measured.is_finite() || measured.abs() > 1e30 {
                         return Err("Meter reported overload or an invalid reading.".into());
                     }
+                    if first_conversion_timing.is_none() {
+                        first_conversion_timing = Some(observation.timing.clone());
+                    }
+                    last_conversion_timing = Some(observation.timing.clone());
                     value += measured / config.average_count as f64;
                     readings_completed += 1;
                     // Do not allow averaging to hide an individual over-limit sample.
@@ -1556,12 +1642,13 @@ fn execute(
                             &mut audit,
                             point.point_index,
                             Some(reading_index),
+                            begin,
                         )?;
                         if control.cancelled() {
                             stopped = true;
                             break;
                         }
-                        let range = positive_reading(&range_text);
+                        let range = positive_reading(&range_text.reply);
                         let mut raw_resolution_response = None;
                         let resolution = live.meter_resolution.read(range, || {
                             let reply = query_with_audit(
@@ -1571,14 +1658,16 @@ fn execute(
                                 &mut audit,
                                 point.point_index,
                                 Some(reading_index),
+                                begin,
                             )?;
-                            raw_resolution_response = Some(reply.clone());
-                            Ok(reply)
+                            raw_resolution_response = Some(reply.reply.clone());
+                            Ok(reply.reply)
                         })?;
                         audit.append(&serde_json::json!({
                             "event":"meter_display", "point_index":point.point_index,
                             "reading_index":reading_index, "range_command":range_query,
-                            "normalized_range_response":range_text, "range":range,
+                            "normalized_range_response":range_text.reply, "range":range,
+                                "timing":range_text.timing.json(),
                                 "resolution_command":resolution_query, "resolution":resolution,
                                 "resolution_origin":if raw_resolution_response.is_some() { "existing_query" } else { "range_cache" },
                                 "normalized_resolution_response":live.meter_resolution.last_response,
@@ -1622,8 +1711,10 @@ fn execute(
                     }));
                 }
                 readings_completed_for_record = readings_completed;
-                let readback = read_level(device, &mut audit, point.point_index)?;
-                let mut record = simulate_record(config, point, begin.elapsed().as_secs_f64());
+                let signal_timing =
+                    last_conversion_timing.ok_or("No meter conversion completed.")?;
+                let readback = read_level(device, &mut audit, point.point_index, begin)?;
+                let mut record = simulate_record(config, point, signal_timing.completed_elapsed_s);
                 record.source_set = level;
                 record.source_readback = readback;
                 record.meter_value = value;
@@ -1637,20 +1728,29 @@ fn execute(
                 record.source_resource = model_label(Role::Source, &device.source_model);
                 record.meter_resource = model_label(Role::Meter, &device.meter_model);
                 record.compliance = sample_limit_hit || value.abs() >= config.compliance;
+                audit.append(&serde_json::json!({
+                    "event":"average_window", "point_index":point.point_index,
+                    "readings_requested":config.average_count, "readings_completed":readings_completed,
+                    "first_conversion":first_conversion_timing.map(|timing| timing.json()),
+                    "last_conversion":signal_timing.json(),
+                }))?;
+                record.timestamp = signal_timing.completed_at_utc.clone();
                 record
             } else {
-                let mut record = simulate_record(config, point, begin.elapsed().as_secs_f64());
+                let signal_timing = HostTiming::logical_now(begin);
+                let mut record = simulate_record(config, point, signal_timing.completed_elapsed_s);
                 record.compliance = record.meter_value.abs() >= config.compliance;
                 audit.append(&serde_json::json!({
                     "event":"synthetic_reading", "point_index":point.point_index,
                     "reading_index":1, "parsed_value":record.meter_value,
                     "raw_response":serde_json::Value::Null,
                     "hardware_reply":"not_applicable_synthetic_simulation",
+                    "timing":signal_timing.json(), "time_basis":"synthetic_logical_host_time",
                 }))?;
                 readings_completed_for_record = 1;
+                record.timestamp = signal_timing.completed_at_utc;
                 record
             };
-            record.timestamp = timestamp();
             record.status = if record.compliance {
                 "compliance"
             } else {
@@ -1671,7 +1771,9 @@ fn execute(
                 previous_display_settings = Some(display_settings);
             }
             state.activity = Activity::Saving;
+            let (csv_started_at_utc, csv_started_elapsed_s) = HostTiming::start(begin);
             writer.append(&record)?;
+            let csv_timing = HostTiming::finish(begin, csv_started_at_utc, csv_started_elapsed_s);
             // Account for the flushed CSV row, last value and fit even if
             // the companion audit fails.
             state.points += 1;
@@ -1683,6 +1785,11 @@ fn execute(
             };
             state.resistance = fit.add(voltage, current);
             state.last = Some(record.clone());
+            audit.append(&serde_json::json!({
+                "event":"csv_write", "point_index":record.point.point_index,
+                "csv_row_count":state.points, "timing":csv_timing.json(),
+                "meaning":"host CSV write start and completion after row append/flush",
+            }))?;
             audit.append(&serde_json::json!({
                 "event":"saved_point", "point_index":record.point.point_index,
                 "readings_requested":config.average_count,
@@ -1770,7 +1877,7 @@ fn execute(
         state.warnings.push("The readings audit could not be finalized; retain the partial .readings.jsonl file with this run.".into());
     }
     let metadata = serde_json::json!({"schema_version":RUN_METADATA_SCHEMA_VERSION,"csv_schema":CSV_SCHEMA,"csv_fields":iv_core::CSV_FIELDS,"csv_numeric_format":"shortest_roundtrip_scientific","application_version":env!("CARGO_PKG_VERSION"),"config":config,"requested_config":requested_config,"outcome":state,"in_progress":false,
-        "source_range_setting":planned.source_range,"hardware_compliance_setting":planned.hardware_compliance,"display_settings_changes":display_settings_changes,"instrument_status_events":instrument_status_events,"simulation":state.simulation,"csv":path.display().to_string(),"instruments":instruments,"readings_audit":{"path":readings_path.display().to_string(),"filename":readings_filename,"schema":"iv_readings_v1","provenance_policy":provenance_policy}});
+        "source_range_setting":planned.source_range,"hardware_compliance_setting":planned.hardware_compliance,"display_settings_changes":display_settings_changes,"instrument_status_events":instrument_status_events,"simulation":state.simulation,"csv":path.display().to_string(),"instruments":instruments,"readings_audit":{"path":readings_path.display().to_string(),"filename":readings_filename,"schema":"iv_readings_v2","provenance_policy":provenance_policy}});
     if let Err(error) = replace_json(&manifest, &metadata) {
         state
             .warnings

@@ -311,13 +311,13 @@ mod tests {
         let audit = b"{\"event\":\"run_started\",\"raw_response\":\"1.23000e-6\"}\n";
         fs::write(csv.with_extension("readings.jsonl"), audit).unwrap();
         let metadata = serde_json::json!({
-            "schema_version": 4,
+            "schema_version": 5,
             "in_progress": false,
             "csv": csv.display().to_string(),
             "config": {"mode": "Vi"},
             "requested_config": {"mode": "Vi", "step": 1e-6},
             "outcome": {"path": csv.display().to_string(), "phase": "Completed"},
-            "readings_audit": {"path": csv.with_extension("readings.jsonl").display().to_string(), "schema": "iv_readings_v1"},
+            "readings_audit": {"path": csv.with_extension("readings.jsonl").display().to_string(), "schema": "iv_readings_v2"},
             "points": [{"voltage_V": 1.2345678901234567e-6}]
         });
         fs::write(
