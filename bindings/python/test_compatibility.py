@@ -8,7 +8,7 @@ CURRENT = {
     "version": 1,
     "minimum_client_version": 1,
     "settings_schema_version": 1,
-    "run_metadata_schema_version": 4,
+    "run_metadata_schema_version": 5,
     "csv_schema": "compact_v2",
 }
 
@@ -34,8 +34,8 @@ class ProtocolCompatibilityTests(unittest.TestCase):
         future_csv = {**CURRENT, "csv_schema": "compact_v3"}
         with self.assertRaisesRegex(RuntimeError, "CSV schema 'compact_v3'"):
             _negotiate_protocol(future_csv)
-        future_metadata = {**CURRENT, "run_metadata_schema_version": 5}
-        with self.assertRaisesRegex(RuntimeError, "run metadata schema 5"):
+        future_metadata = {**CURRENT, "run_metadata_schema_version": 6}
+        with self.assertRaisesRegex(RuntimeError, "run metadata schema 6"):
             _negotiate_protocol(future_metadata)
 
     def test_malformed_declarations_are_rejected_before_connect(self):

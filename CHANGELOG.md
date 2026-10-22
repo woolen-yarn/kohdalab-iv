@@ -3,6 +3,11 @@
 > **Language navigation / 言語案内:** The English historical record appears first, followed by a complete Japanese counterpart. Versions, dates, API names, commands, compatibility wording, and historical claims are preserved in both languages.
 > 英語の履歴記録を先に置き、その後に完全な日本語対訳を掲載します。バージョン、日付、API 名、コマンド、互換性の表現、履歴上の主張は両言語で保持します。
 
+## 1.3.0-alpha.9
+
+- Timestamp each saved CSV row at host-observed completion of its final meter conversion, before later provenance, display, source-readback, or disk work.
+- Record explicit host UTC/monotonic timing for audited queries, averaging windows, and flushed CSV writes; no device-clock timestamp or uncertainty is inferred.
+
 ## 1.3.0-alpha.8
 
 - Preserve the existing 14-column CSV schema and shortest round-trip numeric values.
@@ -241,6 +246,11 @@
 ---
 
 # 変更履歴（日本語）
+
+## 1.3.0-alpha.9
+
+- 各保存CSV行のtimestampを、後続のprovenance・表示・source readback・disk処理より前の、最終meter conversionのhost観測完了時刻に設定します。
+- 監査対象query、average window、flush済みCSV writeのhost UTC/monotonic timingを明示的に記録します。device clock timestampやuncertaintyを推定しません。
 
 ## 1.3.0-alpha.8
 

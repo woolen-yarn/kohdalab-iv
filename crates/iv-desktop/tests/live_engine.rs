@@ -376,6 +376,42 @@ fn native_mock_idle_monitor_uses_actual_source_mode_and_never_enables_output() {
     assert!(audit.iter().any(|entry| entry["event"] == "meter_display"
         && entry["resolution_origin"] == "range_cache"
         && entry["normalized_resolution_response"] == "0.0000001"));
+    let saved_csv = csv_reader(&path);
+    let csv_timestamp = saved_csv[1].split(',').next().unwrap();
+    let average_index = audit
+        .iter()
+        .position(|entry| entry["event"] == "average_window" && entry["point_index"] == 1)
+        .unwrap();
+    let average = &audit[average_index];
+    assert_eq!(
+        csv_timestamp,
+        average["last_conversion"]["host_completed_at_utc"]
+            .as_str()
+            .unwrap(),
+        "CSV timestamp is the final saved meter conversion, not later provenance or I/O"
+    );
+    assert!(
+        average["first_conversion"]["host_completed_elapsed_s"]
+            .as_f64()
+            .unwrap()
+            <= average["last_conversion"]["host_completed_elapsed_s"]
+                .as_f64()
+                .unwrap()
+    );
+    let csv_write_index = audit
+        .iter()
+        .position(|entry| entry["event"] == "csv_write" && entry["point_index"] == 1)
+        .unwrap();
+    assert!(average_index < csv_write_index);
+    assert!(
+        audit[csv_write_index]["timing"]["host_started_elapsed_s"]
+            .as_f64()
+            .unwrap()
+            >= average["last_conversion"]["host_completed_elapsed_s"]
+                .as_f64()
+                .unwrap()
+    );
+    assert!(audit[csv_write_index]["timing"]["device_timestamp_utc"].is_null());
     let commands = std::fs::read_to_string(&log).unwrap();
     assert!(commands.matches(&hex("READ?\n")).count() > 9);
     // Repeat is per-point accumulation, not another traversal of the source.
@@ -493,6 +529,20 @@ fn native_mock_idle_monitor_uses_actual_source_mode_and_never_enables_output() {
             && entry["readings_completed"] == 3
             && entry["compliance"] == true
     }));
+    let partial_window = limited_audit
+        .iter()
+        .find(|entry| entry["event"] == "average_window")
+        .unwrap();
+    assert_eq!(partial_window["readings_requested"], 4);
+    assert_eq!(partial_window["readings_completed"], 3);
+    assert!(
+        partial_window["first_conversion"]["host_completed_elapsed_s"]
+            .as_f64()
+            .unwrap()
+            <= partial_window["last_conversion"]["host_completed_elapsed_s"]
+                .as_f64()
+                .unwrap()
+    );
     for (mode, source_command) in [
         ("dc_iv", ":SOUR:FUNC VOLT\n"),
         ("dc_vi", ":SOUR:FUNC CURR\n"),

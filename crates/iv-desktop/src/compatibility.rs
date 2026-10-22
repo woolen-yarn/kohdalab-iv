@@ -8,7 +8,7 @@ use serde::{Deserialize, Serialize};
 /// On-disk GUI settings understood by this application.
 pub(crate) const SETTINGS_SCHEMA_VERSION: u32 = 1;
 /// Sidecar `.run.json` metadata understood by this application.
-pub(crate) const RUN_METADATA_SCHEMA_VERSION: u32 = 4;
+pub(crate) const RUN_METADATA_SCHEMA_VERSION: u32 = 5;
 /// CSV field contract written by the native engine.
 pub(crate) const CSV_SCHEMA: &str = "compact_v2";
 /// JSON-lines engine protocol understood by bundled clients.
@@ -52,7 +52,7 @@ mod tests {
                 version: 1,
                 minimum_client_version: 1,
                 settings_schema_version: 1,
-                run_metadata_schema_version: 4,
+                run_metadata_schema_version: 5,
                 csv_schema: "compact_v2".into(),
             }
         );
