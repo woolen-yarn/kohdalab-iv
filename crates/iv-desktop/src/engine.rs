@@ -1104,6 +1104,8 @@ fn clean_output(
 #[derive(Default)]
 struct MeterResolutionCache {
     last: Option<(f64, f64)>,
+    last_response: Option<String>,
+    last_query_at: Option<String>,
 }
 impl MeterResolutionCache {
     fn read(
@@ -1118,7 +1120,12 @@ impl MeterResolutionCache {
         }
         // Invalidate first: failed/unknown metadata must not retain old precision.
         self.last = None;
-        let resolution = positive_reading(&query()?);
+        self.last_response = None;
+        self.last_query_at = None;
+        let reply = query()?;
+        let resolution = positive_reading(&reply);
+        self.last_response = Some(reply);
+        self.last_query_at = Some(timestamp());
         self.last = range.zip(resolution);
         Ok(resolution)
     }
@@ -1540,7 +1547,8 @@ fn execute(
                             "raw_range_response":range_text, "range":range,
                                 "resolution_command":resolution_query, "resolution":resolution,
                                 "resolution_origin":if raw_resolution_response.is_some() { "existing_query" } else { "range_cache" },
-                                "raw_resolution_response":raw_resolution_response,
+                                "raw_resolution_response":live.meter_resolution.last_response,
+                                "resolution_query_at":live.meter_resolution.last_query_at,
                         }))?;
                         (range, resolution)
                     } else {
