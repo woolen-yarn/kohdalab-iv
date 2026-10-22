@@ -627,7 +627,10 @@ fn discover(
 }
 
 fn timestamp() -> String {
-    let now = time::OffsetDateTime::now_utc();
+    format_timestamp(time::OffsetDateTime::now_utc())
+}
+
+fn format_timestamp(now: time::OffsetDateTime) -> String {
     format!(
         "{:04}-{:02}-{:02}T{:02}:{:02}:{:02}.{:06}Z",
         now.year(),
@@ -650,21 +653,24 @@ struct HostTiming {
 
 impl HostTiming {
     fn start(begin: Instant) -> (String, f64) {
-        (timestamp(), begin.elapsed().as_secs_f64())
+        // Capture adjacent host clock observations before formatting either.
+        let utc = time::OffsetDateTime::now_utc();
+        let elapsed = begin.elapsed().as_secs_f64();
+        (format_timestamp(utc), elapsed)
     }
 
     fn finish(begin: Instant, started_at_utc: String, started_elapsed_s: f64) -> Self {
+        let (completed_at_utc, completed_elapsed_s) = Self::start(begin);
         Self {
             started_at_utc,
-            completed_at_utc: timestamp(),
+            completed_at_utc,
             started_elapsed_s,
-            completed_elapsed_s: begin.elapsed().as_secs_f64(),
+            completed_elapsed_s,
         }
     }
 
     fn logical_now(begin: Instant) -> Self {
-        let utc = timestamp();
-        let elapsed = begin.elapsed().as_secs_f64();
+        let (utc, elapsed) = Self::start(begin);
         Self {
             started_at_utc: utc.clone(),
             completed_at_utc: utc,
