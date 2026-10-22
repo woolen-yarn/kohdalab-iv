@@ -609,6 +609,13 @@ impl DevicePair {
         }
     }
 
+    /// The selected transport resource, retained verbatim for run provenance.
+    /// This only reads the connection state; it never sends an instrument query.
+    pub fn resource(&self, role: Role) -> Option<&str> {
+        self.endpoint_option(role)
+            .map(|endpoint| endpoint.resource.as_str())
+    }
+
     fn meter_usb(&self) -> bool {
         self.meter_kind.as_ref().is_some_and(|kind| match kind {
             ResourceKind::Usb { .. } => true,

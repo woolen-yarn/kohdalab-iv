@@ -60,7 +60,11 @@ with NativeIV() as iv:  # Finds an installed Windows or macOS application automa
     print(result["points"], result["output"])
 ```
 
-Use a new output filename for every run. Rust refuses to overwrite a CSV.
+Use a new output filename for every run. Rust refuses to overwrite a CSV. Each
+new run also creates `.run.json` and `.readings.jsonl`; keep all three files
+together. The CSV preserves finite `f64` values, while the JSON-lines audit
+retains raw per-repeat replies and known provenance. Neither representation
+turns instrument resolution into an uncertainty claim.
 Configuration defaults are queried from Rust, rather than maintained separately
 in Python. `snapshot` returns the latest state; `live()` waits for a new sample.
 `stop()`, `output_off()` and `disconnect()` send the respective engine commands.
@@ -184,7 +188,10 @@ with NativeIV() as iv:  # インストール済み Windows または macOS ア�
     print(result["points"], result["output"])
 ```
 
-実行ごとに新しい出力ファイル名を使ってください。Rust は CSV の上書きを拒否します。設定既定値は
+実行ごとに新しい出力ファイル名を使ってください。Rust は CSV の上書きを拒否します。新しいrunでは
+`.run.json`と`.readings.jsonl`も作成するため、3ファイルを一緒に保管してください。CSVは有限`f64`値を
+保持し、JSON lines auditはrepeatごとのraw replyと既知のprovenanceを保持します。どちらも機器resolutionを
+uncertaintyの主張には変えません。設定既定値は
 Python 側で別管理せず Rust から問い合わせます。`snapshot` は最新状態を返し、`live()` は新しい
 サンプルを待ちます。`stop()`、`output_off()`、`disconnect()` は対応するエンジンコマンドを送ります。
 `run()` は完了を待ち、タイムアウトまたは割り込み時に stop/OFF を送ります。コンテキストマネージャーは

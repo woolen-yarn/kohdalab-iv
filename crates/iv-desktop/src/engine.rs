@@ -4,6 +4,7 @@ use crate::protocol::{Command, Snapshot};
 use crate::state::{Activity, ErrorKind, Failure, OutputState, Phase};
 use iv_core::{CsvWriter, Mode, Record, RunConfig, plan, simulate_record};
 use iv_transport::{DevicePair, HelperPaths, Role};
+use std::fs::{File, OpenOptions};
 use std::io::{BufRead, Read, Write};
 use std::path::Path;
 use std::sync::{
@@ -631,19 +632,95 @@ fn timestamp() -> String {
         .unwrap_or_default()
 }
 
-fn read_level(pair: &mut DevicePair) -> Result<Option<f64>, String> {
+fn read_level(
+    pair: &mut DevicePair,
+    audit: &mut ReadingsAudit,
+    point_index: usize,
+) -> Result<Option<f64>, String> {
     for command in [":SOUR:LEV?", ":SOUR:LEV:FIX?", ":SOUR:LEV:AUTO?"] {
         // A transport timeout poisons the session and requires output-off
         // recovery. Only a received, unparsable reply can try another dialect.
-        let reply = pair.query(Role::Source, command)?;
-        if let Ok(value) = reply.trim().parse::<f64>() {
-            if !value.is_finite() {
-                return Err("Source returned a nonfinite level.".into());
+        let reply = match pair.query(Role::Source, command) {
+            Ok(reply) => reply,
+            Err(error) => {
+                audit.append(&serde_json::json!({
+                    "event":"source_readback", "point_index":point_index,
+                    "command":command, "query_error":error,
+                }))?;
+                return Err(error);
             }
+        };
+        let parsed = reply
+            .trim()
+            .parse::<f64>()
+            .ok()
+            .filter(|value| value.is_finite());
+        audit.append(&serde_json::json!({
+            "event":"source_readback", "point_index":point_index,
+            "command":command, "raw_response":reply, "parsed_value":parsed,
+        }))?;
+        if let Some(value) = parsed {
             return Ok(Some(value));
         }
     }
     Ok(None)
+}
+
+/// Append-only acquisition evidence.  This intentionally records transport text
+/// separately from the compact CSV: spelling and trailing zeroes are evidence of
+/// what the instrument returned, while the CSV remains a stable numeric table.
+struct ReadingsAudit {
+    path: std::path::PathBuf,
+    file: File,
+}
+
+impl ReadingsAudit {
+    fn create(path: &Path, start: &serde_json::Value) -> Result<Self, String> {
+        Self::create_initialized(path, |audit| audit.append(start))
+    }
+
+    fn create_initialized(
+        path: &Path,
+        initialize: impl FnOnce(&mut Self) -> Result<(), String>,
+    ) -> Result<Self, String> {
+        let file = OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(path)
+            .map_err(|error| format!("cannot create readings audit {}: {error}", path.display()))?;
+        let mut audit = Self {
+            path: path.into(),
+            file,
+        };
+        if let Err(error) = initialize(&mut audit) {
+            drop(audit);
+            return match std::fs::remove_file(path) {
+                Ok(()) => Err(error),
+                Err(cleanup) => Err(format!(
+                    "{error} · cannot remove newly created audit: {cleanup}"
+                )),
+            };
+        }
+        Ok(audit)
+    }
+
+    fn append(&mut self, value: &serde_json::Value) -> Result<(), String> {
+        serde_json::to_writer(&mut self.file, value).map_err(|error| {
+            format!(
+                "cannot write readings audit {}: {error}",
+                self.path.display()
+            )
+        })?;
+        self.file
+            .write_all(b"\n")
+            .and_then(|()| self.file.flush())
+            .map_err(|error| {
+                format!(
+                    "cannot flush readings audit {}: {error}",
+                    self.path.display()
+                )
+            })
+    }
 }
 
 #[derive(Default)]
@@ -1225,10 +1302,53 @@ fn execute(
     }
     let mut writer = CsvWriter::create(path)?;
     let manifest = path.with_extension("run.json");
+    let readings_path = path.with_extension("readings.jsonl");
+    let readings_filename = readings_path
+        .file_name()
+        .and_then(|value| value.to_str())
+        .unwrap_or("readings.jsonl");
+    let instruments = if let Some(device) = pair.as_deref() {
+        serde_json::json!({
+            "source":{"model":device.source_model,"identity":device.source_identity,"resource":device.resource(Role::Source)},
+            "meter":{"model":device.meter_model,"identity":device.meter_identity,"resource":device.resource(Role::Meter)},
+        })
+    } else {
+        serde_json::json!({
+            "source":{"model":"SIMULATED_SOURCE","identity":"synthetic","resource":null},
+            "meter":{"model":"SIMULATED_METER","identity":"synthetic","resource":null},
+        })
+    };
+    let provenance_policy = serde_json::json!({
+        "schema":"iv_readings_v1",
+        "numeric_precision":"csv uses shortest f64 round-trip scientific notation; raw instrument replies are retained verbatim in readings.jsonl",
+        "resolution":"recorded only when an existing display query supplies it; otherwise null/unknown",
+        "uncertainty":"unknown; neither raw text nor resolution is treated as accuracy or uncertainty",
+        "simulation":"synthetic records have no fabricated hardware replies",
+    });
+    let audit_start = serde_json::json!({
+        "event":"run_started", "schema":"iv_readings_v1", "csv":path.display().to_string(),
+        "run_metadata":manifest.display().to_string(), "config":config,
+        "requested_config":requested_config, "instruments":instruments,
+        "provenance_policy":provenance_policy,
+    });
+    let mut audit = match ReadingsAudit::create(&readings_path, &audit_start) {
+        Ok(audit) => audit,
+        Err(error) => {
+            let _ = std::fs::remove_file(path);
+            return Err(format!(
+                "Cannot create acquisition audit before enabling output: {error}"
+            ));
+        }
+    };
     let initial_metadata = serde_json::json!({"schema_version":RUN_METADATA_SCHEMA_VERSION,"csv_schema":CSV_SCHEMA,"csv_fields":iv_core::CSV_FIELDS,"csv_numeric_format":"shortest_roundtrip_scientific","application_version":env!("CARGO_PKG_VERSION"),"config":config,"requested_config":requested_config,"outcome":state,"in_progress":true,
-        "source_range_setting":planned.source_range,"hardware_compliance_setting":planned.hardware_compliance,"display_settings_changes":[],"simulation":state.simulation,"csv":path.display().to_string()});
-    write_json_new(&manifest, &initial_metadata)
-        .map_err(|error| format!("Cannot save settings before enabling output: {error}"))?;
+        "source_range_setting":planned.source_range,"hardware_compliance_setting":planned.hardware_compliance,"display_settings_changes":[],"simulation":state.simulation,"csv":path.display().to_string(),"instruments":instruments,"readings_audit":{"path":readings_path.display().to_string(),"filename":readings_filename,"schema":"iv_readings_v1","provenance_policy":provenance_policy}});
+    if let Err(error) = write_json_new(&manifest, &initial_metadata) {
+        let _ = std::fs::remove_file(path);
+        let _ = std::fs::remove_file(&readings_path);
+        return Err(format!(
+            "Cannot save settings before enabling output: {error}"
+        ));
+    }
     let begin = Instant::now();
     let mut level = 0.0;
     let mut stopped = false;
@@ -1262,6 +1382,10 @@ fn execute(
             let range_query =
                 iv_core::source_range_query(&device.source_model)?.unwrap_or(":SOUR:RANG?");
             let range = device.query(Role::Source, range_query)?;
+            audit.append(&serde_json::json!({
+                "event":"source_range", "command":range_query, "raw_response":range,
+                "parsed_range":positive_reading(&range),
+            }))?;
             actual_source_resolution = positive_reading(&range)
                 .and_then(|range| source_resolution(&device.source_model, config.mode, range));
             live.source_resolution = actual_source_resolution;
@@ -1316,6 +1440,7 @@ fn execute(
                 break;
             }
             state.activity = Activity::Acquiring;
+            let readings_completed_for_record;
             let mut record = if let Some(device) = pair.as_deref_mut() {
                 state.message.clear();
                 state.message = format!(
@@ -1332,17 +1457,29 @@ fn execute(
                 let mut resolution_known = true;
                 let display_queries =
                     iv_core::meter_display_queries(&device.meter_model, config.mode)?;
-                for _ in 0..config.average_count {
+                for reading_index in 1..=config.average_count {
                     if control.cancelled() {
                         stopped = true;
                         break;
                     }
                     live.last = Instant::now();
-                    let text = device.query(Role::Meter, "READ?")?;
-                    let measured = text
-                        .trim()
-                        .parse::<f64>()
-                        .map_err(|_| format!("Invalid meter reading: {text}"))?;
+                    let text = match device.query(Role::Meter, "READ?") {
+                        Ok(text) => text,
+                        Err(error) => {
+                            audit.append(&serde_json::json!({
+                                "event":"meter_reading", "point_index":point.point_index,
+                                "reading_index":reading_index, "command":"READ?", "query_error":error,
+                            }))?;
+                            return Err(error);
+                        }
+                    };
+                    let parsed = text.trim().parse::<f64>();
+                    audit.append(&serde_json::json!({
+                        "event":"meter_reading", "point_index":point.point_index,
+                        "reading_index":reading_index, "command":"READ?", "raw_response":text,
+                        "parsed_value":parsed.as_ref().ok(),
+                    }))?;
+                    let measured = parsed.map_err(|_| format!("Invalid meter reading: {text}"))?;
                     if !measured.is_finite() || measured.abs() > 1e30 {
                         return Err("Meter reported overload or an invalid reading.".into());
                     }
@@ -1361,23 +1498,56 @@ fn execute(
                     }
                     // Query the range/resolution after READ? so autoranging is
                     // reflected. Preserve the coarsest resolution when averaging.
-                    let (range, resolution) =
-                        if let Some((range_query, resolution_query)) = display_queries {
-                            let range = device.query(Role::Meter, range_query)?;
-                            if control.cancelled() {
-                                stopped = true;
-                                break;
+                    let (range, resolution) = if let Some((range_query, resolution_query)) =
+                        display_queries
+                    {
+                        let range_text = match device.query(Role::Meter, range_query) {
+                            Ok(text) => text,
+                            Err(error) => {
+                                audit.append(&serde_json::json!({
+                                    "event":"meter_display", "point_index":point.point_index,
+                                    "reading_index":reading_index, "range_command":range_query,
+                                    "query_error":error,
+                                }))?;
+                                return Err(error);
                             }
-                            let range = positive_reading(&range);
-                            let resolution = live
-                                .meter_resolution
-                                .read(range, || device.query(Role::Meter, resolution_query))?;
-                            (range, resolution)
-                        } else {
-                            // A profile without verified display commands can still
-                            // acquire readings, but its precision metadata stays unknown.
-                            (None, None)
                         };
+                        if control.cancelled() {
+                            stopped = true;
+                            break;
+                        }
+                        let range = positive_reading(&range_text);
+                        let mut raw_resolution_response = None;
+                        let resolution = match live.meter_resolution.read(range, || {
+                            let reply = device.query(Role::Meter, resolution_query)?;
+                            raw_resolution_response = Some(reply.clone());
+                            Ok(reply)
+                        }) {
+                            Ok(value) => value,
+                            Err(error) => {
+                                audit.append(&serde_json::json!({
+                                        "event":"meter_display", "point_index":point.point_index,
+                                        "reading_index":reading_index, "range_command":range_query,
+                                        "raw_range_response":range_text, "resolution_command":resolution_query,
+                                        "query_error":error,
+                                    }))?;
+                                return Err(error);
+                            }
+                        };
+                        audit.append(&serde_json::json!({
+                            "event":"meter_display", "point_index":point.point_index,
+                            "reading_index":reading_index, "range_command":range_query,
+                            "raw_range_response":range_text, "range":range,
+                                "resolution_command":resolution_query, "resolution":resolution,
+                                "resolution_origin":if raw_resolution_response.is_some() { "existing_query" } else { "range_cache" },
+                                "raw_resolution_response":raw_resolution_response,
+                        }))?;
+                        (range, resolution)
+                    } else {
+                        // A profile without verified display commands can still
+                        // acquire readings, but its precision metadata stays unknown.
+                        (None, None)
+                    };
                     resolution_known &= resolution.is_some() || display_queries.is_none();
                     if let Some(resolution) = resolution {
                         meter_resolution = Some(meter_resolution.unwrap_or(0.0).max(resolution));
@@ -1409,7 +1579,8 @@ fn execute(
                         "software_limit":config.compliance
                     }));
                 }
-                let readback = read_level(device)?;
+                readings_completed_for_record = readings_completed;
+                let readback = read_level(device, &mut audit, point.point_index)?;
                 let mut record = simulate_record(config, point, begin.elapsed().as_secs_f64());
                 record.source_set = level;
                 record.source_readback = readback;
@@ -1428,6 +1599,13 @@ fn execute(
             } else {
                 let mut record = simulate_record(config, point, begin.elapsed().as_secs_f64());
                 record.compliance = record.meter_value.abs() >= config.compliance;
+                audit.append(&serde_json::json!({
+                    "event":"synthetic_reading", "point_index":point.point_index,
+                    "reading_index":1, "parsed_value":record.meter_value,
+                    "raw_response":serde_json::Value::Null,
+                    "hardware_reply":"not_applicable_synthetic_simulation",
+                }))?;
+                readings_completed_for_record = 1;
                 record
             };
             record.timestamp = timestamp();
@@ -1452,6 +1630,17 @@ fn execute(
             }
             state.activity = Activity::Saving;
             writer.append(&record)?;
+            // Count the flushed CSV row even if the companion audit fails.
+            state.points += 1;
+            audit.append(&serde_json::json!({
+                "event":"saved_point", "point_index":record.point.point_index,
+                "readings_requested":config.average_count,
+                "readings_completed":readings_completed_for_record,
+                "compliance":record.compliance, "meter_value":record.meter_value,
+                "source_readback":record.source_readback, "source_resolution":record.source_resolution,
+                "meter_range":record.meter_range, "meter_resolution":record.meter_resolution,
+                "csv_values":record.native_csv_values(),
+            }))?;
             let source_value = record.source_readback.unwrap_or(record.source_set);
             let (voltage, current) = if config.mode == Mode::Iv {
                 (source_value, record.meter_value)
@@ -1464,7 +1653,6 @@ fn execute(
                 live.last = Instant::now();
                 live.publish(record.clone(), state);
             }
-            state.points += 1;
             state.elapsed = begin.elapsed().as_secs_f64();
             let _ = events.try_send((state.run_id, record));
             if last_progress.elapsed() >= Duration::from_millis(50) {
@@ -1515,8 +1703,31 @@ fn execute(
             )
         };
     }
+    let audit_finish = audit.append(&serde_json::json!({
+        "event":"run_finished", "outcome":state.phase.to_string(), "points_saved":state.points,
+        "in_progress":false, "error":if state.error.is_empty() { None::<String> } else { Some(state.error.to_string()) },
+    })).and_then(|()| audit.file.sync_all().map_err(|error| format!("cannot sync readings audit: {error}")));
+    if let Err(error) = audit_finish {
+        let previous = if state.error.is_empty() {
+            String::new()
+        } else {
+            format!("{} · ", state.error)
+        };
+        state.error = Failure::new(
+            ErrorKind::OutputSafety,
+            format!("{previous}{error} · acquisition evidence may be incomplete"),
+        );
+        state.phase = Phase::Failed;
+        state.message = format!(
+            "{} · {} points saved · output {}",
+            state.phase,
+            state.points,
+            state.output.to_lowercase()
+        );
+        state.warnings.push("The readings audit could not be finalized; retain the partial .readings.jsonl file with this run.".into());
+    }
     let metadata = serde_json::json!({"schema_version":RUN_METADATA_SCHEMA_VERSION,"csv_schema":CSV_SCHEMA,"csv_fields":iv_core::CSV_FIELDS,"csv_numeric_format":"shortest_roundtrip_scientific","application_version":env!("CARGO_PKG_VERSION"),"config":config,"requested_config":requested_config,"outcome":state,"in_progress":false,
-        "source_range_setting":planned.source_range,"hardware_compliance_setting":planned.hardware_compliance,"display_settings_changes":display_settings_changes,"instrument_status_events":instrument_status_events,"simulation":state.simulation,"csv":path.display().to_string()});
+        "source_range_setting":planned.source_range,"hardware_compliance_setting":planned.hardware_compliance,"display_settings_changes":display_settings_changes,"instrument_status_events":instrument_status_events,"simulation":state.simulation,"csv":path.display().to_string(),"instruments":instruments,"readings_audit":{"path":readings_path.display().to_string(),"filename":readings_filename,"schema":"iv_readings_v1","provenance_policy":provenance_policy}});
     if let Err(error) = replace_json(&manifest, &metadata) {
         state
             .warnings
@@ -1555,6 +1766,30 @@ mod tests {
             serde_json::from_slice::<serde_json::Value>(&std::fs::read(&path).unwrap()).unwrap(),
             final_value
         );
+        std::fs::remove_file(path).unwrap();
+    }
+
+    #[test]
+    fn audit_initialization_failure_removes_only_its_own_file() {
+        let path = std::env::temp_dir().join(format!(
+            "iv-audit-initial-{}-{}.jsonl",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        let error = ReadingsAudit::create_initialized(&path, |audit| {
+            audit.append(&serde_json::json!({"event":"partial"}))?;
+            Err("injected initial write failure".into())
+        })
+        .err()
+        .unwrap();
+        assert!(error.contains("injected initial write failure"));
+        assert!(!path.exists());
+        std::fs::write(&path, b"foreign audit").unwrap();
+        assert!(ReadingsAudit::create(&path, &serde_json::json!({})).is_err());
+        assert_eq!(std::fs::read(&path).unwrap(), b"foreign audit");
         std::fs::remove_file(path).unwrap();
     }
 

@@ -8,7 +8,7 @@ use std::fs::{self, File, OpenOptions};
 use std::io;
 use std::path::Path;
 
-/// Copies a completed run's CSV and its `.run.json` companion to a new path.
+/// Copies a completed run's CSV and its `.run.json` / `.readings.jsonl` companions to a new path.
 ///
 /// Existing destination files are never overwritten.  The source CSV and its
 /// metadata are only read.  If writing either destination file fails, this
@@ -20,6 +20,8 @@ pub fn save_run_copy(source: &Path, destination: &Path) -> Result<(), String> {
 
     let source_metadata = source.with_extension("run.json");
     let destination_metadata = destination.with_extension("run.json");
+    let source_audit = source.with_extension("readings.jsonl");
+    let destination_audit = destination.with_extension("readings.jsonl");
     if !destination
         .extension()
         .is_some_and(|ext| ext.eq_ignore_ascii_case("csv"))
@@ -34,6 +36,7 @@ pub fn save_run_copy(source: &Path, destination: &Path) -> Result<(), String> {
         )
     })?;
     let mut metadata = parse_completed_metadata(&metadata_bytes, &source_metadata)?;
+    let audit_required = metadata.get("readings_audit").is_some();
 
     if destination.exists() {
         return Err(format!(
@@ -47,6 +50,12 @@ pub fn save_run_copy(source: &Path, destination: &Path) -> Result<(), String> {
             destination_metadata.display()
         ));
     }
+    if audit_required && destination_audit.exists() {
+        return Err(format!(
+            "Cannot save a copy because the destination readings audit already exists: {}. Choose a new filename.",
+            destination_audit.display()
+        ));
+    }
 
     let source_file = File::open(source).map_err(|error| {
         format!(
@@ -54,6 +63,14 @@ pub fn save_run_copy(source: &Path, destination: &Path) -> Result<(), String> {
             source.display()
         )
     })?;
+    let source_audit_file = if audit_required {
+        Some(File::open(&source_audit).map_err(|error| format!(
+            "Cannot save a copy because the readings audit is missing or unreadable ({}): {error}",
+            source_audit.display()
+        ))?)
+    } else {
+        None
+    };
 
     let source_display = source.display().to_string();
     let destination_display = destination.display().to_string();
@@ -67,9 +84,21 @@ pub fn save_run_copy(source: &Path, destination: &Path) -> Result<(), String> {
     );
     metadata["csv"] = serde_json::Value::String(destination_display);
     metadata["exported_from"] = serde_json::Value::String(source_display);
+    if audit_required {
+        metadata["readings_audit"]["path"] =
+            serde_json::Value::String(destination_audit.display().to_string());
+        metadata["readings_audit"]["filename"] = serde_json::Value::String(
+            destination_audit
+                .file_name()
+                .and_then(|value| value.to_str())
+                .unwrap_or("readings.jsonl")
+                .to_owned(),
+        );
+    }
 
     let mut created_csv = false;
     let mut created_metadata = false;
+    let mut created_audit = false;
     let result = (|| -> Result<(), String> {
         let mut destination_file = OpenOptions::new()
             .write(true)
@@ -95,6 +124,32 @@ pub fn save_run_copy(source: &Path, destination: &Path) -> Result<(), String> {
                 destination.display()
             )
         })?;
+
+        if let Some(mut source_audit_file) = source_audit_file {
+            let mut destination_audit_file = OpenOptions::new()
+                .write(true)
+                .create_new(true)
+                .open(&destination_audit)
+                .map_err(|error| {
+                    format!(
+                        "Cannot create the destination readings audit ({}): {error}.",
+                        destination_audit.display()
+                    )
+                })?;
+            created_audit = true;
+            io::copy(&mut source_audit_file, &mut destination_audit_file).map_err(|error| {
+                format!(
+                    "Could not copy the complete readings audit to {}: {error}",
+                    destination_audit.display()
+                )
+            })?;
+            destination_audit_file.sync_all().map_err(|error| {
+                format!(
+                    "Could not finish saving the readings audit copy ({}): {error}",
+                    destination_audit.display()
+                )
+            })?;
+        }
 
         let mut metadata_file = OpenOptions::new()
             .write(true)
@@ -129,6 +184,9 @@ pub fn save_run_copy(source: &Path, destination: &Path) -> Result<(), String> {
                 "{} ({cleanup_error})",
                 destination_metadata.display()
             ));
+        }
+        if created_audit && let Err(cleanup_error) = fs::remove_file(&destination_audit) {
+            cleanup_failures.push(format!("{} ({cleanup_error})", destination_audit.display()));
         }
         if created_csv && let Err(cleanup_error) = fs::remove_file(destination) {
             cleanup_failures.push(format!("{} ({cleanup_error})", destination.display()));
@@ -250,13 +308,16 @@ mod tests {
     fn write_run(csv: &Path) -> Vec<u8> {
         let bytes = b"voltage_V,current_A\n1.2345678901234567e-6,-2.0e-9\n".to_vec();
         fs::write(csv, &bytes).unwrap();
+        let audit = b"{\"event\":\"run_started\",\"raw_response\":\"1.23000e-6\"}\n";
+        fs::write(csv.with_extension("readings.jsonl"), audit).unwrap();
         let metadata = serde_json::json!({
-            "schema_version": 3,
+            "schema_version": 4,
             "in_progress": false,
             "csv": csv.display().to_string(),
             "config": {"mode": "Vi"},
             "requested_config": {"mode": "Vi", "step": 1e-6},
             "outcome": {"path": csv.display().to_string(), "phase": "Completed"},
+            "readings_audit": {"path": csv.with_extension("readings.jsonl").display().to_string(), "schema": "iv_readings_v1"},
             "points": [{"voltage_V": 1.2345678901234567e-6}]
         });
         fs::write(
@@ -303,6 +364,17 @@ mod tests {
         );
         assert_eq!(metadata["exported_from"], source.display().to_string());
         assert_eq!(metadata["requested_config"]["step"], 1e-6);
+        assert_eq!(
+            fs::read(destination.with_extension("readings.jsonl")).unwrap(),
+            fs::read(source.with_extension("readings.jsonl")).unwrap()
+        );
+        assert_eq!(
+            metadata["readings_audit"]["path"],
+            destination
+                .with_extension("readings.jsonl")
+                .display()
+                .to_string()
+        );
         assert_eq!(fs::read(&source).unwrap(), bytes);
         fs::remove_dir_all(directory).unwrap();
     }
@@ -328,6 +400,19 @@ mod tests {
             b"existing metadata"
         );
         assert!(!destination.exists());
+
+        fs::remove_file(destination.with_extension("run.json")).unwrap();
+        fs::write(
+            destination.with_extension("readings.jsonl"),
+            b"existing audit",
+        )
+        .unwrap();
+        let error = save_run_copy(&source, &destination).unwrap_err();
+        assert!(error.contains("destination readings audit already exists"));
+        assert_eq!(
+            fs::read(destination.with_extension("readings.jsonl")).unwrap(),
+            b"existing audit"
+        );
         fs::remove_dir_all(directory).unwrap();
     }
 
