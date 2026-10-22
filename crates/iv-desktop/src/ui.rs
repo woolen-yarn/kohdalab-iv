@@ -1194,7 +1194,7 @@ impl IvApp {
         match crate::run_export::save_run_copy(&source, &destination) {
             Ok(()) => {
                 let message = format!(
-                    "Saved {} points to {}\nThe companion .run.json contains the measurement settings.",
+                    "Saved {} points to {}\nThe companion .run.json contains settings and .readings.jsonl retains acquisition evidence.",
                     self.state.points,
                     destination.display()
                 );

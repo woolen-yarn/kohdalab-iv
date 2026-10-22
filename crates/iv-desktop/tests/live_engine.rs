@@ -81,6 +81,43 @@ impl Drop for Engine {
         panic!("Simulated engine did not exit cleanly");
     }
 }
+
+#[test]
+fn preexisting_audit_refuses_run_before_output_and_preserves_existing_file() {
+    let directory = std::env::temp_dir().join(format!(
+        "iv-audit-collision-{}-{}",
+        std::process::id(),
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos()
+    ));
+    std::fs::create_dir(&directory).unwrap();
+    let path = directory.join("collision.csv");
+    let audit = path.with_extension("readings.jsonl");
+    std::fs::write(&audit, b"existing audit must survive").unwrap();
+    let mut engine = Engine::start();
+    engine.send(json!({"command":"connect","simulation":true,"source":"","meter":""}));
+    engine.wait(|state| state["connected"] == true);
+    engine.send(json!({"command":"run","config":iv_core::RunConfig::default(),"path":path}));
+    let failed = engine.wait_state(|state| !state["error"].as_str().unwrap().is_empty());
+    assert_eq!(failed["output"], "Off");
+    assert!(
+        failed["error"]
+            .as_str()
+            .unwrap()
+            .contains("acquisition audit")
+    );
+    assert!(!path.exists());
+    assert_eq!(
+        std::fs::read(&audit).unwrap(),
+        b"existing audit must survive"
+    );
+    engine.send(json!({"command":"disconnect"}));
+    engine.wait_state(|state| state["connected"] == false);
+    std::fs::remove_dir_all(directory).unwrap();
+}
+
 #[test]
 fn live_before_and_after_sweep_does_not_enable_output_or_pollute_csv() {
     let mut engine = Engine::start();
@@ -188,7 +225,7 @@ fn native_mock_idle_monitor_uses_actual_source_mode_and_never_enables_output() {
         (3, ":SOUR:FUNC?", "CURR"),
         (3, ":SOUR:LEV?", "0.0002"),
         (3, ":SOUR:RANG?", "0.001"),
-        (7, "READ?", "0.000212"),
+        (7, "READ?", "0.000212000"),
         (3, "SYST:ERR?", "0,No error"),
         (7, "SYST:ERR?", "0,No error"),
         (7, "SENS:VOLT:DC:RANG?", "0.1"),
@@ -308,6 +345,37 @@ fn native_mock_idle_monitor_uses_actual_source_mode_and_never_enables_output() {
     assert_eq!(csv_reader(&path).len(), 4);
     let expected = (0..3).fold(0.0, |sum, _| sum + 0.000212 / 3.0);
     assert_eq!(completed["last"]["meter_value"].as_f64().unwrap(), expected);
+    let audit: Vec<Value> = std::fs::read_to_string(path.with_extension("readings.jsonl"))
+        .unwrap()
+        .lines()
+        .map(|line| serde_json::from_str(line).unwrap())
+        .collect();
+    assert_eq!(audit[0]["event"], "run_started");
+    assert_eq!(
+        audit[0]["provenance_policy"]["uncertainty"],
+        "unknown; neither raw text nor resolution is treated as accuracy or uncertainty"
+    );
+    assert!(audit.iter().any(|entry| {
+        entry["event"] == "meter_reading"
+            && entry["normalized_response"] == "0.000212000"
+            && entry["parsed_value"].as_f64() == Some(0.000212)
+    }));
+    assert!(audit.iter().any(|entry| {
+        entry["event"] == "transport_exchange"
+            && entry["logical_command"] == "READ?"
+            && entry["wire_response"] == "0.000212000"
+    }));
+    assert!(audit.iter().any(|entry| {
+        entry["event"] == "transport_exchange"
+            && entry["logical_command"] == ":SOUR:LEV?"
+            && entry["wire_response"].is_string()
+    }));
+    assert!(audit.iter().any(|entry| entry["event"] == "meter_display"
+        && entry["normalized_resolution_response"] == "0.0000001"
+        && entry["resolution_query_at"].as_str().is_some()));
+    assert!(audit.iter().any(|entry| entry["event"] == "meter_display"
+        && entry["resolution_origin"] == "range_cache"
+        && entry["normalized_resolution_response"] == "0.0000001"));
     let commands = std::fs::read_to_string(&log).unwrap();
     assert!(commands.matches(&hex("READ?\n")).count() > 9);
     // Repeat is per-point accumulation, not another traversal of the source.
@@ -413,6 +481,18 @@ fn native_mock_idle_monitor_uses_actual_source_mode_and_never_enables_output() {
         0.000212
     );
     assert_eq!(metadata["instrument_status_events"][0]["trigger_unit"], "V");
+    let limited_audit: Vec<Value> =
+        std::fs::read_to_string(limited_path.with_extension("readings.jsonl"))
+            .unwrap()
+            .lines()
+            .map(|line| serde_json::from_str(line).unwrap())
+            .collect();
+    assert!(limited_audit.iter().any(|entry| {
+        entry["event"] == "saved_point"
+            && entry["readings_requested"] == 4
+            && entry["readings_completed"] == 3
+            && entry["compliance"] == true
+    }));
     for (mode, source_command) in [
         ("dc_iv", ":SOUR:FUNC VOLT\n"),
         ("dc_vi", ":SOUR:FUNC CURR\n"),

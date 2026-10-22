@@ -32,7 +32,7 @@ Simulation example: instrument setup and live signals on the left, sweep and plo
 | Channel / 配布チャネル | Version / バージョン | Platforms / 対応プラットフォーム |
 | --- | --- | --- |
 | Stable / 安定版 | [1.2.0](https://github.com/woolen-yarn/kohdalab-iv/releases/tag/portable-v1.2.0) | Windows x64 Setup / portable ZIP; macOS Apple silicon portable ZIP / Windows x64 セットアップ・ポータブル ZIP、macOS Apple silicon ポータブル ZIP |
-| Preview / プレビュー | [1.3.0-alpha.7](https://github.com/woolen-yarn/kohdalab-iv/releases/tag/preview-v1.3.0-alpha.7) | Windows x64 Setup / preview ZIP; macOS Apple silicon preview ZIP / Windows x64 セットアップ・プレビュー ZIP、macOS Apple silicon プレビュー ZIP |
+| Preview / プレビュー | [1.3.0-alpha.8](https://github.com/woolen-yarn/kohdalab-iv/releases/tag/preview-v1.3.0-alpha.8) | Windows x64 Setup / preview ZIP; macOS Apple silicon preview ZIP / Windows x64 セットアップ・プレビュー ZIP、macOS Apple silicon プレビュー ZIP |
 
 Rust and Python are not required to run the packaged application. Current Windows
 artifacts are unsigned; download packages and checksums together from Releases.

@@ -3,6 +3,12 @@
 > **Language navigation / 言語案内:** The English historical record appears first, followed by a complete Japanese counterpart. Versions, dates, API names, commands, compatibility wording, and historical claims are preserved in both languages.
 > 英語の履歴記録を先に置き、その後に完全な日本語対訳を掲載します。バージョン、日付、API 名、コマンド、互換性の表現、履歴上の主張は両言語で保持します。
 
+## 1.3.0-alpha.8
+
+- Preserve the existing 14-column CSV schema and shortest round-trip numeric values.
+- Add a flushed `.readings.jsonl` provenance companion with raw per-repeat replies, available range/resolution, instrument identity/resource, and partial-run evidence.
+- Keep display precision separate from recorded values; resolution and raw reply spelling do not claim measurement uncertainty.
+
 ## 1.3.0-alpha.7
 
 - Centralize instrument capabilities, specifications and measurement definitions without changing supported models, controls or measurement behavior.
@@ -235,6 +241,12 @@
 ---
 
 # 変更履歴（日本語）
+
+## 1.3.0-alpha.8
+
+- 既存の14列CSV schemaと最短往復可能な数値を維持します。
+- repeatごとのraw reply、利用可能なrange/resolution、機器identity/resource、partial runの証跡を含む、flush済み`.readings.jsonl` provenance companionを追加します。
+- 表示precisionを記録値から分離します。resolutionやraw replyの表記はmeasurement uncertaintyを主張しません。
 
 ## 1.3.0-alpha.7
 
