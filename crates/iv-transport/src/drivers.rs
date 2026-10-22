@@ -213,6 +213,7 @@ mod tests {
     #[derive(Default)]
     struct FakeIo {
         calls: Vec<(String, String)>,
+        exchanges: Vec<(String, String, Result<String, String>)>,
         replies: Vec<Result<String, String>>,
         waits: Vec<Duration>,
         panel_deadlines: Vec<Instant>,
@@ -221,7 +222,10 @@ mod tests {
     impl InstrumentIo for FakeIo {
         fn request(&mut self, operation: &str, command: &str) -> Result<String, String> {
             self.calls.push((operation.into(), command.into()));
-            self.replies.remove(0)
+            let result = self.replies.remove(0);
+            self.exchanges
+                .push((operation.into(), command.into(), result.clone()));
+            result
         }
         fn request_before(
             &mut self,
@@ -297,6 +301,78 @@ mod tests {
             adc.waits,
             vec![Duration::from_millis(20), Duration::from_millis(20)]
         );
+    }
+
+    #[test]
+    fn normalized_results_do_not_replace_raw_legacy_or_adc_exchanges() {
+        let mut legacy = FakeIo {
+            replies: vec![Ok("OD+1.23000E-3\r\n".into())],
+            ..FakeIo::default()
+        };
+        let mut discard = false;
+        assert_eq!(
+            query(
+                &mut legacy,
+                Role::Source,
+                "YOKOGAWA_7651",
+                false,
+                &mut discard,
+                ":SOUR:LEV?"
+            )
+            .unwrap(),
+            "+1.23000E-3"
+        );
+        assert_eq!(
+            legacy.exchanges,
+            vec![(
+                "QUERY".into(),
+                "OD;E\n".into(),
+                Ok("OD+1.23000E-3\r\n".into())
+            )]
+        );
+
+        let mut adc = FakeIo {
+            replies: vec![Ok("NDCV+9.000E-6\n".into()), Ok("NDCV+1.23000E-6\n".into())],
+            ..FakeIo::default()
+        };
+        let mut discard = true;
+        assert_eq!(
+            query(
+                &mut adc,
+                Role::Meter,
+                "ADCMT_7461A",
+                false,
+                &mut discard,
+                "READ?"
+            )
+            .unwrap(),
+            "+1.23000E-6"
+        );
+        assert_eq!(
+            adc.exchanges.len(),
+            2,
+            "discard and accepted ADC exchanges are retained"
+        );
+        assert_eq!(adc.exchanges[0].2, Ok("NDCV+9.000E-6\n".into()));
+        assert_eq!(adc.exchanges[1].2, Ok("NDCV+1.23000E-6\n".into()));
+
+        let mut failed = FakeIo {
+            replies: vec![Err("mock transport failure".into())],
+            ..FakeIo::default()
+        };
+        let mut discard = false;
+        assert!(
+            query(
+                &mut failed,
+                Role::Meter,
+                "ADCMT_7461A",
+                false,
+                &mut discard,
+                "READ?"
+            )
+            .is_err()
+        );
+        assert_eq!(failed.exchanges[0].2, Err("mock transport failure".into()));
     }
 
     #[test]

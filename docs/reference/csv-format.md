@@ -39,7 +39,7 @@ resolution is not /MON resolution or measurement uncertainty.
 
 The CSV serializes every finite in-memory `f64` using shortest round-trip scientific notation. This prevents formatting from discarding a value that the engine received or calculated; it does **not** claim that every displayed digit is experimentally significant. Instrument range/resolution, when an existing query provides it, is recorded as provenance. Resolution is not accuracy and neither it nor trailing zeroes in an instrument reply establishes uncertainty. Uncertainty remains explicitly unknown unless an instrument-specific, traceable uncertainty model is added.
 
-Each new run also writes `<name>.readings.jsonl`. It is an append-only, flushed audit stream with the exact `READ?` response text for every acquired repeat, its parsed value or query/parse error, available range/resolution, raw source-level readback replies, identities/resources, and partial/compliance state. Simulation is labelled synthetic and never invents a hardware reply. Keep the CSV, `.run.json`, and `.readings.jsonl` together. Older CSV files lack this audit stream, so their original reply spelling and per-repeat provenance cannot be reconstructed.
+Each new run also writes `<name>.readings.jsonl`. It is an append-only, flushed audit stream. `transport_exchange` entries retain exact helper text for physical exchanges within audited conversion, range/resolution and source-readback queries, before legacy/ADC driver header stripping or discarded ADC conversions; reading entries retain normalized values; transport errors and final run errors remain traceable. Configuration, idle monitoring and output-cleanup traffic are not a complete bus journal. Available range/resolution, source readback, identities/resources, and partial/compliance state are also retained. Simulation is labelled synthetic and never invents a hardware reply. Keep the CSV, `.run.json`, and `.readings.jsonl` together. Older CSV files lack this audit stream, so their original reply spelling and per-repeat provenance cannot be reconstructed.
 
 ## Metadata durability
 
@@ -100,7 +100,7 @@ GS210のprogrammed-level照会は、負荷へ供給された電圧・電流の�
 
 CSVはengine内の有限`f64`を最短往復可能な指数表記で直列化します。これは取得・計算済みの値を表示書式で失わないためであり、全桁が実験的に有意であることを示すものではありません。既存の照会で得られる機器のrange・resolutionはprovenanceとして記録します。resolutionはaccuracyではなく、instrument replyの末尾zeroもuncertaintyを決めません。traceableな機器別uncertainty modelが追加されるまで、uncertaintyは明示的にunknownです。
 
-新しいrunでは`<name>.readings.jsonl`も作成します。これはappend-onlyで各行をflushする監査streamで、各repeatの正確な`READ?`応答text、parsed valueまたはquery/parse error、利用可能なrange/resolution、source-level readbackのraw応答、identity/resource、partial/compliance状態を保持します。simulationはsyntheticと明記し、hardware replyを作りません。CSV・`.run.json`・`.readings.jsonl`は一緒に保管してください。旧CSVにはこのaudit streamがないため、元の応答表記やrepeatごとのprovenanceは復元できません。
+新しいrunでは`<name>.readings.jsonl`も作成します。これはappend-onlyで各行をflushする監査streamです。`transport_exchange` entryは、legacy/ADC driverによるheader stripやdiscarded ADC conversionの前に、保存対象の変換・レンジ/分解能・出力readback照会内の通信応答を保持します。reading entryは正規化した値を保持し、通信エラーと最終エラーを追跡できます。設定処理・待機モニター・出力終了処理の全通信を記録するものではありません。利用可能なrange/resolution、source readback、identity/resource、partial/compliance状態も保持します。simulationはsyntheticと明記し、hardware replyを作りません。CSV・`.run.json`・`.readings.jsonl`は一緒に保管してください。旧CSVにはこのaudit streamがないため、元の応答表記やrepeatごとのprovenanceは復元できません。
 
 ### Metadataの耐久性
 

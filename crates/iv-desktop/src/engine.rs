@@ -3,7 +3,7 @@ use crate::compatibility::{CSV_SCHEMA, RUN_METADATA_SCHEMA_VERSION};
 use crate::protocol::{Command, Snapshot};
 use crate::state::{Activity, ErrorKind, Failure, OutputState, Phase};
 use iv_core::{CsvWriter, Mode, Record, RunConfig, plan, simulate_record};
-use iv_transport::{DevicePair, HelperPaths, Role};
+use iv_transport::{DevicePair, HelperPaths, Role, TransportExchange};
 use std::fs::{File, OpenOptions};
 use std::io::{BufRead, Read, Write};
 use std::path::Path;
@@ -640,16 +640,7 @@ fn read_level(
     for command in [":SOUR:LEV?", ":SOUR:LEV:FIX?", ":SOUR:LEV:AUTO?"] {
         // A transport timeout poisons the session and requires output-off
         // recovery. Only a received, unparsable reply can try another dialect.
-        let reply = match pair.query(Role::Source, command) {
-            Ok(reply) => reply,
-            Err(error) => {
-                audit.append(&serde_json::json!({
-                    "event":"source_readback", "point_index":point_index,
-                    "command":command, "query_error":error,
-                }))?;
-                return Err(error);
-            }
-        };
+        let reply = query_with_audit(pair, Role::Source, command, audit, point_index, None)?;
         let parsed = reply
             .trim()
             .parse::<f64>()
@@ -657,7 +648,7 @@ fn read_level(
             .filter(|value| value.is_finite());
         audit.append(&serde_json::json!({
             "event":"source_readback", "point_index":point_index,
-            "command":command, "raw_response":reply, "parsed_value":parsed,
+            "command":command, "normalized_response":reply, "parsed_value":parsed,
         }))?;
         if let Some(value) = parsed {
             return Ok(Some(value));
@@ -721,6 +712,58 @@ impl ReadingsAudit {
                 )
             })
     }
+}
+
+fn query_with_audit(
+    pair: &mut DevicePair,
+    role: Role,
+    command: &str,
+    audit: &mut ReadingsAudit,
+    point_index: usize,
+    reading_index: Option<u32>,
+) -> Result<String, String> {
+    let recorded = pair.query_recorded(role, command);
+    let role_name = if role == Role::Source {
+        "source"
+    } else {
+        "meter"
+    };
+    let audit_result = append_transport_exchanges(
+        audit,
+        role_name,
+        command,
+        point_index,
+        reading_index,
+        &recorded.exchanges,
+    );
+    match (recorded.result, audit_result) {
+        (Ok(value), Ok(())) => Ok(value),
+        (Err(query_error), Ok(())) => Err(query_error),
+        (Ok(_), Err(audit_error)) => Err(audit_error),
+        (Err(query_error), Err(audit_error)) => Err(format!(
+            "{query_error} · additionally could not persist transport provenance: {audit_error}"
+        )),
+    }
+}
+
+fn append_transport_exchanges(
+    audit: &mut ReadingsAudit,
+    role: &str,
+    logical_command: &str,
+    point_index: usize,
+    reading_index: Option<u32>,
+    exchanges: &[TransportExchange],
+) -> Result<(), String> {
+    for (exchange_index, exchange) in exchanges.iter().enumerate() {
+        audit.append(&serde_json::json!({
+            "event":"transport_exchange", "point_index":point_index,
+            "reading_index":reading_index, "role":role,
+            "logical_command":logical_command, "exchange_index":exchange_index,
+            "operation":exchange.operation, "wire_command":exchange.command,
+            "wire_response":exchange.response, "wire_error":exchange.error,
+        }))?;
+    }
+    Ok(())
 }
 
 #[derive(Default)]
@@ -1388,9 +1431,9 @@ fn execute(
             // the 7651 that do not use GS210 SCPI directly.
             let range_query =
                 iv_core::source_range_query(&device.source_model)?.unwrap_or(":SOUR:RANG?");
-            let range = device.query(Role::Source, range_query)?;
+            let range = query_with_audit(device, Role::Source, range_query, &mut audit, 0, None)?;
             audit.append(&serde_json::json!({
-                "event":"source_range", "command":range_query, "raw_response":range,
+                "event":"source_range", "command":range_query, "normalized_response":range,
                 "parsed_range":positive_reading(&range),
             }))?;
             actual_source_resolution = positive_reading(&range)
@@ -1470,20 +1513,18 @@ fn execute(
                         break;
                     }
                     live.last = Instant::now();
-                    let text = match device.query(Role::Meter, "READ?") {
-                        Ok(text) => text,
-                        Err(error) => {
-                            audit.append(&serde_json::json!({
-                                "event":"meter_reading", "point_index":point.point_index,
-                                "reading_index":reading_index, "command":"READ?", "query_error":error,
-                            }))?;
-                            return Err(error);
-                        }
-                    };
+                    let text = query_with_audit(
+                        device,
+                        Role::Meter,
+                        "READ?",
+                        &mut audit,
+                        point.point_index,
+                        Some(reading_index),
+                    )?;
                     let parsed = text.trim().parse::<f64>();
                     audit.append(&serde_json::json!({
                         "event":"meter_reading", "point_index":point.point_index,
-                        "reading_index":reading_index, "command":"READ?", "raw_response":text,
+                        "reading_index":reading_index, "command":"READ?", "normalized_response":text,
                         "parsed_value":parsed.as_ref().ok(),
                     }))?;
                     let measured = parsed.map_err(|_| format!("Invalid meter reading: {text}"))?;
@@ -1508,46 +1549,39 @@ fn execute(
                     let (range, resolution) = if let Some((range_query, resolution_query)) =
                         display_queries
                     {
-                        let range_text = match device.query(Role::Meter, range_query) {
-                            Ok(text) => text,
-                            Err(error) => {
-                                audit.append(&serde_json::json!({
-                                    "event":"meter_display", "point_index":point.point_index,
-                                    "reading_index":reading_index, "range_command":range_query,
-                                    "query_error":error,
-                                }))?;
-                                return Err(error);
-                            }
-                        };
+                        let range_text = query_with_audit(
+                            device,
+                            Role::Meter,
+                            range_query,
+                            &mut audit,
+                            point.point_index,
+                            Some(reading_index),
+                        )?;
                         if control.cancelled() {
                             stopped = true;
                             break;
                         }
                         let range = positive_reading(&range_text);
                         let mut raw_resolution_response = None;
-                        let resolution = match live.meter_resolution.read(range, || {
-                            let reply = device.query(Role::Meter, resolution_query)?;
+                        let resolution = live.meter_resolution.read(range, || {
+                            let reply = query_with_audit(
+                                device,
+                                Role::Meter,
+                                resolution_query,
+                                &mut audit,
+                                point.point_index,
+                                Some(reading_index),
+                            )?;
                             raw_resolution_response = Some(reply.clone());
                             Ok(reply)
-                        }) {
-                            Ok(value) => value,
-                            Err(error) => {
-                                audit.append(&serde_json::json!({
-                                        "event":"meter_display", "point_index":point.point_index,
-                                        "reading_index":reading_index, "range_command":range_query,
-                                        "raw_range_response":range_text, "resolution_command":resolution_query,
-                                        "query_error":error,
-                                    }))?;
-                                return Err(error);
-                            }
-                        };
+                        })?;
                         audit.append(&serde_json::json!({
                             "event":"meter_display", "point_index":point.point_index,
                             "reading_index":reading_index, "range_command":range_query,
-                            "raw_range_response":range_text, "range":range,
+                            "normalized_range_response":range_text, "range":range,
                                 "resolution_command":resolution_query, "resolution":resolution,
                                 "resolution_origin":if raw_resolution_response.is_some() { "existing_query" } else { "range_cache" },
-                                "raw_resolution_response":live.meter_resolution.last_response,
+                                "normalized_resolution_response":live.meter_resolution.last_response,
                                 "resolution_query_at":live.meter_resolution.last_query_at,
                         }))?;
                         (range, resolution)

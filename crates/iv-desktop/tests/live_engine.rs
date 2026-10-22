@@ -357,20 +357,25 @@ fn native_mock_idle_monitor_uses_actual_source_mode_and_never_enables_output() {
     );
     assert!(audit.iter().any(|entry| {
         entry["event"] == "meter_reading"
-            && entry["raw_response"] == "0.000212000"
+            && entry["normalized_response"] == "0.000212000"
             && entry["parsed_value"].as_f64() == Some(0.000212)
     }));
-    assert!(
-        audit
-            .iter()
-            .any(|entry| entry["event"] == "source_readback" && entry["raw_response"].is_string())
-    );
+    assert!(audit.iter().any(|entry| {
+        entry["event"] == "transport_exchange"
+            && entry["logical_command"] == "READ?"
+            && entry["wire_response"] == "0.000212000"
+    }));
+    assert!(audit.iter().any(|entry| {
+        entry["event"] == "transport_exchange"
+            && entry["logical_command"] == ":SOUR:LEV?"
+            && entry["wire_response"].is_string()
+    }));
     assert!(audit.iter().any(|entry| entry["event"] == "meter_display"
-        && entry["raw_resolution_response"] == "0.0000001"
+        && entry["normalized_resolution_response"] == "0.0000001"
         && entry["resolution_query_at"].as_str().is_some()));
     assert!(audit.iter().any(|entry| entry["event"] == "meter_display"
         && entry["resolution_origin"] == "range_cache"
-        && entry["raw_resolution_response"] == "0.0000001"));
+        && entry["normalized_resolution_response"] == "0.0000001"));
     let commands = std::fs::read_to_string(&log).unwrap();
     assert!(commands.matches(&hex("READ?\n")).count() > 9);
     // Repeat is per-point accumulation, not another traversal of the source.

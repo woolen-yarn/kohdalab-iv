@@ -353,6 +353,25 @@ pub struct DevicePair {
     usable: bool,
 }
 
+/// One physical helper exchange performed while translating a logical query.
+/// `response` is the exact helper text before any driver parsing or header
+/// stripping.  `error` is retained when the helper did not return text.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct TransportExchange {
+    pub operation: String,
+    pub command: String,
+    pub response: Option<String>,
+    pub error: Option<String>,
+}
+
+/// The ordinary query result plus the physical exchanges that produced it.
+/// This is opt-in so normal/live queries do not allocate provenance records.
+#[derive(Clone, Debug)]
+pub struct RecordedQuery {
+    pub result: Result<String, String>,
+    pub exchanges: Vec<TransportExchange>,
+}
+
 #[derive(Clone)]
 struct Endpoint {
     resource: String,
@@ -649,6 +668,38 @@ impl DevicePair {
             endpoint: &endpoint,
         };
         drivers::query(&mut io, role, &model, usb, &mut self.meter_discard, command)
+    }
+
+    /// Runs the same driver path as [`Self::query`] while retaining the exact
+    /// helper text for each physical request. This does not add any transport
+    /// I/O; callers should use it only for persisted acquisition evidence.
+    pub fn query_recorded(&mut self, role: Role, command: &str) -> RecordedQuery {
+        if let Err(error) = self.ensure_usable() {
+            return RecordedQuery {
+                result: Err(error),
+                exchanges: Vec::new(),
+            };
+        }
+        let endpoint = match self.endpoint(role) {
+            Ok(endpoint) => endpoint.clone(),
+            Err(error) => {
+                return RecordedQuery {
+                    result: Err(error),
+                    exchanges: Vec::new(),
+                };
+            }
+        };
+        let model = self.model(role).to_owned();
+        let usb = self.meter_usb();
+        let mut io = RecordingEndpointIo {
+            endpoint: &endpoint,
+            exchanges: Vec::new(),
+        };
+        let result = drivers::query(&mut io, role, &model, usb, &mut self.meter_discard, command);
+        RecordedQuery {
+            result,
+            exchanges: io.exchanges,
+        }
     }
 
     /// Attempts emergency source shutdown. It sends output-off first, verifies
@@ -953,6 +1004,57 @@ impl drivers::InstrumentIo for EndpointIo<'_> {
     }
 
     fn wait(&mut self, duration: Duration) {
+        thread::sleep(duration);
+    }
+}
+
+/// Instrument-I/O adapter used by `query_recorded`. It deliberately delegates
+/// to the same endpoint methods as `EndpointIo`, including shared deadlines.
+struct RecordingEndpointIo<'a> {
+    endpoint: &'a Endpoint,
+    exchanges: Vec<TransportExchange>,
+}
+
+impl RecordingEndpointIo<'_> {
+    fn record(&mut self, operation: &str, command: &str, result: &Result<String, String>) {
+        let (response, error) = match result {
+            Ok(response) => (Some(response.clone()), None),
+            Err(error) => (None, Some(error.clone())),
+        };
+        self.exchanges.push(TransportExchange {
+            operation: operation.into(),
+            command: command.into(),
+            response,
+            error,
+        });
+    }
+}
+
+impl drivers::InstrumentIo for RecordingEndpointIo<'_> {
+    fn request(&mut self, operation: &str, command: &str) -> Result<String, String> {
+        let result = self.endpoint.request(operation, command);
+        self.record(operation, command, &result);
+        result
+    }
+
+    fn request_before(
+        &mut self,
+        operation: &str,
+        command: &str,
+        deadline: Instant,
+    ) -> Result<String, String> {
+        let result = self.endpoint.request_before(operation, command, deadline);
+        self.record(operation, command, &result);
+        result
+    }
+
+    fn wait(&mut self, duration: Duration) {
+        self.exchanges.push(TransportExchange {
+            operation: "WAIT".into(),
+            command: format!("{}ms", duration.as_millis()),
+            response: None,
+            error: None,
+        });
         thread::sleep(duration);
     }
 }
