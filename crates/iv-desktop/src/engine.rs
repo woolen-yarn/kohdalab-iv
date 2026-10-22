@@ -1672,8 +1672,17 @@ fn execute(
             }
             state.activity = Activity::Saving;
             writer.append(&record)?;
-            // Count the flushed CSV row even if the companion audit fails.
+            // Account for the flushed CSV row, last value and fit even if
+            // the companion audit fails.
             state.points += 1;
+            let source_value = record.source_readback.unwrap_or(record.source_set);
+            let (voltage, current) = if config.mode == Mode::Iv {
+                (source_value, record.meter_value)
+            } else {
+                (record.meter_value, source_value)
+            };
+            state.resistance = fit.add(voltage, current);
+            state.last = Some(record.clone());
             audit.append(&serde_json::json!({
                 "event":"saved_point", "point_index":record.point.point_index,
                 "readings_requested":config.average_count,
@@ -1683,14 +1692,6 @@ fn execute(
                 "meter_range":record.meter_range, "meter_resolution":record.meter_resolution,
                 "csv_values":record.native_csv_values(),
             }))?;
-            let source_value = record.source_readback.unwrap_or(record.source_set);
-            let (voltage, current) = if config.mode == Mode::Iv {
-                (source_value, record.meter_value)
-            } else {
-                (record.meter_value, source_value)
-            };
-            state.resistance = fit.add(voltage, current);
-            state.last = Some(record.clone());
             if state.simulation {
                 live.last = Instant::now();
                 live.publish(record.clone(), state);
