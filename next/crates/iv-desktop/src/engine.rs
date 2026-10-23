@@ -1,3 +1,4 @@
+mod safety;
 mod workflow;
 use crate::compatibility::{CSV_SCHEMA, RUN_METADATA_SCHEMA_VERSION};
 use crate::protocol::{Command, Snapshot};
@@ -643,7 +644,7 @@ fn read_level(pair: &mut DevicePair) -> Result<Option<f64>, String> {
             return Ok(Some(value));
         }
     }
-    Ok(None)
+    Err("Source level could not be read back as a finite number. Measurement stopped; check the source and reconnect.".into())
 }
 
 #[derive(Default)]
@@ -1019,6 +1020,33 @@ fn clean_output(
     }
 }
 
+// Protection is deliberately separate from normal Stop: no ramp or unrelated
+// instrument queries may precede the source OFF request after a limit trip.
+fn protection_output_off(
+    pair: Option<&mut DevicePair>,
+    state: &mut Snapshot,
+) -> Result<(), String> {
+    state.activity = Activity::VerifyingOutputOff;
+    state.output = OutputState::Unknown;
+    if state.source_simulation {
+        state.output = OutputState::Off;
+        return Ok(());
+    }
+    let report = pair
+        .ok_or("Source transport unavailable during protection stop")?
+        .force_output_off()?;
+    if !report.output_off_verified {
+        return Err("Protection stop could not verify source output OFF".into());
+    }
+    state.output = OutputState::Off;
+    if let Some(warning) = report.zeroing_warning {
+        state.warnings.push(format!(
+            "Protection stop: output OFF verified; zeroing warning: {warning}"
+        ));
+    }
+    Ok(())
+}
+
 // One owner serializes device I/O. Live samples use the already configured
 // sweep NPLC and never enter the CSV or resistance fit.
 // Resolution is fixed by range + the NPLC/function configured for this run.
@@ -1055,6 +1083,7 @@ struct SweepMonitor<'a> {
     last: Instant,
     source_resolution: Option<f64>,
     meter_resolution: MeterResolutionCache,
+    compliance_stop: Option<Record>,
 }
 impl SweepMonitor<'_> {
     fn record(&self, level: f64) -> Record {
@@ -1088,6 +1117,15 @@ impl SweepMonitor<'_> {
             if !record.meter_value.is_finite() || record.meter_value.abs() > 1e30 {
                 return Err("Meter overload during live settling acquisition".into());
             }
+            // Check every conversion before doing any further instrument I/O.
+            if record.meter_value.abs() >= self.config.compliance {
+                record.compliance = true;
+                record.status = "compliance".into();
+                record.source_readback = None;
+                record.source_resolution = self.source_resolution;
+                record.meter_resolution = None;
+                return Ok(record);
+            }
             let readback = monitor_query(device, Role::Source, ":SOUR:LEV?", self.control)?;
             let readback = readback
                 .trim()
@@ -1112,6 +1150,10 @@ impl SweepMonitor<'_> {
             }
             record.source_resource = model_label(Role::Source, &device.source_model);
             record.meter_resource = model_label(Role::Meter, &device.meter_model);
+        }
+        record.compliance = record.meter_value.abs() >= self.config.compliance;
+        if record.compliance {
+            record.status = "compliance".into();
         }
         Ok(record)
     }
@@ -1142,11 +1184,18 @@ impl SweepMonitor<'_> {
                 && end.saturating_duration_since(Instant::now()) >= budget
             {
                 self.last = Instant::now();
-                let reading = self.acquire(pair.as_deref_mut(), level);
+                let mut reading = self.acquire(pair.as_deref_mut(), level)?;
+                if reading.compliance {
+                    reading.timestamp = timestamp();
+                    self.compliance_stop = Some(reading.clone());
+                    protection_output_off(pair.as_deref_mut(), state)?;
+                    self.publish(reading, state);
+                    return Ok(false);
+                }
                 if self.control.cancelled() {
                     return Ok(false);
                 }
-                self.publish(reading?, state);
+                self.publish(reading, state);
             } else {
                 std::thread::sleep(
                     Duration::from_millis(10).min(end.saturating_duration_since(Instant::now())),
@@ -1244,6 +1293,7 @@ fn execute(
         last: Instant::now(),
         source_resolution: None,
         meter_resolution: MeterResolutionCache::default(),
+        compliance_stop: None,
     };
     let mut display_settings_changes = Vec::new();
     let mut instrument_status_events = Vec::new();
@@ -1262,14 +1312,31 @@ fn execute(
             let range_query =
                 iv_core::source_range_query(&device.source_model)?.unwrap_or(":SOUR:RANG?");
             let range = device.query(Role::Source, range_query)?;
-            actual_source_resolution = positive_reading(&range)
-                .and_then(|range| source_resolution(&device.source_model, config.mode, range));
+            let resolution = safety::verify_range(
+                &device.source_model,
+                config.mode,
+                planned.source_range,
+                &range,
+            )?;
+            let function = device.query(Role::Source, ":SOUR:FUNC?")?;
+            safety::verify_function(&function, config.mode)?;
+            let zero = read_level(device)?.ok_or("Source zero level is unavailable")?;
+            safety::verify_zero(zero, resolution)?;
+            actual_source_resolution = Some(resolution);
             live.source_resolution = actual_source_resolution;
             if control.cancelled() {
                 stopped = true;
                 return Ok(());
             }
+            // Once ON is requested, the previously verified OFF state is no
+            // longer authoritative while a potentially slow query is pending.
+            state.output = OutputState::Unknown;
+            publish(latest, state);
             device.write(Role::Source, ":OUTP ON")?;
+            let output = device.query(Role::Source, ":OUTP?")?;
+            if safety::output_state(&output)? != OutputState::On {
+                return Err("Source did not confirm output ON. Measurement stopped and output OFF will be verified.".into());
+            }
         }
         state.output = OutputState::On;
         state.phase = Phase::Running;
@@ -1351,8 +1418,10 @@ fn execute(
                     // Do not allow averaging to hide an individual over-limit sample.
                     if measured.abs() >= config.compliance {
                         sample_limit_hit = true;
+                        compliance_hit = true;
                         trigger_value = measured;
                         resolution_known = false;
+                        protection_output_off(Some(device), state)?;
                         break;
                     }
                     if control.cancelled() {
@@ -1409,7 +1478,13 @@ fn execute(
                         "software_limit":config.compliance
                     }));
                 }
-                let readback = read_level(device)?;
+                // OFF cleanup resets the programmed source level. Do not save
+                // that post-trip zero as if it were read during the conversion.
+                let readback = if sample_limit_hit {
+                    None
+                } else {
+                    read_level(device)?
+                };
                 let mut record = simulate_record(config, point, begin.elapsed().as_secs_f64());
                 record.source_set = level;
                 record.source_readback = readback;
@@ -1438,6 +1513,9 @@ fn execute(
             }
             .into();
             compliance_hit = record.compliance;
+            if compliance_hit && state.output != OutputState::Off {
+                protection_output_off(pair.as_deref_mut(), state)?;
+            }
             if !record.instrument_status.is_empty() {
                 instrument_status_events.push(serde_json::json!({"point_index":record.point.point_index,"instrument_status":record.instrument_status}));
             }
@@ -1477,14 +1555,35 @@ fn execute(
         }
         Ok(())
     })();
+    if let Some(record) = live.compliance_stop.take() {
+        compliance_hit = true;
+        instrument_status_events.push(serde_json::json!({
+            "event":"live_compliance_stop", "timestamp":record.timestamp,
+            "source_level":record.source_set, "trigger_value":record.meter_value,
+            "trigger_unit":if config.mode == Mode::Iv { "A" } else { "V" },
+            "software_limit":config.compliance, "saved_sweep_points":state.points
+        }));
+        // A live protection sample remains in the live display/run metadata;
+        // it must not invent a saved sweep point or enter the resistance fit.
+        state.live = Some(record);
+    }
     state.phase = Phase::CleaningUp;
-    state.activity = Activity::ReturningToZero;
-    state.message = "Returning source to zero and verifying output off…".into();
+    state.activity = if compliance_hit {
+        Activity::VerifyingOutputOff
+    } else {
+        Activity::ReturningToZero
+    };
+    state.message = if compliance_hit {
+        "Protection stop: verifying source output off…"
+    } else {
+        "Returning source to zero and verifying output off…"
+    }
+    .into();
     publish(latest, state);
     clean_output(
         pair,
         state,
-        if work.is_ok() {
+        if work.is_ok() && !compliance_hit {
             Some((config, level))
         } else {
             None
@@ -1660,6 +1759,7 @@ mod tests {
             last: Instant::now() - Duration::from_secs(1),
             source_resolution: None,
             meter_resolution: MeterResolutionCache::default(),
+            compliance_stop: None,
         };
         let mut state = Snapshot::default();
         assert!(monitor.wait(0.0, None, 0.0, &mut state).unwrap());

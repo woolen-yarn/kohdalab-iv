@@ -37,6 +37,21 @@ use std::time::{Duration, Instant};
 
 const SNAPSHOT_FIELDS: &[&str] = iv_core::CSV_FIELDS;
 
+/// Cached, display-only description of the exact plan accepted by `iv_core`.
+///
+/// `iv_core::plan` can legitimately contain up to one million points. Build
+/// this only when the configuration changes, never while rendering a frame.
+#[derive(Clone, Debug, PartialEq)]
+struct SweepPreview {
+    effective_step: f64,
+    effective_ramp: f64,
+    requested_step: f64,
+    planned_points: usize,
+    route: Vec<f64>,
+    unit: &'static str,
+    custom: bool,
+}
+
 pub struct IvApp {
     client: Result<Client, String>,
     settings: Settings,
@@ -74,7 +89,7 @@ pub struct IvApp {
     closing: bool,
     custom_text: String,
     validated_config: RunConfig,
-    preview: Result<usize, String>,
+    preview: Result<SweepPreview, String>,
     success: Arc<AtomicBool>,
     boot: Instant,
     first_frame_s: Option<f64>,
@@ -129,7 +144,7 @@ impl IvApp {
             settings.source_model = "SIMULATED_SOURCE".into();
             settings.meter_model = "SIMULATED_METER".into();
         }
-        let preview = iv_core::plan(&settings.config).map(|p| p.points.len());
+        let preview = sweep_preview(&settings.config);
         let validated_config = settings.config.clone();
         let custom_text = settings
             .config
@@ -232,7 +247,7 @@ impl IvApp {
         };
         let config_changed = self.settings.config != self.validated_config;
         if config_changed {
-            self.preview = iv_core::plan(&self.settings.config).map(|p| p.points.len());
+            self.preview = sweep_preview(&self.settings.config);
             self.validated_config = self.settings.config.clone();
         }
         let mut state_changed = false;
@@ -1050,9 +1065,18 @@ impl IvApp {
                                 &mut self.settings.config.pattern,
                                 pattern,
                                 pattern_name(pattern),
-                            );
+                            )
+                            .on_hover_text(definition.description());
                         }
-                    });
+                    })
+                    .response
+                    .on_hover_text(
+                        sweep_definitions()
+                            .iter()
+                            .find(|definition| definition.pattern == self.settings.config.pattern)
+                            .expect("every built-in pattern has a definition")
+                            .description(),
+                    );
                 ui.end_row();
                 let unit = if self.settings.config.mode == Mode::Iv {
                     "V"
@@ -1278,19 +1302,42 @@ impl IvApp {
             .small()
             .color(MUTED),
         );
-        if self.preview.is_ok()
-            && let Ok(effective) = iv_core::prepare_config(&self.settings.config)
-        {
-            let unit = if effective.mode == Mode::Vi { "A" } else { "V" };
-            ui.label(
-                RichText::new(format!(
-                    "Auto: step {:e} {unit} · ramp {:e} {unit}",
-                    effective.step.abs(),
-                    effective.ramp_step
-                ))
-                .small()
-                .color(MUTED),
-            );
+        if let Ok(preview) = &self.preview {
+            let rounding_changed = (preview.effective_step.abs() - preview.requested_step.abs())
+                .abs()
+                > preview
+                    .effective_step
+                    .abs()
+                    .max(preview.requested_step.abs())
+                    * f64::EPSILON
+                    * 8.0;
+            let step = fmt_quantity(preview.effective_step.abs(), preview.unit);
+            let requested = fmt_quantity(preview.requested_step.abs(), preview.unit);
+            let step_text = if rounding_changed {
+                format!("Effective step {step} (requested {requested})")
+            } else {
+                format!("Effective step {step}")
+            };
+            let summary = if preview.custom {
+                format!("Custom list · {} points", preview.planned_points)
+            } else {
+                format!("{step_text} · {} points", preview.planned_points)
+            };
+            ui.label(RichText::new(summary).small().color(MUTED))
+                .on_hover_text(format!(
+                    "Automatic ramp: {}. Step does not generate custom-list targets.",
+                    fmt_quantity(preview.effective_ramp, preview.unit)
+                ));
+            ui.label(RichText::new(preview.route_text()).small().color(MUTED))
+                .on_hover_text(
+                    preview
+                        .route
+                        .iter()
+                        .take(16)
+                        .map(|v| fmt_quantity(*v, preview.unit))
+                        .collect::<Vec<_>>()
+                        .join(" -> "),
+                );
         }
         if let Err(reason) = &self.preview {
             ui.add_space(4.0);
@@ -1386,7 +1433,7 @@ impl IvApp {
                     });
                 });
                 ui.add_space(10.0);
-                ui.label("Use Config → Save to save these settings to the file.");
+                ui.label("Use Config -> Save to save these settings to the file.");
                 ui.add_space(8.0);
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                     if button(ui, "Cancel", 76.0, true).clicked() { ui.close(); }
@@ -1787,7 +1834,9 @@ fn start_block_reason(config: &RunConfig, connected: bool, matching_modes: bool)
         return Some("Source and Meter must both use real instruments, or both use simulation. Check the Device selections and reconnect.".into());
     }
     iv_core::plan(config).err().map(|reason| {
-        let help = if reason.contains("exceeds effective limit") {
+        let help = if reason.contains("must include zero") {
+            "For zero_centered, use endpoints on opposite sides of zero, or set one endpoint to zero. Otherwise choose linear or round_trip. The source will not be enabled."
+        } else if reason.contains("exceeds effective limit") {
             "Reduce Start / End, or review Source limit in Timing / Compliance > Advanced. Increase a limit only when it is safe for your setup."
         } else if reason.contains("must be a multiple") {
             "Set Start / End to whole multiples of the source resolution stated in the error. Step and ramp are adjusted automatically."
@@ -1800,6 +1849,81 @@ fn start_block_reason(config: &RunConfig, connected: bool, matching_modes: bool)
         };
         format!("{reason}\n\n{help}")
     })
+}
+
+fn sweep_preview(config: &RunConfig) -> Result<SweepPreview, String> {
+    // Planning is the single source of truth for target order and exact
+    // endpoints. This function is called only when settings change.
+    let plan = iv_core::plan(config)?;
+    let effective = iv_core::prepare_config(config)?;
+    Ok(SweepPreview {
+        effective_step: effective.step,
+        effective_ramp: effective.ramp_step,
+        requested_step: config.step,
+        planned_points: plan.points.len(),
+        route: route_vertices(&plan.points),
+        unit: if effective.mode == Mode::Vi { "A" } else { "V" },
+        custom: effective.pattern == Pattern::CustomList,
+    })
+}
+
+/// Return the start, every direction-change target, and the final target.
+/// The UI turns an arbitrarily long planned point list into a compact route,
+/// while retaining the exact targets that are sent at each turning point.
+fn route_vertices(points: &[iv_core::SweepPoint]) -> Vec<f64> {
+    let Some(first) = points.first() else {
+        return Vec::new();
+    };
+    let mut vertices = vec![first.target];
+    let mut previous_sign = 0_i8;
+    for index in 1..points.len() {
+        let delta = points[index].target - points[index - 1].target;
+        let sign = if delta > 0.0 {
+            1
+        } else if delta < 0.0 {
+            -1
+        } else {
+            0
+        };
+        if sign != 0 {
+            if previous_sign != 0 && sign != previous_sign {
+                let turning = points[index - 1].target;
+                if vertices.last().copied() != Some(turning) {
+                    vertices.push(turning);
+                }
+            }
+            previous_sign = sign;
+        }
+    }
+    let last = points.last().expect("non-empty points").target;
+    // Preserve an explicit return to the starting target after a turn, but
+    // avoid displaying a duplicate for a static custom list.
+    if vertices.len() > 1 || vertices[0] != last {
+        vertices.push(last);
+    }
+    vertices
+}
+
+impl SweepPreview {
+    fn route_text(&self) -> String {
+        let label = if self.custom {
+            format!("Custom route ({} targets)", self.planned_points)
+        } else {
+            "Route".to_owned()
+        };
+        let route = if self.route.len() <= 4 {
+            self.route
+                .iter()
+                .map(|value| fmt_quantity(*value, self.unit))
+                .collect::<Vec<_>>()
+                .join(" -> ")
+        } else {
+            let first = fmt_quantity(self.route[0], self.unit);
+            let last = fmt_quantity(*self.route.last().expect("non-empty route"), self.unit);
+            format!("{first} -> … -> {last}")
+        };
+        format!("{label}: {route}")
+    }
 }
 
 fn mode_name(mode: Mode) -> &'static str {
@@ -1887,6 +2011,81 @@ mod tests {
         );
         config.start = -0.001;
         assert!(start_block_reason(&config, true, true).is_none());
+    }
+
+    #[test]
+    fn invalid_zero_centered_interval_explains_safe_alternatives_before_start() {
+        let config = RunConfig {
+            start: 0.0001,
+            stop: 0.0002,
+            ..RunConfig::default()
+        };
+        let reason = start_block_reason(&config, true, true).unwrap();
+        assert!(reason.contains("must include zero"));
+        assert!(reason.contains("linear or round_trip"));
+        assert!(reason.contains("source will not be enabled"));
+    }
+
+    fn assert_route(actual: &[f64], expected: &[f64]) {
+        assert_eq!(actual.len(), expected.len());
+        for (actual, expected) in actual.iter().zip(expected) {
+            assert!(
+                (actual - expected).abs() < 1e-15,
+                "{actual:e} != {expected:e}"
+            );
+        }
+    }
+
+    #[test]
+    fn cached_preview_shows_the_safe_negative_only_zero_centered_route() {
+        let preview = sweep_preview(&RunConfig {
+            start: -0.0016,
+            stop: 0.0,
+            step: 0.0001,
+            source_limit: 0.002,
+            ..RunConfig::default()
+        })
+        .unwrap();
+        assert_eq!(preview.planned_points, 33);
+        assert_route(&preview.route, &[0.0, -0.0016, 0.0]);
+        assert_eq!(preview.route_text(), "Route: 0 V -> -1.6000 mV -> 0 V");
+    }
+
+    #[test]
+    fn cached_preview_preserves_asymmetric_reverse_zero_centered_order() {
+        let preview = sweep_preview(&RunConfig {
+            start: 0.001,
+            stop: -0.002,
+            step: 0.0001,
+            source_limit: 0.003,
+            ..RunConfig::default()
+        })
+        .unwrap();
+        assert_eq!(preview.planned_points, 61);
+        assert_route(&preview.route, &[0.0, -0.002, 0.001, 0.0]);
+        assert_eq!(
+            preview.route_text(),
+            "Route: 0 V -> -2.0000 mV -> 1.0000 mV -> 0 V"
+        );
+    }
+
+    #[test]
+    fn cached_preview_reports_custom_target_count_and_effective_step() {
+        let preview = sweep_preview(&RunConfig {
+            pattern: Pattern::CustomList,
+            custom_points: vec![0.0001, -0.0002, 0.0003],
+            step: 0.00000015,
+            source_limit: 0.001,
+            ..RunConfig::default()
+        })
+        .unwrap();
+        assert_eq!(preview.planned_points, 3);
+        assert!((preview.effective_step - 0.0000002).abs() < 1e-20);
+        assert_route(&preview.route, &[0.0001, -0.0002, 0.0003]);
+        assert_eq!(
+            preview.route_text(),
+            "Custom route (3 targets): 100.0000 µV -> -200.0000 µV -> 300.0000 µV"
+        );
     }
 
     #[test]

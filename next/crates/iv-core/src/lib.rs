@@ -303,19 +303,24 @@ fn decimal_range(start: Decimal, stop: Decimal, step: Decimal) -> Result<Vec<Dec
     if step.is_sign_negative() && start < stop {
         return Err("negative step cannot reach stop from start.".to_owned());
     }
-    let tolerance = step.abs() / Decimal::from(1_000_000_000_u64);
     let mut current = start;
     let mut points = Vec::new();
-    while if step.is_sign_positive() {
-        current <= stop + tolerance
-    } else {
-        current >= stop - tolerance
-    } {
+    loop {
         if points.len() >= MAX_POINTS {
             return Err(format!("sweep exceeds {MAX_POINTS} points."));
         }
         points.push(current);
-        current += step;
+        if current == stop {
+            break;
+        }
+        // Inputs are already aligned decimal hardware increments. Preserve the
+        // exact endpoint with a shorter final interval, without overshooting it
+        // or adding a potentially enormous step beyond the source range.
+        current = if (stop - current).abs() <= step.abs() {
+            stop
+        } else {
+            current + step
+        };
     }
     Ok(points)
 }
@@ -658,11 +663,13 @@ pub fn plan(config: &RunConfig) -> Result<Plan, String> {
             points
         }
         Pattern::ZeroCentered => {
-            let maximum = start.abs().max(stop.abs());
+            if start.min(stop) > Decimal::ZERO || start.max(stop) < Decimal::ZERO {
+                return Err("zero_centered: the interval between Start and End must include zero (an endpoint may be zero). Use linear or round_trip for an interval entirely above or below zero.".into());
+            }
             let mut points = Vec::new();
-            append_joined(&mut points, forward_points(Decimal::ZERO, maximum, step)?);
-            append_joined(&mut points, forward_points(maximum, -maximum, step)?);
-            append_joined(&mut points, forward_points(-maximum, Decimal::ZERO, step)?);
+            append_joined(&mut points, forward_points(Decimal::ZERO, stop, step)?);
+            append_joined(&mut points, forward_points(stop, start, step)?);
+            append_joined(&mut points, forward_points(start, Decimal::ZERO, step)?);
             points
         }
     };
@@ -980,6 +987,149 @@ mod tests {
         assert_eq!(targets[11], 0.0009);
         assert_eq!(targets.last(), Some(&0.0));
         assert_eq!(plan.points.len(), 41);
+    }
+
+    #[test]
+    fn zero_centered_respects_both_endpoints_instead_of_mirroring_the_amplitude() {
+        for (start, stop, expected) in [
+            (
+                -1.6,
+                0.0,
+                vec![0.0, -0.4, -0.8, -1.2, -1.6, -1.2, -0.8, -0.4, 0.0],
+            ),
+            (0.0, -0.8, vec![0.0, -0.4, -0.8, -0.4, 0.0]),
+            (0.8, 0.0, vec![0.0, 0.4, 0.8, 0.4, 0.0]),
+            (-0.4, 0.8, vec![0.0, 0.4, 0.8, 0.4, 0.0, -0.4, 0.0]),
+            (0.8, -0.4, vec![0.0, -0.4, 0.0, 0.4, 0.8, 0.4, 0.0]),
+            (0.0, 0.0, vec![0.0]),
+        ] {
+            let config = RunConfig {
+                start,
+                stop,
+                step: 0.4,
+                source_limit: 2.0,
+                ..RunConfig::default()
+            };
+            let targets: Vec<_> = plan(&config)
+                .unwrap()
+                .points
+                .iter()
+                .map(|p| p.target)
+                .collect();
+            assert_eq!(targets, expected, "Start={start}, End={stop}");
+            assert!(
+                targets
+                    .iter()
+                    .all(|v| *v >= start.min(stop) && *v <= start.max(stop))
+            );
+        }
+    }
+
+    #[test]
+    fn zero_centered_requires_zero_within_the_requested_interval() {
+        for (start, stop) in [(0.4, 0.8), (-0.8, -0.4), (0.8, 0.4), (-0.4, -0.8)] {
+            let config = RunConfig {
+                start,
+                stop,
+                step: 0.1,
+                source_limit: 2.0,
+                ..RunConfig::default()
+            };
+            assert!(plan(&config).unwrap_err().contains("must include zero"));
+        }
+    }
+
+    #[test]
+    fn sweep_bounds_and_endpoints_hold_for_all_profiled_sources_and_modes() {
+        for source_model in ["YOKOGAWA_GS210", "YOKOGAWA_7651"] {
+            for mode in [Mode::Iv, Mode::Vi] {
+                for pattern in [Pattern::Linear, Pattern::RoundTrip, Pattern::ZeroCentered] {
+                    for start in -3..=3 {
+                        for stop in -3..=3 {
+                            for step in [1, 2, 5] {
+                                let config = RunConfig {
+                                    source_model: source_model.into(),
+                                    mode,
+                                    pattern,
+                                    start: format!("{start}e-4").parse().unwrap(),
+                                    stop: format!("{stop}e-4").parse().unwrap(),
+                                    step: format!("{step}e-4").parse().unwrap(),
+                                    source_limit: 0.001,
+                                    compliance: 0.001,
+                                    ..RunConfig::default()
+                                };
+                                let result = plan(&config);
+                                if pattern == Pattern::ZeroCentered
+                                    && (start.min(stop) > 0 || start.max(stop) < 0)
+                                {
+                                    assert!(result.unwrap_err().contains("must include zero"));
+                                    continue;
+                                }
+                                let result = result.unwrap();
+                                let targets: Vec<_> =
+                                    result.points.iter().map(|p| p.target).collect();
+                                assert!(
+                                    targets.iter().all(|v| *v >= config.start.min(config.stop)
+                                        && *v <= config.start.max(config.stop)),
+                                    "{config:?}: {targets:?}"
+                                );
+                                let first = if pattern == Pattern::ZeroCentered {
+                                    0.0
+                                } else {
+                                    config.start
+                                };
+                                let last = match pattern {
+                                    Pattern::Linear => config.stop,
+                                    Pattern::RoundTrip => config.start,
+                                    _ => 0.0,
+                                };
+                                assert_eq!(targets.first(), Some(&first));
+                                assert_eq!(targets.last(), Some(&last));
+                                assert!(
+                                    targets.windows(2).all(|w| w[0] != w[1]
+                                        && (w[1] - w[0]).abs() <= config.step + 1e-12)
+                                );
+                                assert!(
+                                    targets.contains(&config.start)
+                                        && targets.contains(&config.stop)
+                                );
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn nondivisible_steps_include_exact_turning_and_final_endpoints() {
+        for (pattern, expected) in [
+            (Pattern::Linear, vec![-0.8, -0.2, 0.4, 0.8]),
+            (
+                Pattern::RoundTrip,
+                vec![-0.8, -0.2, 0.4, 0.8, 0.2, -0.4, -0.8],
+            ),
+            (
+                Pattern::ZeroCentered,
+                vec![0.0, 0.6, 0.8, 0.2, -0.4, -0.8, -0.2, 0.0],
+            ),
+        ] {
+            let config = RunConfig {
+                pattern,
+                start: -0.8,
+                stop: 0.8,
+                step: 0.6,
+                source_limit: 1.0,
+                ..RunConfig::default()
+            };
+            let targets: Vec<_> = plan(&config)
+                .unwrap()
+                .points
+                .iter()
+                .map(|p| p.target)
+                .collect();
+            assert_eq!(targets, expected, "{pattern:?}");
+        }
     }
 
     #[test]

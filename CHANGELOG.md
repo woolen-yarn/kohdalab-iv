@@ -1,5 +1,15 @@
 # Changelog
 
+## 1.3.0-alpha.8
+
+- Fix zero-centered sweeps to follow 0 → End → Start → 0 within the entered bounds. Reject intervals excluding zero before enabling output; a zero endpoint is valid.
+- Include exact segment endpoints when Step does not divide the span, using a shorter final interval without overshoot or duplicate junctions.
+- Enforce software compliance on every acquired active-sweep conversion, including ramp/settling live readings. Send source OFF before further instrument queries or saving on a trip; protection cleanup never ramps with output enabled.
+- Keep live protection samples out of normal CSV points and resistance fitting; retain trigger values and stop events in run metadata. Do not record the reset-to-zero level as a conversion-time source readback.
+- Confirm source function, programmed range, zero setting and output ON across GS210 and the translated 7651 protocol. Unreadable source levels stop the run.
+- Preview effective Step, automatic rounding, point count and actual route before Start, with cached planning and preserved compact layout.
+- Apply shared protection to every supported meter model and simulation. Software checks act on acquired readings and do not replace instrument hardware limits or interlocks.
+
 ## 1.3.0-alpha.7
 
 - Centralize instrument capabilities, specifications and measurement definitions without changing supported models, controls or measurement behavior.

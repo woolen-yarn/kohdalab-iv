@@ -1,6 +1,6 @@
 # KohdaLab IV Native Desktop
 
-Development **1.3.0-alpha.7** ports Yokogawa 7651, Agilent 34401A, Keysight 34465A and ADCMT 7461A from the former Python drivers. Protocol mocks pass; physical validation is pending. GS200 and native ADCMT USB are not added. See the instrument matrix in the source README.
+Development **1.3.0-alpha.8** ports Yokogawa 7651, Agilent 34401A, Keysight 34465A and ADCMT 7461A from the former Python drivers. Protocol mocks pass; physical validation is pending. GS200 and native ADCMT USB are not added. See the instrument matrix in the source README.
 
 Version **1.2.0** adds a Windows Setup.exe installer and per-device official VISA preference
 on Windows.
@@ -93,6 +93,13 @@ The Mac app is ad hoc signed and is not notarized.
    then resets the source level to zero before configuration; failure prevents Start.
    The run JSON retains both requested and
    effective settings; CSV targets use the effective sweep.
+   Sweep paths are `linear`: Start → End; `round_trip`: Start → End → Start;
+   `zero_centered`: 0 → End → Start → 0. Zero-centered intervals must contain
+   zero (either endpoint may be zero); same-sign intervals are rejected before
+   output is enabled. Start −1.6 mV / End 0 mV produces 0 → −1.6 → 0 mV,
+   without a positive excursion. Exact endpoints are included even when Step
+   does not divide a segment; the final interval is then shorter. Hover Sweep
+   for the path description. Custom lists follow their explicit values/order.
 5. Choose Directory with Browse, enter File, and choose Auto suffix. Run has
    Start / Stop / Save. Measurements are automatically saved as they are acquired.
    After completion or Stop cleanup, Save opens a file picker for a complete CSV
@@ -378,3 +385,19 @@ See the source README for development and stable download links.
 Source/Meter Device sections fold model, resource and connection controls together;
 Meter NPLC is inside Device. Live values and connection status remain visible.
 Output and Run have separate rounded outlines.
+
+## Sweep protection and preflight
+
+Active-sweep protection checks every acquired meter reading, including live
+readings during ramps and settling. On software compliance, source OFF is
+requested before further instrument queries or saving; no normal cleanup ramp
+is performed with output enabled. Normal Stop still returns the source to zero
+before OFF. Live protection samples are recorded in the run JSON, not inserted
+as extra CSV sweep points. An averaged point stopped by compliance identifies
+its source value as a commanded setpoint when no pre-OFF readback was obtained.
+Before enabling a real source, the engine confirms function, programmed range
+(GS210 SI range / 7651 range code) and zero setting; it also confirms output ON.
+These are programmed-setting checks, not an external calibration or guarantee
+of physical output accuracy. The policy applies to all supported meter models.
+Software compliance can only react to acquired samples; retain conservative
+instrument hardware compliance and a manual way to disable output.

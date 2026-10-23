@@ -69,8 +69,12 @@ simultaneous GPIB controllers are not supported. See
 
 ## Downloads
 
-The current stable release is **v1.2.0**. Public downloads are available from
-the personal mirror; Kohdalab links may require organization repository access.
+The packages below are the **v1.3.0-alpha.8 development release**, including
+corrected zero-centered sweep bounds and stronger active-sweep protection.
+The older [stable v1.2.0 release](https://github.com/woolen-yarn/kohdalab-iv/releases/tag/portable-v1.2.0)
+remains available; the new fixes are not backported to those older binaries.
+Public downloads are available from the personal mirror; Kohdalab links may
+require organization repository access.
 
 Run uses **Start / Stop / Save**. Measurements are still saved automatically;
 Save exports a complete CSV copy and its run metadata without overwriting data.
@@ -79,15 +83,24 @@ and automatic cleanup. Repeat averages N meter readings at each fixed target;
 it does not repeat the sweep. Source range, effective step and ramp are automatic,
 and invalid Start requests explain the problem in an English dialog.
 
+Sweep paths use the entered endpoints: `linear` follows Start → End,
+`round_trip` follows Start → End → Start, and `zero_centered` follows
+0 → End → Start → 0. Zero-centered sweeps require zero inside the interval
+(or at either endpoint); they never mirror an endpoint to the opposite sign.
+For example, Start −1.6 mV and End 0 mV gives 0 → −1.6 → 0 mV.
+Use linear or round_trip for an interval entirely above or below zero.
+Each segment reaches its exact endpoint; its final interval can be shorter
+than Step. Custom points retain their entered order, including duplicates.
+
 | Platform | Kohdalab | Personal mirror |
 | --- | --- | --- |
-| macOS Apple Silicon | [Mac portable](https://github.com/Kohdalab/kohdalab-iv/releases/download/portable-v1.2.0/kohdalab-iv-1.2.0-macos-arm64-portable.zip) | [Mac portable](https://github.com/woolen-yarn/kohdalab-iv/releases/download/portable-v1.2.0/kohdalab-iv-1.2.0-macos-arm64-portable.zip) |
-| Windows x64 installer | [Windows Setup](https://github.com/Kohdalab/kohdalab-iv/releases/download/portable-v1.2.0/kohdalab-iv-1.2.0-windows-x64-Setup.exe) | [Windows Setup](https://github.com/woolen-yarn/kohdalab-iv/releases/download/portable-v1.2.0/kohdalab-iv-1.2.0-windows-x64-Setup.exe) |
-| Windows x64 | [Windows portable](https://github.com/Kohdalab/kohdalab-iv/releases/download/portable-v1.2.0/kohdalab-iv-1.2.0-windows-x64-portable.zip) | [Windows portable](https://github.com/woolen-yarn/kohdalab-iv/releases/download/portable-v1.2.0/kohdalab-iv-1.2.0-windows-x64-portable.zip) |
+| macOS Apple Silicon | [Mac portable](https://github.com/Kohdalab/kohdalab-iv/releases/download/preview-v1.3.0-alpha.8/kohdalab-iv-1.3.0-alpha.8-macos-arm64-preview.zip) | [Mac portable](https://github.com/woolen-yarn/kohdalab-iv/releases/download/preview-v1.3.0-alpha.8/kohdalab-iv-1.3.0-alpha.8-macos-arm64-preview.zip) |
+| Windows x64 installer | [Windows Setup](https://github.com/Kohdalab/kohdalab-iv/releases/download/preview-v1.3.0-alpha.8/kohdalab-iv-1.3.0-alpha.8-windows-x64-Setup.exe) | [Windows Setup](https://github.com/woolen-yarn/kohdalab-iv/releases/download/preview-v1.3.0-alpha.8/kohdalab-iv-1.3.0-alpha.8-windows-x64-Setup.exe) |
+| Windows x64 | [Windows portable](https://github.com/Kohdalab/kohdalab-iv/releases/download/preview-v1.3.0-alpha.8/kohdalab-iv-1.3.0-alpha.8-windows-x64-preview.zip) | [Windows portable](https://github.com/woolen-yarn/kohdalab-iv/releases/download/preview-v1.3.0-alpha.8/kohdalab-iv-1.3.0-alpha.8-windows-x64-preview.zip) |
 
-[Source build kit (Kohdalab)](https://github.com/Kohdalab/kohdalab-iv/releases/download/portable-v1.2.0/kohdalab-iv-1.2.0-build-kit.zip) ·
-[Source build kit (personal)](https://github.com/woolen-yarn/kohdalab-iv/releases/download/portable-v1.2.0/kohdalab-iv-1.2.0-build-kit.zip) ·
-[SHA-256 checksums](https://github.com/Kohdalab/kohdalab-iv/releases/download/portable-v1.2.0/SHA256SUMS.txt)
+[Source build kit (Kohdalab)](https://github.com/Kohdalab/kohdalab-iv/releases/download/preview-v1.3.0-alpha.8/kohdalab-iv-1.3.0-alpha.8-build-kit.zip) ·
+[Source build kit (personal)](https://github.com/woolen-yarn/kohdalab-iv/releases/download/preview-v1.3.0-alpha.8/kohdalab-iv-1.3.0-alpha.8-build-kit.zip) ·
+[SHA-256 checksums](https://github.com/Kohdalab/kohdalab-iv/releases/download/preview-v1.3.0-alpha.8/SHA256SUMS.txt)
 
 Windows: run **Setup.exe**, approve administrator access, then start **KohdaLab IV** from the desktop or Start menu. It installs to `C:\Program Files\Kohdalab\KohdaLab IV`. Run a newer Setup to update; uninstall from Windows Settings. Close IV and automation clients first. Settings, results and instrument drivers are retained.
 
@@ -114,7 +127,7 @@ drivers or an incomplete existing WinUSB assignment are configured.
 
 ## Development: legacy instrument drivers
 
-The **1.3.0-alpha.7** development line ports working Python protocols at
+The **1.3.0-alpha.8** development line ports working Python protocols at
 `b754cfa^` into the Rust engine. See the [supported-instrument matrix](#supported-instruments)
 for model IDs, connection requirements and physical validation status. These
 additional drivers are not included in the stable v1.2.0 downloads above.
@@ -139,15 +152,32 @@ Source and Meter connection settings, including Meter NPLC, are grouped in
 collapsible Device sections. Live readouts remain visible when folded. Output
 and Run have separate rounded outlines.
 
-The latest development download is **v1.3.0-alpha.7**, including legacy protocol
-ports, reduced zero-wait metadata traffic, signing preparation, automatic
-Notebook application discovery and shared instrument/measurement contracts.
+The latest development download is **v1.3.0-alpha.8**, including the sweep
+bounds/protection fixes and pre-start route preview. It retains legacy protocol
+ports, reduced zero-wait metadata traffic, Notebook application discovery and
+shared instrument/measurement contracts.
 Versioned settings and Notebook negotiation retain legacy compatibility. Additional
-instrument hardware validation is pending. The stable v1.2.0 links above remain
-available.
+instrument hardware validation is pending. The stable v1.2.0 archive remains available.
 
-- [Development downloads (Kohdalab)](https://github.com/Kohdalab/kohdalab-iv/releases/tag/preview-v1.3.0-alpha.7)
-- [Development downloads (personal)](https://github.com/woolen-yarn/kohdalab-iv/releases/tag/preview-v1.3.0-alpha.7)
+- [Development downloads (Kohdalab)](https://github.com/Kohdalab/kohdalab-iv/releases/tag/preview-v1.3.0-alpha.8)
+- [Development downloads (personal)](https://github.com/woolen-yarn/kohdalab-iv/releases/tag/preview-v1.3.0-alpha.8)
+
+Run previews show the effective Step, any rounding, planned point count and route.
+Hover the preview for automatic ramp details.
+
+Active-sweep protection checks every acquired meter reading, including live
+readings during ramps and settling. On software compliance, source OFF is
+requested before further instrument queries or saving; no normal cleanup ramp
+is performed with output enabled. Normal Stop still returns the source to zero
+before OFF. Live protection samples are recorded in the run JSON, not inserted
+as extra CSV sweep points. An averaged point stopped by compliance identifies
+its source value as a commanded setpoint when no pre-OFF readback was obtained.
+Before enabling a real source, the engine confirms function, programmed range
+(GS210 SI range / 7651 range code) and zero setting; it also confirms output ON.
+These are programmed-setting checks, not an external calibration or guarantee
+of physical output accuracy. The policy applies to all supported meter models.
+Software compliance can only react to acquired samples; retain conservative
+instrument hardware compliance and a manual way to disable output.
 
 ## Build and validation
 
