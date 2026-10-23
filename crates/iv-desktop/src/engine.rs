@@ -740,7 +740,7 @@ fn append_meter_reading_audit(
     audit.append(&serde_json::json!({
         "event":"meter_reading", "point_index":point_index,
         "reading_index":reading_index, "command":"READ?", "normalized_response":reply,
-        "query_error":query_error,
+        "query_error":query_error, "error":query_error,
         "parsed_value":reply.and_then(|reply| reply.trim().parse::<f64>().ok()),
         "timing":timing.json(),
     }))

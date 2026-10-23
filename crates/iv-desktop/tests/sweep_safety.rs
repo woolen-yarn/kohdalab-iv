@@ -493,6 +493,18 @@ fn failed_readings_retain_raw_evidence_after_immediate_output_off() {
                 "missing exact failed reply {reading}: {raw}"
             );
             assert!(raw.contains("meter_reading"));
+            let mut reader = csv::Reader::from_path(output.with_extension("raw.csv")).unwrap();
+            let header = reader.headers().unwrap().clone();
+            let event = header.iter().position(|v| v == "event_type").unwrap();
+            let result = header.iter().position(|v| v == "result").unwrap();
+            let error = header.iter().position(|v| v == "error").unwrap();
+            let row = reader
+                .records()
+                .map(Result::unwrap)
+                .find(|row| &row[event] == "meter_reading")
+                .unwrap();
+            assert_eq!(&row[result], "error");
+            assert!(!row[error].is_empty());
             cleanup(&output);
         }
     }
