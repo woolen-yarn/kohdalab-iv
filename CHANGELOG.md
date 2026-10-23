@@ -3,6 +3,16 @@
 > **Language navigation / 言語案内:** The English historical record appears first, followed by a complete Japanese counterpart. Versions, dates, API names, commands, compatibility wording, and historical claims are preserved in both languages.
 > 英語の履歴記録を先に置き、その後に完全な日本語対訳を掲載します。バージョン、日付、API 名、コマンド、互換性の表現、履歴上の主張は両言語で保持します。
 
+## 1.3.0-alpha.11 — 2026-10-23
+
+- Fix zero-centered sweeps to follow 0 → End → Start → 0 within the entered bounds. Reject intervals excluding zero before enabling output; a zero endpoint is valid.
+- Include exact segment endpoints when Step does not divide the span, using a shorter final interval without overshoot or duplicate junctions.
+- Enforce software compliance on every acquired active-sweep conversion, including ramp/settling live readings. Send source OFF before further instrument queries or saving on a trip; protection cleanup never ramps with output enabled.
+- Keep live protection samples out of normal CSV points and resistance fitting; retain trigger values and stop events in run metadata. Do not record the reset-to-zero level as a conversion-time source readback.
+- Confirm source function, programmed range, zero setting and output ON across GS210 and the translated 7651 protocol. Unreadable source levels stop the run.
+- Preview effective Step, automatic rounding, point count and actual route before Start, with cached planning and preserved compact layout.
+- Apply shared protection to every supported meter model and simulation. Software checks act on acquired readings and do not replace instrument hardware limits or interlocks.
+
 ## 1.3.0-alpha.10 — 2026-10-23
 
 新規保存をmain CSV・raw CSV・run JSONへ整理しました。mainは18列の`analysis_v3`で、測定ID・平均化採用数・標本標準偏差・品質フラグを保存します。rawは改行を保持できる共通CSVで、旧JSONL付きデータのコピーを維持します。終了時にmain/rawのSHA-256を記録し、設定・出力確認の通信証跡と任意の実験条件を保存します。
@@ -254,6 +264,14 @@
 ---
 
 # 変更履歴（日本語）
+
+## 1.3.0-alpha.11 — 2026-10-23
+
+- ゼロ中心の経路を 0 → End → Start → 0 に修正し、入力区間外への反転を防ぎます。ゼロを含まない区間は出力前に拒否します。
+- Step で割り切れない区間も端点に正確に到達し、実効 Step・丸め・点数・経路を Run に表示します。
+- ランプ・待機中を含む取得済みの全読み値を保護判定し、制限・取得異常時は追加照会や保存より先に OFF を要求します。通常 Stop のゼロ復帰は維持します。
+- GS210・7651 の機能・設定レンジ・ゼロ・ON を照合し、全対応メーター・両モードに共通適用します。
+- 停止を起こした読み値・通信エラー・時刻を保持し、OFF 後のゼロを変換時の読み値として保存しません。analysis/raw CSV と実行記録の現行形式を維持します。
 
 ## 1.3.0-alpha.9
 

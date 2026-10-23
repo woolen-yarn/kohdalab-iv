@@ -77,8 +77,10 @@ GUI では次の pattern を選べます。
 
 - `linear`: start から stop まで一方向に sweep
 - `round_trip`: start から stop まで行き、その後 start に戻る
-- `zero_centered`: `0 -> +max -> -max -> 0` の点列
+- `zero_centered`: `0 -> End -> Start -> 0` の点列。区間内または端点にゼロが必要です。端点の符号を反転しません。
 - `custom_list`: 明示的な点列用
+
+Rust 版は各区間の端点に正確に到達し、最後の間隔だけ Step より短くなる場合があります。Run のプレビューに実効 Step・点数・経路を表示します。
 
 linear current sweep の例:
 
@@ -455,8 +457,10 @@ The GUI exposes these patterns:
 
 - `linear`: sweep from start to stop in one direction
 - `round_trip`: sweep from start to stop, then return
-- `zero_centered`: use points ordered as `0 -> +max -> -max -> 0`
+- `zero_centered`: use points ordered as `0 -> End -> Start -> 0`; zero must be within the interval or at an endpoint. Never mirror the entered endpoints.
 - `custom_list`: reserved for explicit point lists
+
+The Rust planner includes exact segment endpoints, using a shorter final interval when needed. The Run preview shows effective Step, point count and route.
 
 Example `dc_vi` linear current sweep:
 

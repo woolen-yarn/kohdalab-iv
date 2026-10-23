@@ -191,6 +191,25 @@ pub struct SweepDefinition {
     pub label: &'static str,
 }
 
+impl SweepDefinition {
+    pub const fn description(&self) -> &'static str {
+        match self.pattern {
+            Pattern::Linear => {
+                "Start -> End. Direction follows the endpoints; Step sets the magnitude. The last interval may be shorter to reach End exactly."
+            }
+            Pattern::RoundTrip => {
+                "Start -> End -> Start. Each endpoint is reached exactly; turning points are not duplicated. The last interval of each segment may be shorter than Step."
+            }
+            Pattern::ZeroCentered => {
+                "0 -> End -> Start -> 0, within the specified endpoints. The interval must include zero; either endpoint may be zero. The last interval of each segment may be shorter than Step."
+            }
+            Pattern::CustomList => {
+                "Follow Custom points in their entered order, including repeated values. Start, End and Step do not generate the list."
+            }
+        }
+    }
+}
+
 const SWEEP_DEFINITIONS: &[SweepDefinition] = &[
     SweepDefinition {
         pattern: Pattern::Linear,

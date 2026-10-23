@@ -51,7 +51,9 @@ the limit. Settings successfully sent are not automatically verified by readback
 | `details_json` | Structured event-specific information (averaging windows, settings and output verification); not a duplicate main CSV row / 平均区間・設定・出力確認などの構造化情報。解析CSV行の複製ではない |
 
 Blank means unavailable or not applicable, not zero. Raw events cover audited
-operations, not every background transport operation. No instrument reply is
+operations, not every background transport operation. Emergency output-off and
+transport recovery are represented by the final verification result; their
+individual write/query/retry exchanges are not a complete wire trace. No instrument reply is
 fabricated in simulation. Legacy exports keep their `.readings.jsonl` companion.
 空欄は未取得・非該当であり0ではありません。rawは監査対象操作を記録し、全バックグラウンド通信を記録するものではありません。simulationで機器応答を捏造しません。旧形式の保存では`.readings.jsonl`を維持します。
 

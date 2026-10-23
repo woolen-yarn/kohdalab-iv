@@ -169,6 +169,62 @@ fn live_before_and_after_sweep_does_not_enable_output_or_pollute_csv() {
     engine.wait(|s| s["connected"] == false);
     std::fs::remove_dir_all(directory).unwrap();
 }
+#[test]
+fn one_sided_zero_centered_csv_stays_in_range_and_invalid_interval_never_starts() {
+    let mut engine = Engine::start();
+    engine.send(json!({"command":"connect","simulation":true,"source":"","meter":""}));
+    engine.wait(|s| s["connected"] == true);
+    let directory = std::env::temp_dir().join(format!(
+        "iv-zero-bounds-{}-{}",
+        std::process::id(),
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos()
+    ));
+    std::fs::create_dir(&directory).unwrap();
+    let path = directory.join("negative-only.csv");
+    let mut config = iv_core::RunConfig {
+        start: -0.0016,
+        stop: 0.0,
+        step: 0.0004,
+        source_limit: 0.002,
+        start_settle_s: 0.0,
+        settle_s: 0.0,
+        ramp_wait_s: 0.0,
+        ..Default::default()
+    };
+    engine.send(json!({"command":"run","config":config,"path":path}));
+    let finished = engine.wait(|s| s["phase"] == "Completed");
+    assert_eq!(finished["points"], 9);
+    assert_eq!(finished["output"], "Off");
+    let saved = std::fs::read(&path).unwrap();
+    let targets: Vec<f64> = csv_reader(&path)
+        .iter()
+        .skip(1)
+        .map(|line| line.split(',').nth(6).unwrap().parse().unwrap())
+        .collect();
+    assert_eq!(
+        targets,
+        vec![
+            0.0, -0.0004, -0.0008, -0.0012, -0.0016, -0.0012, -0.0008, -0.0004, 0.0
+        ]
+    );
+    config.start = 0.0002;
+    config.stop = 0.0004;
+    let invalid = directory.join("must-not-exist.csv");
+    engine.send(json!({"command":"run","config":config,"path":invalid}));
+    let rejected = engine.wait_state(|s| {
+        s["phase"] == "Failed" && s["error"].as_str().unwrap().contains("must include zero")
+    });
+    assert_eq!(rejected["output"], "Off");
+    assert!(!invalid.exists());
+    assert!(!invalid.with_extension("run.json").exists());
+    assert_eq!(std::fs::read(path).unwrap(), saved);
+    drop(engine);
+    std::fs::remove_dir_all(directory).unwrap();
+}
+
 fn csv_reader(path: &std::path::Path) -> Vec<String> {
     std::fs::read_to_string(path)
         .unwrap()
@@ -249,6 +305,10 @@ fn native_mock_idle_monitor_uses_actual_source_mode_and_never_enables_output() {
         .replace(
             &format!("response='{}';;", hex("CURR")),
             "response=\"$function\";;",
+        )
+        .replace(
+            &format!("response='{}';;", hex("0")),
+            "if [ \"$output_on\" = 1 ]; then response='31'; else response='30'; fi;;",
         );
     script.push_str(" *) printf 'KIV\\tERR\\t756e6578706563746564207175657279\\n'; continue;;\n esac\n fi\n printf 'KIV\\tOK\\t%s\\n' \"$response\"\n [ \"$op\" = EXIT ] && break\ndone\n");
     script = script.replace(" printf 'KIV\\tOK\\t%s\\n'", &format!(

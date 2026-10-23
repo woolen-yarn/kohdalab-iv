@@ -32,7 +32,14 @@ Simulation example: instrument setup and live signals on the left, sweep and plo
 | Channel / 配布チャネル | Version / バージョン | Platforms / 対応プラットフォーム |
 | --- | --- | --- |
 | Stable / 安定版 | [1.2.0](https://github.com/woolen-yarn/kohdalab-iv/releases/tag/portable-v1.2.0) | Windows x64 Setup / portable ZIP; macOS Apple silicon portable ZIP / Windows x64 セットアップ・ポータブル ZIP、macOS Apple silicon ポータブル ZIP |
-| Preview / プレビュー | [1.3.0-alpha.10](https://github.com/woolen-yarn/kohdalab-iv/releases/tag/preview-v1.3.0-alpha.10) | Windows x64 Setup / preview ZIP; macOS Apple silicon preview ZIP / Windows x64 セットアップ・プレビュー ZIP、macOS Apple silicon プレビュー ZIP |
+| Preview / プレビュー | [1.3.0-alpha.11](https://github.com/woolen-yarn/kohdalab-iv/releases/tag/preview-v1.3.0-alpha.11) | Windows x64 Setup / preview ZIP; macOS Apple silicon preview ZIP / Windows x64 セットアップ・プレビュー ZIP、macOS Apple silicon プレビュー ZIP |
+
+| Preview package / プレビューパッケージ | Kohdalab | Personal / 個人ミラー |
+| --- | --- | --- |
+| Windows Setup | [Download](https://github.com/Kohdalab/kohdalab-iv/releases/download/preview-v1.3.0-alpha.11/kohdalab-iv-1.3.0-alpha.11-windows-x64-Setup.exe) | [Download](https://github.com/woolen-yarn/kohdalab-iv/releases/download/preview-v1.3.0-alpha.11/kohdalab-iv-1.3.0-alpha.11-windows-x64-Setup.exe) |
+| Windows portable | [Download](https://github.com/Kohdalab/kohdalab-iv/releases/download/preview-v1.3.0-alpha.11/kohdalab-iv-1.3.0-alpha.11-windows-x64-preview.zip) | [Download](https://github.com/woolen-yarn/kohdalab-iv/releases/download/preview-v1.3.0-alpha.11/kohdalab-iv-1.3.0-alpha.11-windows-x64-preview.zip) |
+| Mac portable (Apple silicon) | [Download](https://github.com/Kohdalab/kohdalab-iv/releases/download/preview-v1.3.0-alpha.11/kohdalab-iv-1.3.0-alpha.11-macos-arm64-preview.zip) | [Download](https://github.com/woolen-yarn/kohdalab-iv/releases/download/preview-v1.3.0-alpha.11/kohdalab-iv-1.3.0-alpha.11-macos-arm64-preview.zip) |
+| Source build kit / ソースビルドキット | [Download](https://github.com/Kohdalab/kohdalab-iv/releases/download/preview-v1.3.0-alpha.11/kohdalab-iv-1.3.0-alpha.11-build-kit.zip) | [Download](https://github.com/woolen-yarn/kohdalab-iv/releases/download/preview-v1.3.0-alpha.11/kohdalab-iv-1.3.0-alpha.11-build-kit.zip) |
 
 Rust and Python are not required to run the packaged application. Current Windows
 artifacts are unsigned; download packages and checksums together from Releases.
@@ -71,6 +78,40 @@ USB/USBTMC/GPIB、公式 VISA、アダプター要件、モデルごとの制約
 Python/Jupyter access: [client guide](bindings/python/README.md). Detailed measurement semantics: [application guide](docs/guides/application-guide.md).
 
 Python・Jupyter からの利用は[クライアントガイド](bindings/python/README.md)、詳細な測定仕様は[アプリケーションガイド](docs/guides/application-guide.md)を参照してください。
+
+## Sweep planning and protection / スイープと保護
+
+Sweep paths use the entered endpoints: `linear` follows Start → End,
+`round_trip` follows Start → End → Start, and `zero_centered` follows
+0 → End → Start → 0. Zero-centered sweeps require zero inside the interval
+(or at either endpoint); they never mirror an endpoint to the opposite sign.
+For example, Start −1.6 mV and End 0 mV gives 0 → −1.6 → 0 mV.
+Use linear or round_trip for an interval entirely above or below zero.
+Each segment reaches its exact endpoint; its last interval may be shorter than
+Step. Custom points retain their entered order, including duplicates.
+The Run preview shows the effective Step, rounding, point count and route.
+
+スイープは入力した端点を使います。`linear` は Start → End、`round_trip` は
+Start → End → Start、`zero_centered` は 0 → End → Start → 0 の順です。
+ゼロ中心は区間内または端点にゼロを含む必要があり、入力値を反対符号へ反転しません。
+Start −1.6 mV・End 0 mV なら 0 → −1.6 → 0 mV です。
+ゼロを含まない区間では linear または round_trip を使ってください。
+各区間は端点に正確に到達し、最後の間隔だけ Step より短くなる場合があります。
+Custom は重複を含めて入力順を保持します。Run のプレビューには実効 Step・丸め・点数・経路を表示します。
+
+Active-sweep protection checks every acquired meter reading, including live
+readings during ramps and settling. On software compliance, source OFF is
+requested before further instrument queries or saving; protection cleanup does
+not ramp with output enabled. Normal Stop still returns to zero before OFF.
+Before enabling output, the engine verifies source function, programmed range,
+zero setting and output ON. This common policy covers both supported sources
+and every supported meter. See [safety notes](SAFETY.md) for limits.
+
+実行中はランプ・待機中のライブ測定も含め、取得した各読み値を保護判定します。
+ソフトウェア制限に達した場合は、追加の機器照会や保存より先に出力 OFF を要求し、
+出力を入れたまま終了ランプを実行しません。通常の Stop はゼロへ戻してから OFF にします。
+出力開始時は機能・設定レンジ・ゼロ設定・ON 状態を確認します。
+この共通処理を対応する両ソースと全メーターに適用します。制約は[安全上の注意](SAFETY.md)を参照してください。
 
 ## Development / 開発
 

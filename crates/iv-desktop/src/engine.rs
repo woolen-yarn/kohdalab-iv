@@ -1,3 +1,4 @@
+mod safety;
 mod workflow;
 use crate::compatibility::{CSV_SCHEMA, RUN_METADATA_SCHEMA_VERSION};
 use crate::protocol::{Command, Snapshot};
@@ -696,6 +697,91 @@ struct RecordedObservation {
     timing: HostTiming,
 }
 
+// A compliance reading must be preserved, but persisting it must never delay
+// the emergency output-off request. Keep the exact helper exchanges in memory
+// until protection has completed, then write the provenance record.
+struct DeferredMeterEvidence {
+    reply: Option<String>,
+    query_error: Option<String>,
+    timing: HostTiming,
+    exchanges: Vec<TransportExchange>,
+}
+
+fn query_without_audit(
+    pair: &mut DevicePair,
+    role: Role,
+    command: &str,
+    begin: Instant,
+) -> (Result<String, String>, Vec<TransportExchange>, HostTiming) {
+    let (started_at_utc, started_elapsed_s) = HostTiming::start(begin);
+    let recorded = pair.query_recorded(role, command);
+    let timing = HostTiming::finish(begin, started_at_utc, started_elapsed_s);
+    (recorded.result, recorded.exchanges, timing)
+}
+
+fn append_meter_reading_audit(
+    audit: &mut RawWriter,
+    point_index: usize,
+    reading_index: Option<u32>,
+    reply: Option<&str>,
+    query_error: Option<&str>,
+    exchanges: &[TransportExchange],
+    timing: &HostTiming,
+) -> Result<(), String> {
+    append_transport_exchanges(
+        audit,
+        "meter",
+        "READ?",
+        point_index,
+        reading_index,
+        exchanges,
+        timing,
+    )?;
+    audit.append(&serde_json::json!({
+        "event":"meter_reading", "point_index":point_index,
+        "reading_index":reading_index, "command":"READ?", "normalized_response":reply,
+        "query_error":query_error, "error":query_error,
+        "parsed_value":reply.and_then(|reply| reply.trim().parse::<f64>().ok()),
+        "timing":timing.json(),
+    }))
+}
+
+// This intentionally attempts audit persistence even when the protection stop
+// fails. The caller gets every failure, while the next instrument operation
+// after the triggering READ remains source output-off.
+fn protect_and_persist_meter_evidence(
+    pair: Option<&mut DevicePair>,
+    state: &mut Snapshot,
+    audit: &mut RawWriter,
+    point_index: usize,
+    reading_index: Option<u32>,
+    evidence: DeferredMeterEvidence,
+) -> Result<(), String> {
+    let protection_error = protection_output_off(pair, state).err();
+    let evidence_error = append_meter_reading_audit(
+        audit,
+        point_index,
+        reading_index,
+        evidence.reply.as_deref(),
+        evidence.query_error.as_deref(),
+        &evidence.exchanges,
+        &evidence.timing,
+    )
+    .err();
+    let mut errors = Vec::new();
+    if let Some(error) = protection_error {
+        errors.push(format!("Protection stop failed: {error}"));
+    }
+    if let Some(error) = evidence_error {
+        errors.push(format!("Could not persist meter evidence: {error}"));
+    }
+    if errors.is_empty() {
+        Ok(())
+    } else {
+        Err(errors.join(" · "))
+    }
+}
+
 fn read_level(
     pair: &mut DevicePair,
     audit: &mut RawWriter,
@@ -722,7 +808,7 @@ fn read_level(
             return Ok(Some(value));
         }
     }
-    Ok(None)
+    Err("Source level could not be read back as a finite number. Measurement stopped; check the source and reconnect.".into())
 }
 
 fn query_with_audit(
@@ -1256,6 +1342,33 @@ fn clean_output(
     }
 }
 
+// Protection is deliberately separate from normal Stop: no ramp or unrelated
+// instrument queries may precede the source OFF request after a limit trip.
+fn protection_output_off(
+    pair: Option<&mut DevicePair>,
+    state: &mut Snapshot,
+) -> Result<(), String> {
+    state.activity = Activity::VerifyingOutputOff;
+    state.output = OutputState::Unknown;
+    if state.source_simulation {
+        state.output = OutputState::Off;
+        return Ok(());
+    }
+    let report = pair
+        .ok_or("Source transport unavailable during protection stop")?
+        .force_output_off()?;
+    if !report.output_off_verified {
+        return Err("Protection stop could not verify source output OFF".into());
+    }
+    state.output = OutputState::Off;
+    if let Some(warning) = report.zeroing_warning {
+        state.warnings.push(format!(
+            "Protection stop: output OFF verified; zeroing warning: {warning}"
+        ));
+    }
+    Ok(())
+}
+
 // One owner serializes device I/O. Live samples use the already configured
 // sweep NPLC and never enter the CSV or resistance fit.
 // Resolution is fixed by range + the NPLC/function configured for this run.
@@ -1299,6 +1412,8 @@ struct SweepMonitor<'a> {
     last: Instant,
     source_resolution: Option<f64>,
     meter_resolution: MeterResolutionCache,
+    compliance_stop: Option<Record>,
+    compliance_evidence: Option<DeferredMeterEvidence>,
 }
 impl SweepMonitor<'_> {
     fn record(&self, level: f64) -> Record {
@@ -1324,13 +1439,65 @@ impl SweepMonitor<'_> {
     fn acquire(&mut self, pair: Option<&mut DevicePair>, level: f64) -> Result<Record, String> {
         let mut record = self.record(level);
         if let Some(device) = pair {
-            let measured = monitor_query(device, Role::Meter, "READ?", self.control)?;
-            record.meter_value = measured
-                .trim()
-                .parse::<f64>()
-                .map_err(|_| "Invalid live meter reading")?;
+            if self.control.closed.load(Ordering::Acquire)
+                || self.control.off.load(Ordering::Acquire)
+                || self
+                    .control
+                    .heartbeat
+                    .lock()
+                    .map_or(true, |h| h.elapsed() > Duration::from_secs(2))
+            {
+                return Err("Live acquisition interrupted".into());
+            }
+            let (result, exchanges, timing) =
+                query_without_audit(device, Role::Meter, "READ?", self.begin);
+            let reply = match result {
+                Ok(reply) => reply,
+                Err(error) => {
+                    self.compliance_evidence = Some(DeferredMeterEvidence {
+                        reply: None,
+                        query_error: Some(error.clone()),
+                        timing,
+                        exchanges,
+                    });
+                    return Err(format!("Live meter READ failed: {error}"));
+                }
+            };
+            record.meter_value = match reply.trim().parse::<f64>() {
+                Ok(value) => value,
+                Err(_) => {
+                    self.compliance_evidence = Some(DeferredMeterEvidence {
+                        reply: Some(reply),
+                        query_error: Some("Invalid live meter reading".into()),
+                        timing,
+                        exchanges,
+                    });
+                    return Err("Invalid live meter reading".into());
+                }
+            };
             if !record.meter_value.is_finite() || record.meter_value.abs() > 1e30 {
+                self.compliance_evidence = Some(DeferredMeterEvidence {
+                    reply: Some(reply),
+                    query_error: Some("Meter overload during live settling acquisition".into()),
+                    timing,
+                    exchanges,
+                });
                 return Err("Meter overload during live settling acquisition".into());
+            }
+            // Check every conversion before doing any further instrument I/O.
+            if record.meter_value.abs() >= self.config.compliance {
+                record.compliance = true;
+                record.status = "compliance".into();
+                record.source_readback = None;
+                record.source_resolution = self.source_resolution;
+                record.meter_resolution = None;
+                self.compliance_evidence = Some(DeferredMeterEvidence {
+                    reply: Some(reply),
+                    query_error: None,
+                    timing,
+                    exchanges,
+                });
+                return Ok(record);
             }
             let readback = monitor_query(device, Role::Source, ":SOUR:LEV?", self.control)?;
             let readback = readback
@@ -1357,6 +1524,10 @@ impl SweepMonitor<'_> {
             record.source_resource = model_label(Role::Source, &device.source_model);
             record.meter_resource = model_label(Role::Meter, &device.meter_model);
         }
+        record.compliance = record.meter_value.abs() >= self.config.compliance;
+        if record.compliance {
+            record.status = "compliance".into();
+        }
         Ok(record)
     }
 
@@ -1366,6 +1537,8 @@ impl SweepMonitor<'_> {
         mut pair: Option<&mut DevicePair>,
         level: f64,
         state: &mut Snapshot,
+        mut audit: Option<&mut RawWriter>,
+        point_index: usize,
     ) -> Result<bool, String> {
         if seconds <= 0.0 {
             return Ok(!self.control.cancelled());
@@ -1386,11 +1559,75 @@ impl SweepMonitor<'_> {
                 && end.saturating_duration_since(Instant::now()) >= budget
             {
                 self.last = Instant::now();
-                let reading = self.acquire(pair.as_deref_mut(), level);
+                let mut reading = match self.acquire(pair.as_deref_mut(), level) {
+                    Ok(reading) => reading,
+                    Err(read_error) => {
+                        if let Some(evidence) = self.compliance_evidence.take() {
+                            let stop_result = if let Some(audit) = audit.as_deref_mut() {
+                                protect_and_persist_meter_evidence(
+                                    pair.as_deref_mut(),
+                                    state,
+                                    audit,
+                                    point_index,
+                                    None,
+                                    evidence,
+                                )
+                            } else {
+                                let protection_error =
+                                    protection_output_off(pair.as_deref_mut(), state).err();
+                                Err(match protection_error {
+                                    Some(error) => format!(
+                                        "Protection stop failed: {error} · Cannot persist live meter evidence without an audit writer"
+                                    ),
+                                    None => {
+                                        "Cannot persist live meter evidence without an audit writer"
+                                            .into()
+                                    }
+                                })
+                            };
+                            return Err(match stop_result {
+                                Ok(()) => read_error,
+                                Err(stop_error) => format!("{read_error} · {stop_error}"),
+                            });
+                        }
+                        return Err(read_error);
+                    }
+                };
+                if reading.compliance {
+                    reading.timestamp = timestamp();
+                    self.compliance_stop = Some(reading.clone());
+                    if let Some(evidence) = self.compliance_evidence.take() {
+                        let audit = audit.as_deref_mut().ok_or_else(|| {
+                            let protection_error =
+                                protection_output_off(pair.as_deref_mut(), state).err();
+                            match protection_error {
+                                Some(error) => format!(
+                                    "Protection stop failed: {error} · Cannot persist live compliance provenance without an audit writer"
+                                ),
+                                None => "Cannot persist live compliance provenance without an audit writer".into(),
+                            }
+                        })?;
+                        protect_and_persist_meter_evidence(
+                            pair.as_deref_mut(),
+                            state,
+                            audit,
+                            point_index,
+                            None,
+                            evidence,
+                        )?;
+                        audit.append(&serde_json::json!({
+                            "event":"live_compliance_stop", "point_index":point_index,
+                            "trigger_value":reading.meter_value,
+                            "software_limit":self.config.compliance,
+                        }))?;
+                    }
+                    self.publish(reading, state);
+                    return Ok(false);
+                }
                 if self.control.cancelled() {
                     return Ok(false);
                 }
-                self.publish(reading?, state);
+                self.publish(reading, state);
             } else {
                 std::thread::sleep(
                     Duration::from_millis(10).min(end.saturating_duration_since(Instant::now())),
@@ -1494,7 +1731,8 @@ fn execute(
     };
     let provenance_policy = serde_json::json!({
         "schema":"raw_csv_v1",
-        "numeric_precision":"main CSV uses shortest f64 round-trip scientific notation; raw instrument replies are retained verbatim in raw.csv",
+        "coverage":"audited acquisition and configuration operations; emergency output-off/recovery is represented by its final verification result, not a complete wire trace",
+        "numeric_precision":"main CSV uses shortest f64 round-trip scientific notation; replies from audited operations are retained verbatim in raw.csv",
         "resolution":"recorded only when an existing display query supplies it; otherwise null/unknown",
         "uncertainty":"unknown; neither raw text nor resolution is treated as accuracy or uncertainty",
         "simulation":"synthetic records have no fabricated hardware replies",
@@ -1556,6 +1794,8 @@ fn execute(
         last: Instant::now(),
         source_resolution: None,
         meter_resolution: MeterResolutionCache::default(),
+        compliance_stop: None,
+        compliance_evidence: None,
     };
     let mut display_settings_changes = Vec::new();
     let mut instrument_status_events = Vec::new();
@@ -1597,14 +1837,49 @@ fn execute(
                 "event":"source_range", "command":range_query, "normalized_response":range.reply,
                 "parsed_range":positive_reading(&range.reply), "timing":range.timing.json(),
             }))?;
-            actual_source_resolution = positive_reading(&range.reply)
-                .and_then(|range| source_resolution(&device.source_model, config.mode, range));
+            let resolution = safety::verify_range(
+                &device.source_model,
+                config.mode,
+                planned.source_range,
+                &range.reply,
+            )?;
+            let function = query_with_audit(
+                device,
+                Role::Source,
+                ":SOUR:FUNC?",
+                &mut audit,
+                0,
+                None,
+                begin,
+            )?;
+            audit.append(&serde_json::json!({
+                "event":"source_function", "command":":SOUR:FUNC?",
+                "normalized_response":function.reply, "timing":function.timing.json(),
+            }))?;
+            safety::verify_function(&function.reply, config.mode)?;
+            let zero = read_level(device, &mut audit, 0, begin)?
+                .ok_or("Source zero level is unavailable")?;
+            safety::verify_zero(zero, resolution)?;
+            actual_source_resolution = Some(resolution);
             live.source_resolution = actual_source_resolution;
             if control.cancelled() {
                 stopped = true;
                 return Ok(());
             }
-            device.write(Role::Source, ":OUTP ON")?;
+            // Once ON is requested, the previously verified OFF state is no
+            // longer authoritative while a potentially slow query is pending.
+            state.output = OutputState::Unknown;
+            publish(latest, state);
+            write_with_audit(device, Role::Source, ":OUTP ON", &mut audit, begin)?;
+            let output =
+                query_with_audit(device, Role::Source, ":OUTP?", &mut audit, 0, None, begin)?;
+            audit.append(&serde_json::json!({
+                "event":"source_output_on_confirmation", "command":":OUTP?",
+                "normalized_response":output.reply, "timing":output.timing.json(),
+            }))?;
+            if safety::output_state(&output.reply)? != OutputState::On {
+                return Err("Source did not confirm output ON. Measurement stopped and output OFF will be verified.".into());
+            }
         }
         state.output = OutputState::On;
         state.phase = Phase::Running;
@@ -1629,7 +1904,14 @@ fn execute(
                     || control.cancelled(),
                     |level| {
                         set_level(device, level)?;
-                        live.wait(config.ramp_wait_s, Some(device), level, state)
+                        live.wait(
+                            config.ramp_wait_s,
+                            Some(device),
+                            level,
+                            state,
+                            Some(&mut audit),
+                            point.point_index,
+                        )
                     },
                 )? {
                     stopped = true;
@@ -1646,7 +1928,14 @@ fn execute(
             } else {
                 config.settle_s
             };
-            if !live.wait(settling, pair.as_deref_mut(), level, state)? {
+            if !live.wait(
+                settling,
+                pair.as_deref_mut(),
+                level,
+                state,
+                Some(&mut audit),
+                point.point_index,
+            )? {
                 stopped = true;
                 break;
             }
@@ -1677,41 +1966,125 @@ fn execute(
                         break;
                     }
                     live.last = Instant::now();
-                    let observation = query_with_audit(
-                        device,
-                        Role::Meter,
-                        "READ?",
-                        &mut audit,
-                        point.point_index,
-                        Some(reading_index),
-                        begin,
-                    )?;
-                    let text = observation.reply.clone();
+                    // Retain the physical exchange in memory first. A limit
+                    // trip must request source OFF before audit/CSV I/O, but
+                    // the triggering measurement still belongs in raw evidence.
+                    let (result, exchanges, timing) =
+                        query_without_audit(device, Role::Meter, "READ?", begin);
+                    let text = match result {
+                        Ok(text) => text,
+                        Err(error) => {
+                            let stop_result = protect_and_persist_meter_evidence(
+                                Some(device),
+                                state,
+                                &mut audit,
+                                point.point_index,
+                                Some(reading_index),
+                                DeferredMeterEvidence {
+                                    reply: None,
+                                    query_error: Some(error.clone()),
+                                    timing,
+                                    exchanges,
+                                },
+                            );
+                            return Err(match stop_result {
+                                Ok(()) => format!("Meter READ failed: {error}"),
+                                Err(stop_error) => {
+                                    format!("Meter READ failed: {error} · {stop_error}")
+                                }
+                            });
+                        }
+                    };
                     let parsed = text.trim().parse::<f64>();
-                    audit.append(&serde_json::json!({
-                        "event":"meter_reading", "point_index":point.point_index,
-                        "reading_index":reading_index, "command":"READ?", "normalized_response":text,
-                        "parsed_value":parsed.as_ref().ok(),
-                        "timing":observation.timing.json(),
-                    }))?;
-                    let measured = parsed.map_err(|_| format!("Invalid meter reading: {text}"))?;
+                    let measured = match parsed {
+                        Ok(measured) => measured,
+                        Err(_) => {
+                            let stop_result = protect_and_persist_meter_evidence(
+                                Some(device),
+                                state,
+                                &mut audit,
+                                point.point_index,
+                                Some(reading_index),
+                                DeferredMeterEvidence {
+                                    reply: Some(text.clone()),
+                                    query_error: Some("Invalid meter reading".into()),
+                                    timing,
+                                    exchanges,
+                                },
+                            );
+                            return Err(match stop_result {
+                                Ok(()) => format!("Invalid meter reading: {text}"),
+                                Err(stop_error) => {
+                                    format!("Invalid meter reading: {text} · {stop_error}")
+                                }
+                            });
+                        }
+                    };
                     if !measured.is_finite() || measured.abs() > 1e30 {
-                        return Err("Meter reported overload or an invalid reading.".into());
+                        let stop_result = protect_and_persist_meter_evidence(
+                            Some(device),
+                            state,
+                            &mut audit,
+                            point.point_index,
+                            Some(reading_index),
+                            DeferredMeterEvidence {
+                                reply: Some(text.clone()),
+                                query_error: Some(
+                                    "Meter reported overload or an invalid reading.".into(),
+                                ),
+                                timing,
+                                exchanges,
+                            },
+                        );
+                        return Err(match stop_result {
+                            Ok(()) => "Meter reported overload or an invalid reading.".into(),
+                            Err(stop_error) => format!(
+                                "Meter reported overload or an invalid reading. · {stop_error}"
+                            ),
+                        });
                     }
                     if first_conversion_timing.is_none() {
-                        first_conversion_timing = Some(observation.timing.clone());
+                        first_conversion_timing = Some(timing.clone());
                     }
-                    last_conversion_timing = Some(observation.timing.clone());
+                    last_conversion_timing = Some(timing.clone());
                     value += measured / config.average_count as f64;
                     readings_completed += 1;
                     meter_stats.add(measured);
                     // Do not allow averaging to hide an individual over-limit sample.
                     if measured.abs() >= config.compliance {
                         sample_limit_hit = true;
+                        compliance_hit = true;
                         trigger_value = measured;
                         resolution_known = false;
+                        let stop_result = protect_and_persist_meter_evidence(
+                            Some(device),
+                            state,
+                            &mut audit,
+                            point.point_index,
+                            Some(reading_index),
+                            DeferredMeterEvidence {
+                                reply: Some(text),
+                                query_error: None,
+                                timing,
+                                exchanges,
+                            },
+                        );
+                        if let Err(error) = stop_result {
+                            return Err(format!(
+                                "Software compliance limit reached ({measured:.12e}) · {error}"
+                            ));
+                        }
                         break;
                     }
+                    append_meter_reading_audit(
+                        &mut audit,
+                        point.point_index,
+                        Some(reading_index),
+                        Some(&text),
+                        None,
+                        &exchanges,
+                        &timing,
+                    )?;
                     if control.cancelled() {
                         stopped = true;
                         break;
@@ -1799,7 +2172,14 @@ fn execute(
                 readings_completed_for_record = readings_completed;
                 let signal_timing =
                     last_conversion_timing.ok_or("No meter conversion completed.")?;
-                let readback = read_level(device, &mut audit, point.point_index, begin)?;
+                // force_output_off may reset the programmed source level. Do
+                // not issue a post-trip source query or save that zero as the
+                // value read during the conversion.
+                let readback = if sample_limit_hit {
+                    None
+                } else {
+                    read_level(device, &mut audit, point.point_index, begin)?
+                };
                 let mut record = simulate_record(config, point, signal_timing.completed_elapsed_s);
                 record.source_set = level;
                 record.source_readback = readback;
@@ -1859,6 +2239,9 @@ fn execute(
             .into();
             record.run_id = run_id.clone();
             compliance_hit = record.compliance;
+            if compliance_hit && state.output != OutputState::Off {
+                protection_output_off(pair.as_deref_mut(), state)?;
+            }
             if !record.instrument_status.is_empty() {
                 instrument_status_events.push(serde_json::json!({"point_index":record.point.point_index,"instrument_status":record.instrument_status}));
             }
@@ -1916,14 +2299,35 @@ fn execute(
         }
         Ok(())
     })();
+    if let Some(record) = live.compliance_stop.take() {
+        compliance_hit = true;
+        instrument_status_events.push(serde_json::json!({
+            "event":"live_compliance_stop", "timestamp":record.timestamp,
+            "source_level":record.source_set, "trigger_value":record.meter_value,
+            "trigger_unit":if config.mode == Mode::Iv { "A" } else { "V" },
+            "software_limit":config.compliance, "saved_sweep_points":state.points
+        }));
+        // A live protection sample remains in the live display/run metadata;
+        // it must not invent a saved sweep point or enter the resistance fit.
+        state.live = Some(record);
+    }
     state.phase = Phase::CleaningUp;
-    state.activity = Activity::ReturningToZero;
-    state.message = "Returning source to zero and verifying output off…".into();
+    state.activity = if compliance_hit {
+        Activity::VerifyingOutputOff
+    } else {
+        Activity::ReturningToZero
+    };
+    state.message = if compliance_hit {
+        "Protection stop: verifying source output off…"
+    } else {
+        "Returning source to zero and verifying output off…"
+    }
+    .into();
     publish(latest, state);
     clean_output(
         pair,
         state,
-        if work.is_ok() {
+        if work.is_ok() && !compliance_hit {
             Some((config, level))
         } else {
             None
@@ -2215,13 +2619,15 @@ mod tests {
             last: Instant::now() - Duration::from_secs(1),
             source_resolution: None,
             meter_resolution: MeterResolutionCache::default(),
+            compliance_stop: None,
+            compliance_evidence: None,
         };
         let mut state = Snapshot::default();
-        assert!(monitor.wait(0.0, None, 0.0, &mut state).unwrap());
+        assert!(monitor.wait(0.0, None, 0.0, &mut state, None, 0).unwrap());
         assert!(state.live.is_none());
         assert!(latest.pending.lock().unwrap().snapshot.is_none());
         control.stop.store(true, Ordering::Release);
-        assert!(!monitor.wait(0.0, None, 0.0, &mut state).unwrap());
+        assert!(!monitor.wait(0.0, None, 0.0, &mut state, None, 0).unwrap());
     }
 
     #[test]
