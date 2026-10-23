@@ -659,6 +659,64 @@ impl DevicePair {
         Ok(())
     }
 
+    /// Executes the ordinary write path while retaining the physical helper
+    /// exchanges. It adds no I/O beyond [`Self::write`].
+    pub fn write_recorded(&mut self, role: Role, command: &str) -> RecordedQuery {
+        if let Err(error) = self.ensure_usable() {
+            return RecordedQuery {
+                result: Err(error),
+                exchanges: Vec::new(),
+            };
+        }
+        let model = self.model(role).to_owned();
+        let commands = match drivers::write_commands(role, &model, self.meter_usb(), command) {
+            Ok(commands) => commands,
+            Err(error) => {
+                return RecordedQuery {
+                    result: Err(error),
+                    exchanges: Vec::new(),
+                };
+            }
+        };
+        let endpoint = match self.endpoint(role) {
+            Ok(endpoint) => endpoint.clone(),
+            Err(error) => {
+                return RecordedQuery {
+                    result: Err(error),
+                    exchanges: Vec::new(),
+                };
+            }
+        };
+        let mut exchanges = Vec::new();
+        for wire_command in commands {
+            let terminated = drivers::terminated(&wire_command);
+            let result = endpoint.request("WRITE", &terminated);
+            let (response, error) = match &result {
+                Ok(response) => (Some(response.clone()), None),
+                Err(error) => (None, Some(error.clone())),
+            };
+            exchanges.push(TransportExchange {
+                operation: "WRITE".into(),
+                command: terminated,
+                response,
+                error,
+            });
+            if let Err(error) = result {
+                return RecordedQuery {
+                    result: Err(error),
+                    exchanges,
+                };
+            }
+        }
+        if drivers::source_write_marks_adc_discard(role, &self.meter_model, command) {
+            self.meter_discard = true;
+        }
+        RecordedQuery {
+            result: Ok(String::new()),
+            exchanges,
+        }
+    }
+
     pub fn query(&mut self, role: Role, command: &str) -> Result<String, String> {
         self.ensure_usable()?;
         let endpoint = self.endpoint(role)?.clone();

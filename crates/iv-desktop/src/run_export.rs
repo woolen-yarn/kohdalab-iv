@@ -8,7 +8,7 @@ use std::fs::{self, File, OpenOptions};
 use std::io;
 use std::path::Path;
 
-/// Copies a completed run's CSV and its `.run.json` / `.readings.jsonl` companions to a new path.
+/// Copies a completed run's CSV and its `.run.json` / `.raw.csv` companions to a new path.
 ///
 /// Existing destination files are never overwritten.  The source CSV and its
 /// metadata are only read.  If writing either destination file fails, this
@@ -20,8 +20,6 @@ pub fn save_run_copy(source: &Path, destination: &Path) -> Result<(), String> {
 
     let source_metadata = source.with_extension("run.json");
     let destination_metadata = destination.with_extension("run.json");
-    let source_audit = source.with_extension("readings.jsonl");
-    let destination_audit = destination.with_extension("readings.jsonl");
     if !destination
         .extension()
         .is_some_and(|ext| ext.eq_ignore_ascii_case("csv"))
@@ -36,7 +34,24 @@ pub fn save_run_copy(source: &Path, destination: &Path) -> Result<(), String> {
         )
     })?;
     let mut metadata = parse_completed_metadata(&metadata_bytes, &source_metadata)?;
-    let audit_required = metadata.get("readings_audit").is_some();
+    // Historical runs keep their JSONL sidecar; new runs use the tabular raw
+    // evidence sidecar. Save never rewrites either format.
+    let audit_key = if metadata.get("raw_csv").is_some() {
+        "raw_csv"
+    } else {
+        "readings_audit"
+    };
+    let source_audit = if audit_key == "raw_csv" {
+        source.with_extension("raw.csv")
+    } else {
+        source.with_extension("readings.jsonl")
+    };
+    let destination_audit = if audit_key == "raw_csv" {
+        destination.with_extension("raw.csv")
+    } else {
+        destination.with_extension("readings.jsonl")
+    };
+    let audit_required = metadata.get(audit_key).is_some();
 
     if destination.exists() {
         return Err(format!(
@@ -85,13 +100,17 @@ pub fn save_run_copy(source: &Path, destination: &Path) -> Result<(), String> {
     metadata["csv"] = serde_json::Value::String(destination_display);
     metadata["exported_from"] = serde_json::Value::String(source_display);
     if audit_required {
-        metadata["readings_audit"]["path"] =
+        metadata[audit_key]["path"] =
             serde_json::Value::String(destination_audit.display().to_string());
-        metadata["readings_audit"]["filename"] = serde_json::Value::String(
+        metadata[audit_key]["filename"] = serde_json::Value::String(
             destination_audit
                 .file_name()
                 .and_then(|value| value.to_str())
-                .unwrap_or("readings.jsonl")
+                .unwrap_or(if audit_key == "raw_csv" {
+                    "raw.csv"
+                } else {
+                    "readings.jsonl"
+                })
                 .to_owned(),
         );
     }
@@ -149,6 +168,15 @@ pub fn save_run_copy(source: &Path, destination: &Path) -> Result<(), String> {
                     destination_audit.display()
                 )
             })?;
+        }
+
+        if metadata.get("file_hashes").is_some() {
+            metadata["file_hashes"] = serde_json::json!({
+                "csv_sha256": crate::raw_csv::file_sha256(destination)?,
+                "raw_csv_sha256": if audit_key == "raw_csv" {
+                    Some(crate::raw_csv::file_sha256(&destination_audit)?)
+                } else { None },
+            });
         }
 
         let mut metadata_file = OpenOptions::new()
@@ -413,6 +441,47 @@ mod tests {
             fs::read(destination.with_extension("readings.jsonl")).unwrap(),
             b"existing audit"
         );
+        fs::remove_dir_all(directory).unwrap();
+    }
+
+    #[test]
+    fn raw_csv_export_recomputes_destination_hashes() {
+        let directory = temp_dir("hashes");
+        let source = directory.join("source.csv");
+        fs::write(&source, b"run_id,point_index\nrun,1\n").unwrap();
+        fs::write(
+            source.with_extension("raw.csv"),
+            b"run_id,event_type\nrun,reading\n",
+        )
+        .unwrap();
+        let metadata = serde_json::json!({
+            "schema_version": 6, "in_progress": false,
+            "csv": source.display().to_string(),
+            "config": {}, "requested_config": {},
+            "outcome": {"path": source.display().to_string(), "phase": "Completed"},
+            "raw_csv": {"path": source.with_extension("raw.csv").display().to_string(), "schema": "raw_csv_v1"},
+            "file_hashes": {"csv_sha256": "old", "raw_csv_sha256": "old"}
+        });
+        fs::write(
+            source.with_extension("run.json"),
+            serde_json::to_vec(&metadata).unwrap(),
+        )
+        .unwrap();
+        let destination = directory.join("copy.csv");
+        save_run_copy(&source, &destination).unwrap();
+        let copied: serde_json::Value =
+            serde_json::from_slice(&fs::read(destination.with_extension("run.json")).unwrap())
+                .unwrap();
+        assert_eq!(
+            copied["file_hashes"]["csv_sha256"],
+            crate::raw_csv::file_sha256(&destination).unwrap()
+        );
+        assert_eq!(
+            copied["file_hashes"]["raw_csv_sha256"],
+            crate::raw_csv::file_sha256(&destination.with_extension("raw.csv")).unwrap()
+        );
+        assert_eq!(copied["raw_csv"]["filename"], "copy.raw.csv");
+        assert!(copied.get("readings_audit").is_none());
         fs::remove_dir_all(directory).unwrap();
     }
 

@@ -7,6 +7,22 @@ use std::{
 };
 
 fn main() {
+    println!("cargo:rerun-if-env-changed=KOHDALAB_GIT_COMMIT");
+    let commit = env::var("KOHDALAB_GIT_COMMIT")
+        .ok()
+        .filter(|value| !value.trim().is_empty())
+        .or_else(|| {
+            Command::new("git")
+                .args(["rev-parse", "HEAD"])
+                .output()
+                .ok()
+                .filter(|output| output.status.success())
+                .and_then(|output| String::from_utf8(output.stdout).ok())
+        });
+    if let Some(commit) = commit {
+        println!("cargo:rustc-env=KOHDALAB_GIT_COMMIT={}", commit.trim());
+    }
+
     let manifest = PathBuf::from(env::var_os("CARGO_MANIFEST_DIR").unwrap());
     let icon = manifest.join("../../assets/kohdalab-iv.ico");
     let template = manifest.join("../../native/windows_version.rc");

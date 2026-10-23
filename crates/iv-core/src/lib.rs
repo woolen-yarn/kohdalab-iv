@@ -27,12 +27,12 @@ pub use measurements::{
     measurement_definition, parameter_definition, sweep_definitions,
 };
 
-/// Native result schema: acquired values, origins, sweep identity and status.
+/// Analysis result schema: one row per saved sweep point.
 pub const CSV_FIELDS: &[&str] = &[
+    "run_id",
+    "point_index",
     "timestamp",
     "elapsed_s",
-    "point_index",
-    "repeat_index",
     "sweep_index",
     "direction",
     "target_value",
@@ -41,8 +41,12 @@ pub const CSV_FIELDS: &[&str] = &[
     "current_A",
     "voltage_origin",
     "current_origin",
+    "readings_requested",
+    "readings_completed",
+    "meter_stddev",
+    "meter_unit",
     "software_limit_hit",
-    "status",
+    "quality_flags",
 ];
 
 const MAX_POINTS: usize = 1_000_000;
@@ -90,6 +94,9 @@ impl Pattern {
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct RunConfig {
+    /// Optional user supplied sample and experiment context retained in run metadata.
+    #[serde(default, skip_serializing_if = "serde_json::Map::is_empty")]
+    pub experiment: serde_json::Map<String, serde_json::Value>,
     /// TOML source profile used to validate and quantize this run.
     ///
     /// Older saved configurations omit this field and therefore retain the
@@ -136,6 +143,7 @@ fn default_meter_model() -> String {
 impl Default for RunConfig {
     fn default() -> Self {
         Self {
+            experiment: serde_json::Map::new(),
             source_model: default_source_model(),
             meter_model: default_meter_model(),
             mode: Mode::Iv,
@@ -745,6 +753,9 @@ pub fn plan(config: &RunConfig) -> Result<Plan, String> {
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Record {
+    /// UUID shared by the analysis CSV, raw CSV and run manifest.
+    #[serde(default)]
+    pub run_id: String,
     pub timestamp: String,
     pub elapsed_s: f64,
     pub point: SweepPoint,
@@ -765,6 +776,17 @@ pub struct Record {
     pub instrument_status: String,
     pub source_resource: String,
     pub meter_resource: String,
+    /// Requested and accepted individual meter readings for this point.
+    #[serde(default)]
+    pub readings_requested: u32,
+    #[serde(default)]
+    pub readings_completed: Option<u32>,
+    /// Sample standard deviation (ddof=1) of accepted physical meter readings.
+    #[serde(default)]
+    pub meter_stddev: Option<f64>,
+    /// Explicit flags for analysis.  `status` remains available to IPC clients.
+    #[serde(default)]
+    pub quality_flags: String,
 }
 
 impl Record {
@@ -830,7 +852,7 @@ impl CsvWriter {
 fn fill_native_csv_values(record: &Record, fields: &mut [String; CSV_FIELDS.len()]) {
     let (voltage, current, voltage_origin, current_origin) = record.electrical_values();
     for (index, value) in [
-        (1, record.elapsed_s),
+        (3, record.elapsed_s),
         (6, record.point.target),
         (8, voltage),
         (9, current),
@@ -838,21 +860,39 @@ fn fill_native_csv_values(record: &Record, fields: &mut [String; CSV_FIELDS.len(
         shortest_sci_into(&mut fields[index], value);
     }
     for (index, value) in [
-        (2, record.point.point_index),
-        (3, record.point.repeat_index as usize),
+        (1, record.point.point_index),
         (4, record.point.sweep_index as usize),
+        (12, record.readings_requested as usize),
     ] {
         fields[index].clear();
         write!(&mut fields[index], "{value}").expect("writing to String");
     }
     for (index, value) in [
-        (0, record.timestamp.as_str()),
+        (0, record.run_id.as_str()),
+        (2, record.timestamp.as_str()),
         (5, record.point.direction.as_str()),
         (7, if record.mode == Mode::Iv { "V" } else { "A" }),
         (10, voltage_origin),
         (11, current_origin),
-        (12, if record.compliance { "true" } else { "false" }),
-        (13, record.status.as_str()),
+        (
+            13,
+            record
+                .readings_completed
+                .map(|value| value.to_string())
+                .as_deref()
+                .unwrap_or(""),
+        ),
+        (
+            14,
+            record
+                .meter_stddev
+                .map(|value| format!("{value:e}"))
+                .as_deref()
+                .unwrap_or(""),
+        ),
+        (15, if record.mode == Mode::Iv { "A" } else { "V" }),
+        (16, if record.compliance { "true" } else { "false" }),
+        (17, record.quality_flags.as_str()),
     ] {
         fields[index].clear();
         fields[index].push_str(value);
@@ -871,6 +911,7 @@ pub fn simulate_record(config: &RunConfig, point: &SweepPoint, elapsed_s: f64) -
         Mode::Vi => (point.target, point.target * 1_000.0, Some(point.target)),
     };
     Record {
+        run_id: String::new(),
         timestamp: "1970-01-01T00:00:00Z".into(),
         elapsed_s,
         point: point.clone(),
@@ -891,12 +932,33 @@ pub fn simulate_record(config: &RunConfig, point: &SweepPoint, elapsed_s: f64) -
         instrument_status: String::new(),
         source_resource: "source.simulated".into(),
         meter_resource: "meter.simulated".into(),
+        readings_requested: config.average_count,
+        readings_completed: None,
+        meter_stddev: None,
+        quality_flags: "simulated".into(),
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn run_config_experiment_roundtrips_and_empty_default_stays_omitted() {
+        let config = RunConfig::default();
+        let encoded = serde_json::to_value(&config).unwrap();
+        assert!(encoded.get("experiment").is_none());
+        let mut config = config;
+        config
+            .experiment
+            .insert("sample_id".into(), serde_json::json!("S-42"));
+        config
+            .experiment
+            .insert("units".into(), serde_json::json!({"length": "um"}));
+        let decoded: RunConfig =
+            serde_json::from_value(serde_json::to_value(&config).unwrap()).unwrap();
+        assert_eq!(decoded.experiment, config.experiment);
+    }
 
     #[test]
     fn unit_conversion_noise_is_snapped_before_sweep_generation() {
@@ -1263,6 +1325,11 @@ mod tests {
             record.meter_value = 1.2345678901234567e-12;
             record.compliance = true;
             record.status = "compliance".into();
+            record.run_id = "test-run".into();
+            record.readings_requested = 3;
+            record.readings_completed = Some(3);
+            record.meter_stddev = Some(1e-13);
+            record.quality_flags = "software_limit_hit".into();
             writer.append(&record).unwrap();
             expected.push(record);
         }
@@ -1275,14 +1342,14 @@ mod tests {
         let rows = reader.records().collect::<Result<Vec<_>, _>>().unwrap();
         assert_eq!(rows.len(), 2);
         for (row, record) in rows.iter().zip(expected) {
-            assert_eq!(row.len(), 14);
+            assert_eq!(row.len(), 18);
             let inspector = record.native_csv_values();
             assert_eq!(
                 row.iter().collect::<Vec<_>>(),
                 inspector.iter().map(String::as_str).collect::<Vec<_>>()
             );
-            assert_eq!(&row[0], record.timestamp);
-            assert_eq!(&row[3], "2");
+            assert_eq!(&row[0], record.run_id);
+            assert_eq!(&row[2], record.timestamp);
             assert_eq!(&row[4], "3");
             assert_eq!(&row[6], "2.12e-9");
             assert_eq!(&row[7], if record.mode == Mode::Iv { "V" } else { "A" });
@@ -1291,14 +1358,14 @@ mod tests {
             } else {
                 (record.meter_value, record.source_set)
             };
-            for index in [1, 6, 8, 9] {
+            for index in [3, 6, 8, 9] {
                 assert!(
                     row[index].contains('e'),
                     "floating CSV fields must use scientific notation"
                 );
             }
             for (index, value) in [
-                (1, record.elapsed_s),
+                (3, record.elapsed_s),
                 (6, record.point.target),
                 (8, voltage),
                 (9, current),
@@ -1324,8 +1391,8 @@ mod tests {
                     "source_setpoint"
                 }
             );
-            assert_eq!(&row[12], "true");
-            assert_eq!(&row[13], "compliance");
+            assert_eq!(&row[16], "true");
+            assert_eq!(&row[17], "software_limit_hit");
         }
         std::fs::remove_file(path).unwrap();
     }

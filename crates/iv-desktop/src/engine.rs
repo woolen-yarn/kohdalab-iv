@@ -1,10 +1,10 @@
 mod workflow;
 use crate::compatibility::{CSV_SCHEMA, RUN_METADATA_SCHEMA_VERSION};
 use crate::protocol::{Command, Snapshot};
+use crate::raw_csv::{self, RawWriter};
 use crate::state::{Activity, ErrorKind, Failure, OutputState, Phase};
 use iv_core::{CsvWriter, Mode, Record, RunConfig, plan, simulate_record};
 use iv_transport::{DevicePair, HelperPaths, Role, TransportExchange};
-use std::fs::{File, OpenOptions};
 use std::io::{BufRead, Read, Write};
 use std::path::Path;
 use std::sync::{
@@ -698,7 +698,7 @@ struct RecordedObservation {
 
 fn read_level(
     pair: &mut DevicePair,
-    audit: &mut ReadingsAudit,
+    audit: &mut RawWriter,
     point_index: usize,
     begin: Instant,
 ) -> Result<Option<f64>, String> {
@@ -725,68 +725,11 @@ fn read_level(
     Ok(None)
 }
 
-/// Append-only acquisition evidence.  This intentionally records transport text
-/// separately from the compact CSV: spelling and trailing zeroes are evidence of
-/// what the instrument returned, while the CSV remains a stable numeric table.
-struct ReadingsAudit {
-    path: std::path::PathBuf,
-    file: File,
-}
-
-impl ReadingsAudit {
-    fn create(path: &Path, start: &serde_json::Value) -> Result<Self, String> {
-        Self::create_initialized(path, |audit| audit.append(start))
-    }
-
-    fn create_initialized(
-        path: &Path,
-        initialize: impl FnOnce(&mut Self) -> Result<(), String>,
-    ) -> Result<Self, String> {
-        let file = OpenOptions::new()
-            .write(true)
-            .create_new(true)
-            .open(path)
-            .map_err(|error| format!("cannot create readings audit {}: {error}", path.display()))?;
-        let mut audit = Self {
-            path: path.into(),
-            file,
-        };
-        if let Err(error) = initialize(&mut audit) {
-            drop(audit);
-            return match std::fs::remove_file(path) {
-                Ok(()) => Err(error),
-                Err(cleanup) => Err(format!(
-                    "{error} · cannot remove newly created audit: {cleanup}"
-                )),
-            };
-        }
-        Ok(audit)
-    }
-
-    fn append(&mut self, value: &serde_json::Value) -> Result<(), String> {
-        serde_json::to_writer(&mut self.file, value).map_err(|error| {
-            format!(
-                "cannot write readings audit {}: {error}",
-                self.path.display()
-            )
-        })?;
-        self.file
-            .write_all(b"\n")
-            .and_then(|()| self.file.flush())
-            .map_err(|error| {
-                format!(
-                    "cannot flush readings audit {}: {error}",
-                    self.path.display()
-                )
-            })
-    }
-}
-
 fn query_with_audit(
     pair: &mut DevicePair,
     role: Role,
     command: &str,
-    audit: &mut ReadingsAudit,
+    audit: &mut RawWriter,
     point_index: usize,
     reading_index: Option<u32>,
     begin: Instant,
@@ -819,7 +762,7 @@ fn query_with_audit(
 }
 
 fn append_transport_exchanges(
-    audit: &mut ReadingsAudit,
+    audit: &mut RawWriter,
     role: &str,
     logical_command: &str,
     point_index: usize,
@@ -848,6 +791,31 @@ struct ResistanceFit {
     covariance: f64,
     variance: f64,
 }
+
+/// Streaming sample dispersion for the individual meter values retained in
+/// `*.raw.csv`. This does not change the existing incremental mean used by
+/// acquisition or its compliance policy.
+#[derive(Default)]
+struct SampleStats {
+    count: u32,
+    mean: f64,
+    m2: f64,
+}
+
+impl SampleStats {
+    fn add(&mut self, value: f64) {
+        self.count += 1;
+        let delta = value - self.mean;
+        self.mean += delta / f64::from(self.count);
+        self.m2 += delta * (value - self.mean);
+    }
+
+    fn sample_stddev(&self) -> Option<f64> {
+        (self.count >= 2)
+            .then(|| (self.m2 / f64::from(self.count - 1)).sqrt())
+            .filter(|value| value.is_finite())
+    }
+}
 impl ResistanceFit {
     fn add(&mut self, voltage: f64, current: f64) -> Option<f64> {
         self.count += 1;
@@ -871,48 +839,123 @@ fn configure(
     config: &RunConfig,
     range: f64,
     compliance: f64,
+    audit: &mut RawWriter,
+    begin: Instant,
 ) -> Result<(), String> {
     for (role, expected) in [
         (Role::Source, pair.source_identity.clone()),
         (Role::Meter, pair.meter_identity.clone()),
     ] {
-        if pair.query(role, "*IDN?")?.trim() != expected.trim() {
+        if query_with_audit(pair, role, "*IDN?", audit, 0, None, begin)?
+            .reply
+            .trim()
+            != expected.trim()
+        {
             return Err(
                 "Instrument identity changed. Disconnect and select the correct resource.".into(),
             );
         }
     }
-    pair.write(Role::Source, ":OUTP OFF")?;
-    pair.write(Role::Source, "*CLS")?;
-    pair.write(Role::Meter, "*CLS")?;
+    write_with_audit(pair, Role::Source, ":OUTP OFF", audit, begin)?;
+    write_with_audit(pair, Role::Source, "*CLS", audit, begin)?;
+    write_with_audit(pair, Role::Meter, "*CLS", audit, begin)?;
     let definition = iv_core::measurement_definition(config.mode);
     let (function, protect, measure) = (
         definition.source_function,
         definition.protection_function,
         definition.meter_function,
     );
-    pair.write(Role::Source, &format!(":SOUR:FUNC {function}"))?;
-    pair.write(Role::Source, &format!(":SOUR:RANG {range:.12e}"))?;
-    pair.write(
+    write_with_audit(
+        pair,
+        Role::Source,
+        &format!(":SOUR:FUNC {function}"),
+        audit,
+        begin,
+    )?;
+    write_with_audit(
+        pair,
+        Role::Source,
+        &format!(":SOUR:RANG {range:.12e}"),
+        audit,
+        begin,
+    )?;
+    write_with_audit(
+        pair,
         Role::Source,
         &format!(":SOUR:PROT:{protect} {compliance:.12e}"),
+        audit,
+        begin,
     )?;
-    pair.write(Role::Source, ":SOUR:LEV:FIX 0")?;
-    pair.write(Role::Meter, &format!("CONF:{measure}:DC"))?;
-    pair.write(Role::Meter, &format!("SENS:{measure}:DC:RANG:AUTO ON"))?;
-    pair.write(
+    write_with_audit(pair, Role::Source, ":SOUR:LEV:FIX 0", audit, begin)?;
+    write_with_audit(
+        pair,
+        Role::Meter,
+        &format!("CONF:{measure}:DC"),
+        audit,
+        begin,
+    )?;
+    write_with_audit(
+        pair,
+        Role::Meter,
+        &format!("SENS:{measure}:DC:RANG:AUTO ON"),
+        audit,
+        begin,
+    )?;
+    write_with_audit(
+        pair,
         Role::Meter,
         &format!("SENS:{measure}:DC:NPLC {:.12e}", config.nplc),
+        audit,
+        begin,
     )?;
-    pair.write(Role::Meter, &format!("SENS:{measure}:DC:ZERO:AUTO ON"))?;
-    pair.write(Role::Meter, "TRIG:SOUR IMM")?;
+    write_with_audit(
+        pair,
+        Role::Meter,
+        &format!("SENS:{measure}:DC:ZERO:AUTO ON"),
+        audit,
+        begin,
+    )?;
+    write_with_audit(pair, Role::Meter, "TRIG:SOUR IMM", audit, begin)?;
     for role in [Role::Source, Role::Meter] {
-        let response = pair.query(role, "SYST:ERR?")?;
+        let response = query_with_audit(pair, role, "SYST:ERR?", audit, 0, None, begin)?.reply;
         if !response.trim_start().starts_with("0,") && !response.trim_start().starts_with("+0,") {
             return Err(format!("Instrument configuration failed: {response}"));
         }
     }
     Ok(())
+}
+
+fn write_with_audit(
+    pair: &mut DevicePair,
+    role: Role,
+    command: &str,
+    audit: &mut RawWriter,
+    begin: Instant,
+) -> Result<(), String> {
+    let (started_at_utc, started_elapsed_s) = HostTiming::start(begin);
+    let recorded = pair.write_recorded(role, command);
+    let timing = HostTiming::finish(begin, started_at_utc, started_elapsed_s);
+    let role_name = if role == Role::Source {
+        "source"
+    } else {
+        "meter"
+    };
+    let audit_result = append_transport_exchanges(
+        audit,
+        role_name,
+        command,
+        0,
+        None,
+        &recorded.exchanges,
+        &timing,
+    );
+    match (recorded.result, audit_result) {
+        (Ok(_), Ok(())) => Ok(()),
+        (Err(error), Ok(())) | (Ok(_), Err(error)) => Err(error),
+        (Err(error), Err(audit_error)) => Err(format!(
+            "{error} · additionally could not persist transport provenance: {audit_error}"
+        )),
+    }
 }
 
 fn monitor_query(
@@ -1391,6 +1434,7 @@ fn execute(
     let effective_config = iv_core::prepare_config(config)?;
     let config = &effective_config;
     let planned = plan(config)?;
+    let mut preflight_output_verification = None;
     // Cached UI state is not proof that a real source is safe to reconfigure.
     // Enforce this here so GUI, CLI and notebook runs share the same preflight.
     if !state.source_simulation {
@@ -1404,6 +1448,11 @@ fn execute(
         if !report.output_off_verified {
             return Err("Cannot start: source output OFF was not verified. Turn output off on the instrument and reconnect.".into());
         }
+        preflight_output_verification = Some(serde_json::json!({
+            "verified": report.output_off_verified,
+            "zeroing_warning": report.zeroing_warning,
+            "result": "ok",
+        }));
         state.output = OutputState::Off;
         if let Some(warning) = report.zeroing_warning {
             return Err(format!(
@@ -1424,13 +1473,14 @@ fn execute(
     if let Some(parent) = path.parent() {
         std::fs::create_dir_all(parent).map_err(|e| format!("Create result folder: {e}"))?;
     }
+    let run_id = raw_csv::new_run_id();
     let mut writer = CsvWriter::create(path)?;
     let manifest = path.with_extension("run.json");
-    let readings_path = path.with_extension("readings.jsonl");
-    let readings_filename = readings_path
+    let raw_path = path.with_extension("raw.csv");
+    let raw_filename = raw_path
         .file_name()
         .and_then(|value| value.to_str())
-        .unwrap_or("readings.jsonl");
+        .unwrap_or("raw.csv");
     let instruments = if let Some(device) = pair.as_deref() {
         serde_json::json!({
             "source":{"model":device.source_model,"identity":device.source_identity,"resource":device.resource(Role::Source)},
@@ -1443,33 +1493,50 @@ fn execute(
         })
     };
     let provenance_policy = serde_json::json!({
-        "schema":"iv_readings_v2",
-        "numeric_precision":"csv uses shortest f64 round-trip scientific notation; raw instrument replies are retained verbatim in readings.jsonl",
+        "schema":"raw_csv_v1",
+        "numeric_precision":"main CSV uses shortest f64 round-trip scientific notation; raw instrument replies are retained verbatim in raw.csv",
         "resolution":"recorded only when an existing display query supplies it; otherwise null/unknown",
         "uncertainty":"unknown; neither raw text nor resolution is treated as accuracy or uncertainty",
         "simulation":"synthetic records have no fabricated hardware replies",
         "timing":"host UTC timestamps use RFC3339 microsecond precision and monotonic elapsed seconds relative to run start; they are host observation times, not instrument/device-clock timestamps",
     });
     let audit_start = serde_json::json!({
-        "event":"run_started", "schema":"iv_readings_v2", "csv":path.display().to_string(),
+        "event":"run_started", "schema":"raw_csv_v1", "csv":path.display().to_string(),
         "run_metadata":manifest.display().to_string(), "config":config,
         "requested_config":requested_config, "instruments":instruments,
         "provenance_policy":provenance_policy,
     });
-    let mut audit = match ReadingsAudit::create(&readings_path, &audit_start) {
+    let mut audit = match RawWriter::create(&raw_path, &run_id) {
         Ok(audit) => audit,
         Err(error) => {
             let _ = std::fs::remove_file(path);
             return Err(format!(
-                "Cannot create acquisition audit before enabling output: {error}"
+                "Cannot create raw acquisition evidence before enabling output: {error}"
             ));
         }
     };
-    let initial_metadata = serde_json::json!({"schema_version":RUN_METADATA_SCHEMA_VERSION,"csv_schema":CSV_SCHEMA,"csv_fields":iv_core::CSV_FIELDS,"csv_numeric_format":"shortest_roundtrip_scientific","application_version":env!("CARGO_PKG_VERSION"),"config":config,"requested_config":requested_config,"outcome":state,"in_progress":true,
-        "source_range_setting":planned.source_range,"hardware_compliance_setting":planned.hardware_compliance,"display_settings_changes":[],"simulation":state.simulation,"csv":path.display().to_string(),"instruments":instruments,"readings_audit":{"path":readings_path.display().to_string(),"filename":readings_filename,"schema":"iv_readings_v2","provenance_policy":provenance_policy}});
+    if let Err(error) = audit.append(&audit_start) {
+        drop(audit);
+        let _ = std::fs::remove_file(path);
+        let _ = std::fs::remove_file(&raw_path);
+        return Err(format!(
+            "Cannot initialize raw acquisition evidence before enabling output: {error}"
+        ));
+    }
+    if let Some(verification) = preflight_output_verification {
+        audit.append(&serde_json::json!({
+            "event":"output_off_verification", "device_role":"source",
+            "quantity":"output_off", "result":"ok", "details":verification,
+        }))?;
+    }
+    let mut initial_metadata = serde_json::json!({"schema_version":RUN_METADATA_SCHEMA_VERSION,"csv_schema":CSV_SCHEMA,"csv_fields":iv_core::CSV_FIELDS,"csv_numeric_format":"shortest_roundtrip_scientific","application_version":env!("CARGO_PKG_VERSION"),"experiment":config.experiment,"config":config,"requested_config":requested_config,"outcome":state,"in_progress":true,
+        "run_id":run_id,"source_range_setting":planned.source_range,"hardware_compliance_setting":planned.hardware_compliance,"display_settings_changes":[],"simulation":state.simulation,"csv":path.display().to_string(),"raw_csv":{"path":raw_path.display().to_string(),"filename":raw_filename,"schema":"raw_csv_v1","provenance_policy":provenance_policy}});
+    if let Some(commit) = option_env!("KOHDALAB_GIT_COMMIT") {
+        initial_metadata["git_commit"] = serde_json::Value::String(commit.into());
+    }
     if let Err(error) = write_json_new(&manifest, &initial_metadata) {
         let _ = std::fs::remove_file(path);
-        let _ = std::fs::remove_file(&readings_path);
+        let _ = std::fs::remove_file(&raw_path);
         return Err(format!(
             "Cannot save settings before enabling output: {error}"
         ));
@@ -1501,7 +1568,18 @@ fn execute(
                 config,
                 planned.source_range,
                 planned.hardware_compliance,
+                &mut audit,
+                begin,
             )?;
+            audit.append(&serde_json::json!({
+                "event":"configuration_applied", "point_index":0,
+                "result":"unverified", "details":{
+                    "requested_config":config, "source_range_setting":planned.source_range,
+                    "hardware_compliance_setting":planned.hardware_compliance,
+                    "identity_checked":true,
+                    "note":"commands were issued using the established configure sequence; settings not independently read back unless a later query records one"
+                }
+            }))?;
             // The transport translates this canonical query for models such as
             // the 7651 that do not use GS210 SCPI directly.
             let range_query =
@@ -1587,6 +1665,7 @@ fn execute(
                 let mut trigger_value = 0.0;
                 let mut meter_resolution: Option<f64> = None;
                 let mut meter_range: Option<f64> = None;
+                let mut meter_stats = SampleStats::default();
                 let mut resolution_known = true;
                 let mut first_conversion_timing: Option<HostTiming> = None;
                 let mut last_conversion_timing: Option<HostTiming> = None;
@@ -1625,6 +1704,7 @@ fn execute(
                     last_conversion_timing = Some(observation.timing.clone());
                     value += measured / config.average_count as f64;
                     readings_completed += 1;
+                    meter_stats.add(measured);
                     // Do not allow averaging to hide an individual over-limit sample.
                     if measured.abs() >= config.compliance {
                         sample_limit_hit = true;
@@ -1734,6 +1814,16 @@ fn execute(
                 record.source_resource = model_label(Role::Source, &device.source_model);
                 record.meter_resource = model_label(Role::Meter, &device.meter_model);
                 record.compliance = sample_limit_hit || value.abs() >= config.compliance;
+                record.readings_requested = config.average_count;
+                record.readings_completed = Some(readings_completed);
+                record.meter_stddev = meter_stats.sample_stddev();
+                record.quality_flags = if record.compliance {
+                    "software_limit_hit".into()
+                } else if readings_completed < config.average_count {
+                    "partial_average".into()
+                } else {
+                    "normal".into()
+                };
                 audit.append(&serde_json::json!({
                     "event":"average_window", "point_index":point.point_index,
                     "readings_requested":config.average_count, "readings_completed":readings_completed,
@@ -1746,6 +1836,10 @@ fn execute(
                 let signal_timing = HostTiming::logical_now(begin);
                 let mut record = simulate_record(config, point, signal_timing.completed_elapsed_s);
                 record.compliance = record.meter_value.abs() >= config.compliance;
+                record.readings_requested = config.average_count;
+                record.readings_completed = None;
+                record.meter_stddev = None;
+                record.quality_flags = "simulated".into();
                 audit.append(&serde_json::json!({
                     "event":"synthetic_reading", "point_index":point.point_index,
                     "reading_index":1, "parsed_value":record.meter_value,
@@ -1763,6 +1857,7 @@ fn execute(
                 "running"
             }
             .into();
+            record.run_id = run_id.clone();
             compliance_hit = record.compliance;
             if !record.instrument_status.is_empty() {
                 instrument_status_events.push(serde_json::json!({"point_index":record.point.point_index,"instrument_status":record.instrument_status}));
@@ -1835,6 +1930,27 @@ fn execute(
         },
         control,
     );
+    let verification_audit = audit.append(&serde_json::json!({
+        "event":"final_output_off_verification", "device_role":"source",
+        "result": if state.output == OutputState::Off { "ok" } else { "error" },
+        "verified": state.output == OutputState::Off,
+    }));
+    if let Err(error) = verification_audit {
+        let previous = if state.error.is_empty() {
+            String::new()
+        } else {
+            format!("{} · ", state.error)
+        };
+        let kind = if state.error.is_empty() {
+            ErrorKind::Storage
+        } else {
+            state.error.kind
+        };
+        state.error = Failure::new(
+            kind,
+            format!("{previous}Cannot record final output verification: {error}"),
+        );
+    }
     state.elapsed = begin.elapsed().as_secs_f64();
     state.phase = completion_phase(
         work.is_err(),
@@ -1862,7 +1978,7 @@ fn execute(
     let audit_finish = audit.append(&serde_json::json!({
         "event":"run_finished", "outcome":state.phase.to_string(), "points_saved":state.points,
         "in_progress":false, "error":if state.error.is_empty() { None::<String> } else { Some(state.error.to_string()) },
-    })).and_then(|()| audit.file.sync_all().map_err(|error| format!("cannot sync readings audit: {error}")));
+    })).and_then(|()| audit.finish());
     if let Err(error) = audit_finish {
         let previous = if state.error.is_empty() {
             String::new()
@@ -1880,10 +1996,43 @@ fn execute(
             state.points,
             state.output.to_lowercase()
         );
-        state.warnings.push("The readings audit could not be finalized; retain the partial .readings.jsonl file with this run.".into());
+        state.warnings.push("The raw acquisition evidence could not be finalized; retain the partial .raw.csv file with this run.".into());
     }
-    let metadata = serde_json::json!({"schema_version":RUN_METADATA_SCHEMA_VERSION,"csv_schema":CSV_SCHEMA,"csv_fields":iv_core::CSV_FIELDS,"csv_numeric_format":"shortest_roundtrip_scientific","application_version":env!("CARGO_PKG_VERSION"),"config":config,"requested_config":requested_config,"outcome":state,"in_progress":false,
-        "source_range_setting":planned.source_range,"hardware_compliance_setting":planned.hardware_compliance,"display_settings_changes":display_settings_changes,"instrument_status_events":instrument_status_events,"simulation":state.simulation,"csv":path.display().to_string(),"instruments":instruments,"readings_audit":{"path":readings_path.display().to_string(),"filename":readings_filename,"schema":"iv_readings_v2","provenance_policy":provenance_policy}});
+    let (hashes, hash_error) = match recording_hashes(path, &raw_path) {
+        Ok(hashes) => (hashes, None),
+        Err(error) => {
+            let previous = if state.error.is_empty() {
+                String::new()
+            } else {
+                format!("{} · ", state.error)
+            };
+            let kind = if state.error.is_empty() {
+                ErrorKind::Storage
+            } else {
+                state.error.kind
+            };
+            state.error = Failure::new(
+                kind,
+                format!("{previous}Cannot finalize recording checksums: {error}"),
+            );
+            state.phase = Phase::Failed;
+            state
+                .warnings
+                .push(format!("Recording checksums are unavailable: {error}"));
+            state.message = format!(
+                "{} · {} points saved · output {}",
+                state.phase,
+                state.points,
+                state.output.to_lowercase()
+            );
+            (serde_json::Value::Null, Some(error))
+        }
+    };
+    let mut metadata = serde_json::json!({"schema_version":RUN_METADATA_SCHEMA_VERSION,"csv_schema":CSV_SCHEMA,"csv_fields":iv_core::CSV_FIELDS,"csv_numeric_format":"shortest_roundtrip_scientific","application_version":env!("CARGO_PKG_VERSION"),"experiment":config.experiment,"run_id":run_id,"config":config,"requested_config":requested_config,"outcome":state,"in_progress":false,
+        "source_range_setting":planned.source_range,"hardware_compliance_setting":planned.hardware_compliance,"display_settings_changes":display_settings_changes,"instrument_status_events":instrument_status_events,"simulation":state.simulation,"csv":path.display().to_string(),"instruments":instruments,"raw_csv":{"path":raw_path.display().to_string(),"filename":raw_filename,"schema":"raw_csv_v1","provenance_policy":provenance_policy},"file_hashes":hashes,"file_hash_error":hash_error});
+    if let Some(commit) = option_env!("KOHDALAB_GIT_COMMIT") {
+        metadata["git_commit"] = serde_json::Value::String(commit.into());
+    }
     if let Err(error) = replace_json(&manifest, &metadata) {
         state
             .warnings
@@ -1893,8 +2042,31 @@ fn execute(
     Ok(())
 }
 
+fn recording_hashes(main: &Path, raw: &Path) -> Result<serde_json::Value, String> {
+    Ok(
+        serde_json::json!({"csv_sha256":raw_csv::file_sha256(main)?,"raw_csv_sha256":raw_csv::file_sha256(raw)?}),
+    )
+}
+
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn checksum_failure_is_explicit_and_sample_dispersion_uses_ddof_one() {
+        let dir = tempfile::tempdir().unwrap();
+        let main = dir.path().join("main.csv");
+        let raw = dir.path().join("raw.csv");
+        std::fs::write(&main, b"main").unwrap();
+        assert!(super::recording_hashes(&main, &raw).is_err());
+        std::fs::write(&raw, b"raw").unwrap();
+        assert!(super::recording_hashes(&main, &raw).is_ok());
+        let mut stats = super::SampleStats::default();
+        assert_eq!(stats.sample_stddev(), None);
+        stats.add(1.);
+        assert_eq!(stats.sample_stddev(), None);
+        stats.add(2.);
+        stats.add(3.);
+        assert_eq!(stats.sample_stddev(), Some(1.));
+    }
     #[test]
     fn metadata_update_keeps_initial_settings_when_final_write_fails() {
         let path = std::env::temp_dir().join(format!(
@@ -1926,25 +2098,17 @@ mod tests {
     }
 
     #[test]
-    fn audit_initialization_failure_removes_only_its_own_file() {
+    fn raw_initialization_refuses_foreign_file() {
         let path = std::env::temp_dir().join(format!(
-            "iv-audit-initial-{}-{}.jsonl",
+            "iv-raw-initial-{}-{}.csv",
             std::process::id(),
             std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
                 .unwrap()
                 .as_nanos()
         ));
-        let error = ReadingsAudit::create_initialized(&path, |audit| {
-            audit.append(&serde_json::json!({"event":"partial"}))?;
-            Err("injected initial write failure".into())
-        })
-        .err()
-        .unwrap();
-        assert!(error.contains("injected initial write failure"));
-        assert!(!path.exists());
         std::fs::write(&path, b"foreign audit").unwrap();
-        assert!(ReadingsAudit::create(&path, &serde_json::json!({})).is_err());
+        assert!(RawWriter::create(&path, "run-test").is_err());
         assert_eq!(std::fs::read(&path).unwrap(), b"foreign audit");
         std::fs::remove_file(path).unwrap();
     }
