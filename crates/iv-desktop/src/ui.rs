@@ -1836,14 +1836,18 @@ mod tests {
         let mut record = iv_core::simulate_record(&RunConfig::default(), &point, 0.5);
         record.timestamp = "2026-10-14T00:00:00Z".into();
         record.status = "running".into();
+        record.run_id = "run-test".into();
+        record.readings_requested = 1;
+        record.readings_completed = Some(1);
+        record.quality_flags = "normal".into();
         let values = record.native_csv_values();
         assert_eq!(
             values,
             [
+                "run-test",
+                "4",
                 "2026-10-14T00:00:00Z",
                 "5e-1",
-                "4",
-                "2",
                 "3",
                 "backward",
                 "1e-3",
@@ -1852,8 +1856,12 @@ mod tests {
                 "1e-6",
                 "source_readback",
                 "meter",
+                "1",
+                "1",
+                "",
+                "A",
                 "false",
-                "running"
+                "normal"
             ]
             .map(str::to_string)
         );

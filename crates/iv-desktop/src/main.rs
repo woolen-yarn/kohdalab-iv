@@ -5,6 +5,7 @@ mod client;
 mod compatibility;
 mod engine;
 mod protocol;
+mod raw_csv;
 mod run_export;
 mod state;
 mod ui;

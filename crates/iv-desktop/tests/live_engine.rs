@@ -94,7 +94,7 @@ fn preexisting_audit_refuses_run_before_output_and_preserves_existing_file() {
     ));
     std::fs::create_dir(&directory).unwrap();
     let path = directory.join("collision.csv");
-    let audit = path.with_extension("readings.jsonl");
+    let audit = path.with_extension("raw.csv");
     std::fs::write(&audit, b"existing audit must survive").unwrap();
     let mut engine = Engine::start();
     engine.send(json!({"command":"connect","simulation":true,"source":"","meter":""}));
@@ -106,7 +106,7 @@ fn preexisting_audit_refuses_run_before_output_and_preserves_existing_file() {
         failed["error"]
             .as_str()
             .unwrap()
-            .contains("acquisition audit")
+            .contains("raw acquisition evidence")
     );
     assert!(!path.exists());
     assert_eq!(
@@ -225,7 +225,7 @@ fn native_mock_idle_monitor_uses_actual_source_mode_and_never_enables_output() {
         (3, ":SOUR:FUNC?", "CURR"),
         (3, ":SOUR:LEV?", "0.0002"),
         (3, ":SOUR:RANG?", "0.001"),
-        (7, "READ?", "0.000212000"),
+        (7, "READ?", "0.000212000\r\n"),
         (3, "SYST:ERR?", "0,No error"),
         (7, "SYST:ERR?", "0,No error"),
         (7, "SENS:VOLT:DC:RANG?", "0.1"),
@@ -345,73 +345,49 @@ fn native_mock_idle_monitor_uses_actual_source_mode_and_never_enables_output() {
     assert_eq!(csv_reader(&path).len(), 4);
     let expected = (0..3).fold(0.0, |sum, _| sum + 0.000212 / 3.0);
     assert_eq!(completed["last"]["meter_value"].as_f64().unwrap(), expected);
-    let audit: Vec<Value> = std::fs::read_to_string(path.with_extension("readings.jsonl"))
-        .unwrap()
-        .lines()
-        .map(|line| serde_json::from_str(line).unwrap())
-        .collect();
-    assert_eq!(audit[0]["event"], "run_started");
-    assert_eq!(
-        audit[0]["provenance_policy"]["uncertainty"],
-        "unknown; neither raw text nor resolution is treated as accuracy or uncertainty"
-    );
-    assert!(audit.iter().any(|entry| {
-        entry["event"] == "meter_reading"
-            && entry["normalized_response"] == "0.000212000"
-            && entry["parsed_value"].as_f64() == Some(0.000212)
+    let mut raw = csv::Reader::from_path(path.with_extension("raw.csv")).unwrap();
+    let rows = raw.records().collect::<Result<Vec<_>, _>>().unwrap();
+    assert!(rows.iter().any(|row| {
+        row.get(4) == Some("meter_reading")
+            && row
+                .get(8)
+                .is_some_and(|value| value.contains("0.000212000"))
     }));
-    assert!(audit.iter().any(|entry| {
-        entry["event"] == "transport_exchange"
-            && entry["logical_command"] == "READ?"
-            && entry["wire_response"] == "0.000212000"
+    assert!(rows.iter().any(|row| {
+        row.get(4) == Some("transport_exchange")
+            && row.get(7) == Some("READ?\n")
+            && row.get(8) == Some("0.000212000\r\n")
     }));
-    assert!(audit.iter().any(|entry| {
-        entry["event"] == "transport_exchange"
-            && entry["logical_command"] == ":SOUR:LEV?"
-            && entry["wire_response"].is_string()
-    }));
-    assert!(audit.iter().any(|entry| entry["event"] == "meter_display"
-        && entry["normalized_resolution_response"] == "0.0000001"
-        && entry["resolution_query_at"].as_str().is_some()));
-    assert!(audit.iter().any(|entry| entry["event"] == "meter_display"
-        && entry["resolution_origin"] == "range_cache"
-        && entry["normalized_resolution_response"] == "0.0000001"));
-    let saved_csv = csv_reader(&path);
-    let csv_timestamp = saved_csv[1].split(',').next().unwrap();
-    let average_index = audit
+    assert!(rows.iter().any(|row| row.get(4) == Some("csv_write")));
+    let average = rows
         .iter()
-        .position(|entry| entry["event"] == "average_window" && entry["point_index"] == 1)
+        .find(|row| &row[4] == "average_window" && &row[2] == "1")
         .unwrap();
-    let average = &audit[average_index];
+    let window: Value = serde_json::from_str(&average[17]).unwrap();
+    let signal = &window["last_conversion"];
+    let write = rows
+        .iter()
+        .find(|row| &row[4] == "csv_write" && &row[2] == "1")
+        .unwrap();
+    let mut analysis = csv::Reader::from_path(&path).unwrap();
+    let header = analysis.headers().unwrap().clone();
+    let saved = analysis.records().next().unwrap().unwrap();
+    let cell = |key| &saved[header.iter().position(|value| value == key).unwrap()];
     assert_eq!(
-        csv_timestamp,
-        average["last_conversion"]["host_completed_at_utc"]
-            .as_str()
-            .unwrap(),
-        "CSV timestamp is the final saved meter conversion, not later provenance or I/O"
+        cell("timestamp"),
+        signal["host_completed_at_utc"].as_str().unwrap()
+    );
+    assert_eq!(
+        cell("elapsed_s").parse::<f64>().unwrap(),
+        signal["host_completed_elapsed_s"].as_f64().unwrap()
     );
     assert!(
-        average["first_conversion"]["host_completed_elapsed_s"]
-            .as_f64()
-            .unwrap()
-            <= average["last_conversion"]["host_completed_elapsed_s"]
-                .as_f64()
-                .unwrap()
+        write[13].parse::<f64>().unwrap() >= signal["host_completed_elapsed_s"].as_f64().unwrap()
     );
-    let csv_write_index = audit
-        .iter()
-        .position(|entry| entry["event"] == "csv_write" && entry["point_index"] == 1)
-        .unwrap();
-    assert!(average_index < csv_write_index);
-    assert!(
-        audit[csv_write_index]["timing"]["host_started_elapsed_s"]
-            .as_f64()
-            .unwrap()
-            >= average["last_conversion"]["host_completed_elapsed_s"]
-                .as_f64()
-                .unwrap()
-    );
-    assert!(audit[csv_write_index]["timing"]["device_timestamp_utc"].is_null());
+    assert!(write[14].parse::<f64>().unwrap() >= write[13].parse::<f64>().unwrap());
+    assert_eq!(cell("readings_completed"), "3");
+    assert_eq!(cell("meter_stddev").parse::<f64>().unwrap(), 0.);
+
     let commands = std::fs::read_to_string(&log).unwrap();
     assert!(commands.matches(&hex("READ?\n")).count() > 9);
     // Repeat is per-point accumulation, not another traversal of the source.
@@ -517,32 +493,44 @@ fn native_mock_idle_monitor_uses_actual_source_mode_and_never_enables_output() {
         0.000212
     );
     assert_eq!(metadata["instrument_status_events"][0]["trigger_unit"], "V");
-    let limited_audit: Vec<Value> =
-        std::fs::read_to_string(limited_path.with_extension("readings.jsonl"))
-            .unwrap()
-            .lines()
-            .map(|line| serde_json::from_str(line).unwrap())
-            .collect();
-    assert!(limited_audit.iter().any(|entry| {
-        entry["event"] == "saved_point"
-            && entry["readings_requested"] == 4
-            && entry["readings_completed"] == 3
-            && entry["compliance"] == true
-    }));
-    let partial_window = limited_audit
-        .iter()
-        .find(|entry| entry["event"] == "average_window")
+    let mut limited_raw = csv::Reader::from_path(limited_path.with_extension("raw.csv")).unwrap();
+    let limited_rows = limited_raw
+        .records()
+        .collect::<Result<Vec<_>, _>>()
         .unwrap();
-    assert_eq!(partial_window["readings_requested"], 4);
-    assert_eq!(partial_window["readings_completed"], 3);
+    assert!(limited_rows.iter().any(|row| {
+        row.get(4) == Some("saved_point")
+            && row
+                .get(17)
+                .is_some_and(|details| details.contains("\"readings_requested\":4"))
+            && row
+                .get(17)
+                .is_some_and(|details| details.contains("\"readings_completed\":3"))
+    }));
     assert!(
-        partial_window["first_conversion"]["host_completed_elapsed_s"]
-            .as_f64()
-            .unwrap()
-            <= partial_window["last_conversion"]["host_completed_elapsed_s"]
-                .as_f64()
-                .unwrap()
+        limited_rows
+            .iter()
+            .any(|row| row.get(4) == Some("average_window"))
     );
+    let window_row = limited_rows
+        .iter()
+        .find(|row| &row[4] == "average_window")
+        .unwrap();
+    let window: Value = serde_json::from_str(&window_row[17]).unwrap();
+    let mut limited_analysis = csv::Reader::from_path(&limited_path).unwrap();
+    let header = limited_analysis.headers().unwrap().clone();
+    let saved = limited_analysis.records().next().unwrap().unwrap();
+    let cell = |key| &saved[header.iter().position(|value| value == key).unwrap()];
+    assert_eq!(
+        cell("timestamp"),
+        window["last_conversion"]["host_completed_at_utc"]
+            .as_str()
+            .unwrap()
+    );
+    assert_eq!(cell("readings_requested"), "4");
+    assert_eq!(cell("readings_completed"), "3");
+    let expected_stddev = (0.000212_f64.powi(2) / 3.).sqrt();
+    assert!((cell("meter_stddev").parse::<f64>().unwrap() - expected_stddev).abs() < 1e-19);
     for (mode, source_command) in [
         ("dc_iv", ":SOUR:FUNC VOLT\n"),
         ("dc_vi", ":SOUR:FUNC CURR\n"),

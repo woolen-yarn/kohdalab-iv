@@ -3,6 +3,14 @@
 > **Language navigation / 言語案内:** The English historical record appears first, followed by a complete Japanese counterpart. Versions, dates, API names, commands, compatibility wording, and historical claims are preserved in both languages.
 > 英語の履歴記録を先に置き、その後に完全な日本語対訳を掲載します。バージョン、日付、API 名、コマンド、互換性の表現、履歴上の主張は両言語で保持します。
 
+## 1.3.0-alpha.10 — 2026-10-23
+
+新規保存をmain CSV・raw CSV・run JSONへ整理しました。mainは18列の`analysis_v3`で、測定ID・平均化採用数・標本標準偏差・品質フラグを保存します。rawは改行を保持できる共通CSVで、旧JSONL付きデータのコピーを維持します。終了時にmain/rawのSHA-256を記録し、設定・出力確認の通信証跡と任意の実験条件を保存します。
+
+- Replace the provenance JSONL for new runs with a multiline-safe `raw.csv`, while retaining legacy JSONL when saving old runs.
+- Write an 18-column `analysis_v3` CSV with run identity, accepted-reading count, sample standard deviation and explicit quality flags.
+- Record SHA-256 hashes for the completed analysis and raw CSV files in `.run.json`.
+
 ## 1.3.0-alpha.9
 
 - Timestamp each saved CSV row at host-observed completion of its final meter conversion, before later provenance, display, source-readback, or disk work.
