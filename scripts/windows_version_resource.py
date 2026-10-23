@@ -20,7 +20,7 @@ SEMVER = re.compile(
 
 
 def package_version() -> str:
-    with (ROOT / "next" / "Cargo.toml").open("rb") as source:
+    with (ROOT / "Cargo.toml").open("rb") as source:
         return tomllib.load(source)["workspace"]["package"]["version"]
 
 

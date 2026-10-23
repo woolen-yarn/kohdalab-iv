@@ -30,7 +30,7 @@ class ClientTests(unittest.TestCase):
                 with path.open(newline='') as stream:
                     rows = list(csv.DictReader(stream))
                 self.assertEqual(len(rows), 3)
-                self.assertEqual(len(rows[0]), 14)
+                self.assertEqual(len(rows[0]), 18)
                 saved = path.read_bytes()
                 iv.live()
                 self.assertEqual(path.read_bytes(), saved)

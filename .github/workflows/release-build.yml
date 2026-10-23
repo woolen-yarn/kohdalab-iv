@@ -41,7 +41,6 @@ jobs:
           if (-not $rc) { throw 'Windows resource compiler missing' }
           "RC=$($rc.FullName)" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
       - name: Rust test and release build
-        working-directory: next
         shell: pwsh
         run: |
           rustup toolchain install 1.99.0 --profile minimal
@@ -52,26 +51,26 @@ jobs:
       - name: Python client and Notebook simulations
         shell: pwsh
         run: |
-          $env:KOHDALAB_IV_EXE = Join-Path $PWD 'next/target/release/iv-cli.exe'
+          $env:KOHDALAB_IV_EXE = Join-Path $PWD 'target/release/iv-cli.exe'
           python -m unittest discover -s bindings/python -p 'test_*.py' -v
           if ($LASTEXITCODE -ne 0) { throw 'Notebook/client validation failed' }
       - name: Package portable, source kit and Setup
         id: package
         shell: pwsh
         run: |
-          python scripts/package_rust_preview.py --platform windows-x64 --binaries-dir next/target/release --native-dir build/release-native
+          python scripts/package_rust_preview.py --platform windows-x64 --binaries-dir target/release --native-dir build/release-native
           if ($LASTEXITCODE -ne 0) { throw 'Portable packaging failed' }
           python scripts/package_rust_build_kit.py --native-dir build/release-native
           if ($LASTEXITCODE -ne 0) { throw 'Build kit failed' }
-          $v = python -c "import tomllib,pathlib; print(tomllib.loads(pathlib.Path('next/Cargo.toml').read_text())['workspace']['package']['version'])"
+          $v = python -c "import tomllib,pathlib; print(tomllib.loads(pathlib.Path('Cargo.toml').read_text())['workspace']['package']['version'])"
           $edition = if ($v.Contains('-')) { 'preview' } else { 'portable' }
-          $payload = "next/dist/kohdalab-iv-$v-windows-x64-$edition"
+          $payload = "dist/kohdalab-iv-$v-windows-x64-$edition"
           "payload=$payload" | Out-File -FilePath $env:GITHUB_OUTPUT -Append -Encoding utf8
-          python scripts/build_windows_installer.py --payload-dir $payload --version $v --output "next/dist/kohdalab-iv-$v-windows-x64-Setup.exe"
+          python scripts/build_windows_installer.py --payload-dir $payload --version $v --output "dist/kohdalab-iv-$v-windows-x64-Setup.exe"
           if ($LASTEXITCODE -ne 0) { throw 'Setup compilation failed' }
-          ./scripts/check_windows_metadata.ps1 -Directory $payload -Version $v -ReportPath next/dist/windows-metadata.json
-          ./scripts/check_windows_signatures.ps1 -Directory $payload -ReportPath next/dist/windows-signatures.json
-          python -c "import pathlib,hashlib,json,os; p=pathlib.Path('next/dist'); fs=sorted([*p.glob('*.zip'),*p.glob('*-Setup.exe')]); (p/'SHA256SUMS.txt').write_text(''.join(hashlib.sha256(f.read_bytes()).hexdigest()+'  '+f.name+'\n' for f in fs)); (p/'BUILD-ORIGIN.json').write_text(json.dumps({k:os.environ.get(k) for k in ['GITHUB_REPOSITORY','GITHUB_SHA','GITHUB_RUN_ID','GITHUB_RUN_ATTEMPT','GITHUB_WORKFLOW']},indent=2)+'\n')"
+          ./scripts/check_windows_metadata.ps1 -Directory $payload -Version $v -ReportPath dist/windows-metadata.json
+          ./scripts/check_windows_signatures.ps1 -Directory $payload -ReportPath dist/windows-signatures.json
+          python -c "import pathlib,hashlib,json,os; p=pathlib.Path('dist'); fs=sorted([*p.glob('*.zip'),*p.glob('*-Setup.exe')]); (p/'SHA256SUMS.txt').write_text(''.join(hashlib.sha256(f.read_bytes()).hexdigest()+'  '+f.name+'\n' for f in fs)); (p/'BUILD-ORIGIN.json').write_text(json.dumps({k:os.environ.get(k) for k in ['GITHUB_REPOSITORY','GITHUB_SHA','GITHUB_RUN_ID','GITHUB_RUN_ATTEMPT','GITHUB_WORKFLOW']},indent=2)+'\n')"
       - name: Upload exact first-party signing input (unsigned)
         id: signing-input
         uses: actions/upload-artifact@v7
@@ -92,7 +91,35 @@ jobs:
           if-no-files-found: error
           retention-days: 14
           path: |
-            next/dist/*.zip
-            next/dist/*-Setup.exe
-            next/dist/*.json
-            next/dist/SHA256SUMS.txt
+            dist/*.zip
+            dist/*-Setup.exe
+            dist/*.json
+            dist/SHA256SUMS.txt
+
+  macos:
+    name: macOS ARM64 release build
+    runs-on: macos-15
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v7
+      - name: Build native helpers, test and package
+        run: bash scripts/build-macos.command
+      - name: Record build origin and checksums
+        run: |
+          python3 - <<'PYCODE'
+          import hashlib, json, os, pathlib
+          root = pathlib.Path("dist")
+          archives = sorted(root.glob("*.zip"))
+          (root / "SHA256SUMS.txt").write_text("".join(hashlib.sha256(path.read_bytes()).hexdigest() + "  " + path.name + "\n" for path in archives))
+          (root / "BUILD-ORIGIN.json").write_text(json.dumps({key: os.environ.get(key) for key in ["GITHUB_REPOSITORY", "GITHUB_SHA", "GITHUB_RUN_ID", "GITHUB_RUN_ATTEMPT", "GITHUB_WORKFLOW"]}, indent=2) + "\n")
+          PYCODE
+      - name: Upload macOS review artifacts
+        uses: actions/upload-artifact@v7
+        with:
+          name: macos-unsigned-${{ github.sha }}
+          if-no-files-found: error
+          retention-days: 14
+          path: |
+            dist/*.zip
+            dist/BUILD-ORIGIN.json
+            dist/SHA256SUMS.txt

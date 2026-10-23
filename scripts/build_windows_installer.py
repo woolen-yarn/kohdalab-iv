@@ -117,7 +117,7 @@ def windows_file_version(version: str) -> str:
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--payload-dir", required=True, type=Path)
-    parser.add_argument("--wrapper", type=Path, default=ROOT / "portable/windows/Install-Installer.ps1")
+    parser.add_argument("--wrapper", type=Path, default=ROOT / "packaging/windows/Install-Installer.ps1")
     parser.add_argument("--version", required=True)
     parser.add_argument("--output", required=True, type=Path)
     parser.add_argument("--makensis", type=Path, help="Use this existing makensis compiler")
@@ -136,7 +136,7 @@ def main() -> None:
     output = args.output.resolve()
     output.parent.mkdir(parents=True, exist_ok=True)
     compiler = find_compiler(args.makensis)
-    script = ROOT / "portable/windows/KohdaLab-IV.nsi"
+    script = ROOT / "packaging/windows/KohdaLab-IV.nsi"
     command = [
         str(compiler),
         "/V3",

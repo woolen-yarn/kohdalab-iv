@@ -23,3 +23,29 @@ Downloading releases or reporting issues on GitHub uses GitHub's services and
 Do not put confidential measurement data or identifying instrument information
 in a public issue. Build-time package downloads and future signing requests are
 maintainer operations, not end-user telemetry.
+
+---
+
+# プライバシーポリシー
+
+KohdaLab IV はテレメトリーを収集せず、測定データをアップロードせず、分析サービスへ
+接続せず、更新を自動確認しません。測定 CSV、実行メタデータ、設定、診断出力はローカル
+コンピューターに保存されます。これらをコピー、エクスポート、共有、削除するかは利用者が
+選択します。
+
+計測器通信は、利用者が選択した USB/GPIB リソースまたはインストール済みの公式 VISA
+ランタイムを介して開始されます。VISA リソースがネットワーク計測器を指す場合、その通信は
+操作者が選んだリソースに従います。アプリケーションが計測器を求めてネットワークホストを
+スキャンすることはありません。メーカーランタイムは別途インストールされ、各ベンダーの
+プライバシーポリシーと設定に従います。
+
+Windows USB セットアップは接続済み USB デバイスをローカルで列挙し、管理者承認を伴って
+明示的に起動された場合にだけ Windows 標準の WinUSB 割り当てをインストールできます。
+メーカーのファームウェアをダウンロードすることはありません。Windows Update、SmartScreen、
+証明書検証サービスの利用はコンピューターの OS 設定に従い、本アプリの対象外です。
+
+GitHub からのリリース取得または問題報告には GitHub のサービスおよび
+[プライバシーポリシー](https://docs.github.com/en/site-policy/privacy-policies/github-general-privacy-statement)
+が適用されます。機密の測定データや識別可能な計測器情報を公開 Issue に書かないでください。
+ビルド時のパッケージ取得と将来の署名要求は保守者の作業であり、エンドユーザーの
+テレメトリーではありません。
