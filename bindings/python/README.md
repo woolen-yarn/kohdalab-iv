@@ -20,8 +20,8 @@ uv pip install ./bindings/python
 Install directly from the matching GitHub release:
 
 ```text
-python -m pip install "kohdalab-iv-native @ git+https://github.com/woolen-yarn/kohdalab-iv.git@preview-v1.3.0-alpha.11#subdirectory=bindings/python"
-uv add "kohdalab-iv-native @ git+https://github.com/woolen-yarn/kohdalab-iv.git@preview-v1.3.0-alpha.11#subdirectory=bindings/python"
+python -m pip install "kohdalab-iv-native @ git+https://github.com/woolen-yarn/kohdalab-iv.git@preview-v1.3.0-alpha.12#subdirectory=bindings/python"
+uv add "kohdalab-iv-native @ git+https://github.com/woolen-yarn/kohdalab-iv.git@preview-v1.3.0-alpha.12#subdirectory=bindings/python"
 ```
 
 The discovery enhancements below are included in v1.3.0-alpha.6 and newer.
@@ -66,6 +66,17 @@ together. The 18-column `analysis_v3` CSV preserves finite `f64` values,
 accepted-reading counts, ddof=1 `meter_stddev`, and explicit quality flags; the raw CSV
 retains raw per-repeat replies and known provenance. Neither representation
 turns instrument resolution into an uncertainty claim.
+`compliance` is the external Meter software stop (A in `dc_iv`, V in `dc_vi`).
+`source_compliance` independently requests Source hardware protection in the same
+units. For example, `{"source_compliance": 5.0, "compliance": 0.2}` in `dc_vi`
+requests 5 V source protection and a 0.2 V external Meter stop. These example
+limits are not a recommendation for any sample. Omit/null `source_compliance`
+to retain legacy coupled behavior. The engine reports actual range/protection in
+run metadata; GS210 low-voltage ranges have fixed 200 mA hardware protection.
+An explicitly smaller Source current limit selects a compatible range, which can
+change target resolution. A GS210 H/L trip returns `Source limit stop`; its
+limited target is retained only as raw evidence, not as an analysis point.
+
 Configuration defaults are queried from Rust, rather than maintained separately
 in Python. `snapshot` returns the latest state; `live()` waits for a new sample.
 `stop()`, `output_off()` and `disconnect()` send the respective engine commands.

@@ -50,12 +50,17 @@ const PARAMETERS: &[ParameterDefinition] = &[
     },
     ParameterDefinition {
         key: "source_limit",
-        label: "Source limit",
+        label: "Maximum source target",
         unit: ParameterUnit::Source,
     },
     ParameterDefinition {
         key: "compliance",
-        label: "Compliance",
+        label: "Measurement limit",
+        unit: ParameterUnit::Measured,
+    },
+    ParameterDefinition {
+        key: "source_compliance",
+        label: "Source compliance",
         unit: ParameterUnit::Measured,
     },
     ParameterDefinition {

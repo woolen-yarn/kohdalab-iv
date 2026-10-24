@@ -3,7 +3,7 @@
 > **日本語の案内:** 列名、単位、数値の直列化規則は互換性契約です。CSV の列名は翻訳せず、
 > 本文の原表記を使用してください。
 
-The native analysis CSV uses 18 columns (`analysis_v3`), with run metadata schema 6.
+The native analysis CSV uses 18 columns (`analysis_v3`), with run metadata schema 7.
 Each new run has a matching multiline-safe `<name>.raw.csv` and `<name>.run.json`.
 
 ## Three-file contract / 3ファイルの役割
@@ -123,7 +123,7 @@ autorange history and output cleanup. Full legacy CSV tests remain intact.
 
 ## 日本語 — 全文対訳
 
-ネイティブCSVは18列の`analysis_v3`で、run metadata schemaは6です。新しいrunはmultiline-safeな`.raw.csv`を作成し、旧runの`.readings.jsonl`は保存時に維持します。
+ネイティブCSVは18列の`analysis_v3`で、run metadata schemaは7です。新しいrunはmultiline-safeな`.raw.csv`を作成し、旧runの`.readings.jsonl`は保存時に維持します。
 
 | 旧フィールド | 保持する情報 |
 | --- | --- |
@@ -169,3 +169,26 @@ CSVは各点でflushします。range・resolution変更は最終JSONに点番�
 ### 検証
 
 analysis_v3の18列、単位、setpoint fallbackのorigin、負のゼロと有限f64の往復、制限・状態保持をテストします。JSON置換失敗テストで最終保存失敗時にも初期設定が残ることを確認します。統合テストは初期metadata、完了・停止、autorange履歴、出力後処理を確認します。旧CSVの全テストも維持しています。
+
+## Source hardware protection
+
+`config.source_compliance` is the requested Source hardware limit (A for V-I,
+V for I-V). An omitted/null value preserves legacy coupling to `compliance`.
+`config.compliance` is the external Meter software stop. The actual programmed
+Source threshold is `hardware_compliance_setting`; it may differ due to device
+resolution or fixed range protection. Settings files use schema 2; metadata uses
+schema 7. The 18-column analysis CSV remains `analysis_v3`.
+
+For GS210, `source_protection_stop` records the target index/value, observation
+UTC time, raw condition register and H/L/EMR flags, and any associated failure.
+A limited target has no normal analysis row, including a partial average, and
+never enters the resistance fit. Already acquired meter replies remain in raw
+CSV. The hardware-limit stop is not inferred from an external voltage plateau;
+it is based on the instrument's non-clearing `:STAT:COND?` register. The returned
+source level remains a programmed setting readback, not a verified actual current
+when the source is limiting. /MON is not needed for H/L detection and is not
+assumed present. Do not infer source terminal voltage from a four-terminal Meter.
+
+Source保護とMeter停止は別設定です。GS210がH/L制限を返した点は通常CSV・fitに含めず、
+取得済みの生応答と条件レジスタをraw CSV、停止の詳細をrun JSONに残します。
+/MONなしのSource設定値readbackを、制限時の実電流と解釈しないでください。

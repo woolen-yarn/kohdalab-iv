@@ -7,8 +7,8 @@ from kohdalab_iv_native import _negotiate_protocol
 CURRENT = {
     "version": 1,
     "minimum_client_version": 1,
-    "settings_schema_version": 1,
-    "run_metadata_schema_version": 6,
+    "settings_schema_version": 2,
+    "run_metadata_schema_version": 7,
     "csv_schema": "analysis_v3",
 }
 
@@ -28,14 +28,14 @@ class ProtocolCompatibilityTests(unittest.TestCase):
         future_protocol = {**CURRENT, "version": 2}
         with self.assertRaisesRegex(RuntimeError, "newer than this Python client"):
             _negotiate_protocol(future_protocol)
-        future_settings = {**CURRENT, "settings_schema_version": 2}
-        with self.assertRaisesRegex(RuntimeError, "settings schema 2"):
+        future_settings = {**CURRENT, "settings_schema_version": 3}
+        with self.assertRaisesRegex(RuntimeError, "settings schema 3"):
             _negotiate_protocol(future_settings)
         future_csv = {**CURRENT, "csv_schema": "analysis_v4"}
         with self.assertRaisesRegex(RuntimeError, "CSV schema 'analysis_v4'"):
             _negotiate_protocol(future_csv)
-        future_metadata = {**CURRENT, "run_metadata_schema_version": 7}
-        with self.assertRaisesRegex(RuntimeError, "run metadata schema 7"):
+        future_metadata = {**CURRENT, "run_metadata_schema_version": 8}
+        with self.assertRaisesRegex(RuntimeError, "run metadata schema 8"):
             _negotiate_protocol(future_metadata)
 
     def test_malformed_declarations_are_rejected_before_connect(self):

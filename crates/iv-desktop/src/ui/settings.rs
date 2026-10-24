@@ -23,6 +23,13 @@ pub(super) struct Settings {
     pub(super) current_compliance: f64,
     pub(super) voltage_compliance: f64,
     pub(super) compliance_units: [usize; 2],
+    /// Requested source-side hardware protection.  `None` keeps the legacy
+    /// core behaviour, where the source protection follows `compliance`.
+    #[serde(default)]
+    pub(super) source_current_protection: Option<f64>,
+    #[serde(default)]
+    pub(super) source_voltage_protection: Option<f64>,
+    pub(super) source_protection_units: [usize; 2],
 }
 
 impl Default for Settings {
@@ -42,6 +49,40 @@ impl Default for Settings {
             current_compliance: 0.001,
             voltage_compliance: 1.0,
             compliance_units: [1, 0],
+            source_current_protection: None,
+            source_voltage_protection: None,
+            source_protection_units: [1, 0],
+        }
+    }
+}
+
+impl Settings {
+    /// Store the values belonging to the mode currently held by `config`.
+    /// This is called before switching modes or opening the Settings dialog.
+    pub(super) fn store_active_protection(&mut self) {
+        match self.config.mode {
+            iv_core::Mode::Iv => {
+                self.current_compliance = self.config.compliance;
+                self.source_current_protection = self.config.source_compliance;
+            }
+            iv_core::Mode::Vi => {
+                self.voltage_compliance = self.config.compliance;
+                self.source_voltage_protection = self.config.source_compliance;
+            }
+        }
+    }
+
+    /// Restore the values cached for the selected mode into the run config.
+    pub(super) fn activate_mode_protection(&mut self) {
+        match self.config.mode {
+            iv_core::Mode::Iv => {
+                self.config.compliance = self.current_compliance;
+                self.config.source_compliance = self.source_current_protection;
+            }
+            iv_core::Mode::Vi => {
+                self.config.compliance = self.voltage_compliance;
+                self.config.source_compliance = self.source_voltage_protection;
+            }
         }
     }
 }
@@ -104,8 +145,10 @@ pub(super) fn load_settings(bytes: &[u8]) -> Result<Settings, String> {
     }
     let mut settings: Settings = serde_json::from_value(value)
         .map_err(|error| format!("Invalid settings values: {error}"))?;
-    // v0 had the same field representation.  Upgrade only the bookkeeping
-    // marker; defaults and unknown-field tolerance are left untouched.
+    // Preserve legacy coupling (None), including its range and resolution.
+    // Merely loading/opening settings must not opt into a different range.
+    settings.store_active_protection();
+    settings.activate_mode_protection();
     settings.schema_version = SETTINGS_SCHEMA_VERSION;
     Ok(settings)
 }
@@ -115,10 +158,23 @@ mod tests {
     use super::*;
 
     #[test]
+    fn active_explicit_source_protection_cannot_be_overwritten_by_stale_gui_cache() {
+        let mut original = Settings::default();
+        original.config.mode = iv_core::Mode::Vi;
+        original.config.compliance = 0.2;
+        original.config.source_compliance = Some(5.0);
+        original.source_voltage_protection = Some(20.0);
+        let loaded = load_settings(&serde_json::to_vec(&original).unwrap()).unwrap();
+        assert_eq!(loaded.config.source_compliance, Some(5.0));
+        assert_eq!(loaded.source_voltage_protection, Some(5.0));
+        assert_eq!(loaded.config.compliance, 0.2);
+    }
+
+    #[test]
     fn autosave_cannot_overwrite_a_future_versioned_file() {
         let path =
             std::env::temp_dir().join(format!("iv-future-settings-{}.json", std::process::id()));
-        let original = br#"{"schema_version":2,"filename":"future"}"#;
+        let original = br#"{"schema_version":3,"filename":"future"}"#;
         std::fs::write(&path, original).unwrap();
         assert!(save_settings(&Settings::default(), &path).is_err());
         assert_eq!(std::fs::read(&path).unwrap(), original);
@@ -145,15 +201,62 @@ mod tests {
     }
 
     #[test]
+    fn legacy_protection_preserves_range_and_resolution_until_explicitly_edited() {
+        let legacy = Settings {
+            schema_version: 1,
+            config: iv_core::RunConfig {
+                start: -0.001,
+                stop: 0.001,
+                step: 0.0001,
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+        let before = iv_core::plan(&legacy.config).unwrap();
+        let settings = load_settings(&serde_json::to_vec(&legacy).unwrap()).unwrap();
+        assert_eq!(settings.config.source_compliance, None);
+        assert_eq!(settings.source_current_protection, None);
+        let after = iv_core::plan(&settings.config).unwrap();
+        assert_eq!(before.source_range, after.source_range);
+        assert_eq!(before.points, after.points);
+        assert_eq!(before.hardware_compliance, after.hardware_compliance);
+        assert_eq!(
+            iv_core::prepare_config(&legacy.config).unwrap().step,
+            iv_core::prepare_config(&settings.config).unwrap().step
+        );
+    }
+
+    #[test]
+    fn mode_switch_restores_independent_source_and_meter_limits() {
+        let mut settings = Settings {
+            current_compliance: 0.002,
+            voltage_compliance: 1.5,
+            source_current_protection: Some(0.003),
+            source_voltage_protection: Some(2.0),
+            ..Default::default()
+        };
+
+        settings.config.mode = iv_core::Mode::Iv;
+        settings.activate_mode_protection();
+        assert_eq!(settings.config.compliance, 0.002);
+        assert_eq!(settings.config.source_compliance, Some(0.003));
+
+        settings.config.mode = iv_core::Mode::Vi;
+        settings.activate_mode_protection();
+        assert_eq!(settings.config.compliance, 1.5);
+        assert_eq!(settings.config.source_compliance, Some(2.0));
+    }
+
+    #[test]
     fn current_marker_is_accepted_and_future_marker_is_explained() {
         assert_eq!(
-            load_settings(br#"{"schema_version":1,"filename":"current"}"#)
+            load_settings(br#"{"schema_version":2,"filename":"current"}"#)
                 .unwrap()
                 .filename,
             "current"
         );
-        let error = load_settings(br#"{"schema_version":2}"#).err().unwrap();
-        assert!(error.contains("schema version 2"));
+        let error = load_settings(br#"{"schema_version":3}"#).err().unwrap();
+        assert!(error.contains("schema version 3"));
         assert!(error.contains("newer KohdaLab IV"));
     }
 

@@ -11,6 +11,8 @@ use std::process::{Child, ChildStdin, Command, Stdio};
 use std::sync::mpsc;
 use std::time::{Duration, Instant};
 
+include!("support/source_protection.rs");
+
 const METERS: &[(&str, &str)] = &[
     ("AGILENT_34401A", "Agilent Technologies,34401A,MOCK,1.0"),
     ("AGILENT_34411A", "Agilent Technologies,34411A,MOCK,1.0"),
@@ -161,6 +163,7 @@ impl Bridge {
             cres = hex("SENS:CURR:DC:RES?\n"),
             vres = hex("SENS:VOLT:DC:RES?\n")
         );
+        let script = with_source_protection(script, "operation", &dir);
         for name in ["kohdalab-gpib-helper", "kohdalab-usbtmc-helper"] {
             let path = dir.join(name);
             std::fs::write(&path, &script).unwrap();
@@ -603,4 +606,218 @@ fn read_transport_errors_retain_error_evidence_and_stop_before_further_queries()
         assert!(raw.contains("meter_reading"));
         cleanup(&output);
     }
+}
+
+fn assert_source_status_stop(commands: &[String]) {
+    let status = format!("QUERY 3 {}", hex(":STAT:COND?\n"));
+    let at = commands
+        .iter()
+        .rposition(|line| line == &status)
+        .expect("source condition checked");
+    assert_eq!(
+        commands.get(at + 1),
+        Some(&format!("WRITE 3 {}", hex(":OUTP OFF\n"))),
+        "Source OFF must be next after H/L: {commands:?}"
+    );
+    for line in &commands[at + 1..] {
+        if line.starts_with("WRITE 3 ") {
+            assert!(
+                line == &format!("WRITE 3 {}", hex(":OUTP OFF\n"))
+                    || line == &format!("WRITE 3 {}", hex(":SOUR:LEV:FIX 0\n")),
+                "No live cleanup ramp after a hardware stop: {commands:?}"
+            );
+        }
+    }
+}
+
+#[test]
+fn source_h_l_stops_even_when_the_external_four_terminal_voltage_is_below_meter_limit() {
+    for flag in ["2048", "1024"] {
+        for (mode, reading) in [(iv_core::Mode::Vi, "0.1816"), (iv_core::Mode::Iv, "0.0001")] {
+            let bridge = Bridge::new(METERS[1].1, "", reading);
+            std::fs::write(bridge.dir.join("source-condition-after-read"), hex(flag)).unwrap();
+            std::fs::write(bridge.dir.join("use-real-source-range"), "").unwrap();
+            let mut engine = Engine::start(&bridge.dir);
+            engine.connect("YOKOGAWA_GS210", METERS[1].0);
+            let output = path("four-wire-source-limit");
+            let mut run = config("YOKOGAWA_GS210", METERS[1].0, mode, 0.0, 3);
+            run.compliance = if mode == iv_core::Mode::Vi { 1.0 } else { 0.01 };
+            run.source_compliance = Some(if mode == iv_core::Mode::Vi { 5.0 } else { 0.02 });
+            engine.send(json!({"command":"run","config":run,"path":output}));
+            let state =
+                engine.wait(|s| s["phase"] == "Source limit stop" || s["phase"] == "Failed");
+            assert_eq!(state["phase"], "Source limit stop", "{state}");
+            assert_eq!(state["protection_alert"]["kind"], "source_compliance");
+            assert_eq!(
+                state["protection_alert"]["limit"],
+                run.source_compliance.unwrap()
+            );
+            assert_eq!(
+                state["protection_alert"]["unit"],
+                if mode == iv_core::Mode::Vi { "V" } else { "A" }
+            );
+            assert!(state["protection_alert"]["observed"].is_null());
+            assert_eq!(state["output"], "Off");
+            assert_eq!(state["points"], 0);
+            assert!(state["error"].as_str().unwrap().is_empty());
+            assert_source_status_stop(&bridge.commands());
+            assert_eq!(std::fs::read_to_string(&output).unwrap().lines().count(), 1);
+            let meta: Value =
+                serde_json::from_slice(&std::fs::read(output.with_extension("run.json")).unwrap())
+                    .unwrap();
+            assert_eq!(
+                meta["source_protection_stop"]["condition"]["register"],
+                flag.parse::<u32>().unwrap()
+            );
+            assert!(meta["file_hash_error"].is_null());
+            let raw = std::fs::read_to_string(output.with_extension("raw.csv")).unwrap();
+            assert!(raw.contains(reading));
+            assert!(raw.contains("source_protection_stop"));
+            cleanup(&output);
+        }
+    }
+}
+
+#[test]
+fn source_limits_are_detected_during_settling_before_any_new_conversion() {
+    let bridge = Bridge::new(METERS[1].1, "", "0.1816");
+    let mut engine = Engine::start(&bridge.dir);
+    engine.connect("YOKOGAWA_GS210", METERS[1].0);
+    std::fs::write(bridge.dir.join("source-condition"), hex("2048")).unwrap();
+    let output = path("source-limit-during-settle");
+    let mut run = config("YOKOGAWA_GS210", METERS[1].0, iv_core::Mode::Vi, 0.4, 1);
+    run.compliance = 1.0;
+    run.source_compliance = Some(5.0);
+    engine.send(json!({"command":"run","config":run,"path":output}));
+    let state = engine.wait(|s| s["phase"] == "Source limit stop" || s["phase"] == "Failed");
+    assert_eq!(state["phase"], "Source limit stop", "{state}");
+    assert_eq!(state["points"], 0);
+    assert_eq!(state["output"], "Off");
+    assert_source_status_stop(&bridge.commands());
+    let raw = std::fs::read_to_string(output.with_extension("raw.csv")).unwrap();
+    assert!(!raw.contains(",meter_reading,"));
+    cleanup(&output);
+}
+
+#[test]
+fn unknown_source_status_and_mismatched_hardware_settings_fail_closed() {
+    for fault in [
+        "source-condition",
+        "source-condition-error",
+        "source-protection-mismatch",
+    ] {
+        let bridge = Bridge::new(METERS[1].1, "", "0.0001");
+        let mut engine = Engine::start(&bridge.dir);
+        engine.connect("YOKOGAWA_GS210", METERS[1].0);
+        std::fs::write(bridge.dir.join(fault), hex("broken")).unwrap();
+        let output = path(fault);
+        engine.send(json!({"command":"run","config":config("YOKOGAWA_GS210",METERS[1].0,iv_core::Mode::Iv,0.0,1),"path":output}));
+        let state = engine.wait(|s| s["phase"] == "Failed");
+        assert_eq!(state["output"], "Off", "{state}");
+        assert_eq!(state["points"], 0);
+        assert!(!state["error"].as_str().unwrap().is_empty());
+        if fault == "source-protection-mismatch" {
+            assert!(
+                !bridge
+                    .commands()
+                    .iter()
+                    .any(|c| c == &format!("WRITE 3 {}", hex(":OUTP ON\n")))
+            );
+        }
+        cleanup(&output);
+    }
+}
+
+#[test]
+fn zero_wait_ramps_check_source_protection_before_the_next_nonzero_output() {
+    let bridge = Bridge::new(METERS[1].1, "", "0.1816");
+    let mut engine = Engine::start(&bridge.dir);
+    engine.connect("YOKOGAWA_GS210", METERS[1].0);
+    std::fs::write(bridge.dir.join("source-condition"), hex("2048")).unwrap();
+    let output = path("source-limit-zero-wait-ramp");
+    let mut run = config("YOKOGAWA_GS210", METERS[1].0, iv_core::Mode::Vi, 0.0, 1);
+    run.start = -0.0004;
+    run.stop = 0.0004;
+    run.step = 0.00004;
+    run.source_compliance = Some(5.0);
+    run.compliance = 1.0;
+    engine.send(json!({"command":"run","config":run,"path":output}));
+    let state = engine.wait(|s| s["phase"] == "Source limit stop" || s["phase"] == "Failed");
+    assert_eq!(state["phase"], "Source limit stop", "{state}");
+    assert_eq!(state["output"], "Off");
+    assert_eq!(state["points"], 0);
+    let commands = bridge.commands();
+    assert_source_status_stop(&commands);
+    let status = commands
+        .iter()
+        .position(|c| c == &format!("QUERY 3 {}", hex(":STAT:COND?\n")))
+        .unwrap();
+    let writes_before_check = commands[..status]
+        .iter()
+        .filter_map(|c| c.strip_prefix(&format!("WRITE 3 {}", hex(":SOUR:LEV:FIX "))))
+        .map(|encoded| {
+            let bytes: Vec<u8> = encoded
+                .as_bytes()
+                .as_chunks::<2>()
+                .0
+                .iter()
+                .map(|pair| u8::from_str_radix(std::str::from_utf8(pair).unwrap(), 16).unwrap())
+                .collect();
+            String::from_utf8(bytes)
+                .unwrap()
+                .trim()
+                .parse::<f64>()
+                .unwrap()
+        })
+        .filter(|level| *level != 0.0)
+        .count();
+    assert!(
+        writes_before_check == 1,
+        "exactly the first ramp level should precede the status check: {commands:?}"
+    );
+    cleanup(&output);
+}
+
+#[test]
+fn emergency_source_status_is_retained_in_run_metadata() {
+    let bridge = Bridge::new(METERS[1].1, "", "0.1816");
+    let mut engine = Engine::start(&bridge.dir);
+    engine.connect("YOKOGAWA_GS210", METERS[1].0);
+    std::fs::write(bridge.dir.join("source-condition"), hex("8192")).unwrap();
+    let output = path("source-emergency");
+    engine.send(json!({"command":"run","config":config("YOKOGAWA_GS210",METERS[1].0,iv_core::Mode::Vi,0.0,1),"path":output}));
+    let state = engine.wait(|s| s["phase"] == "Failed");
+    assert_eq!(state["output"], "Off");
+    assert!(state["error"].as_str().unwrap().contains("emergency"));
+    let meta: Value =
+        serde_json::from_slice(&std::fs::read(output.with_extension("run.json")).unwrap()).unwrap();
+    assert_eq!(
+        meta["source_protection_stop"]["condition"]["register"],
+        8192
+    );
+    assert!(
+        meta["source_protection_stop"]["failure"]
+            .as_str()
+            .unwrap()
+            .contains("emergency")
+    );
+    cleanup(&output);
+}
+
+#[test]
+fn a_new_invalid_run_does_not_reuse_the_previous_protection_alert() {
+    let bridge = Bridge::new(METERS[1].1, "", "0.1816");
+    let mut engine = Engine::start(&bridge.dir);
+    engine.connect("YOKOGAWA_GS210", METERS[1].0);
+    std::fs::write(bridge.dir.join("source-condition"), hex("2048")).unwrap();
+    let output = path("previous-protection-alert");
+    engine.send(json!({"command":"run","config":config("YOKOGAWA_GS210",METERS[1].0,iv_core::Mode::Vi,0.0,1),"path":output}));
+    let state = engine.wait(|s| s["phase"] == "Source limit stop");
+    assert_eq!(state["protection_alert"]["kind"], "source_compliance");
+    let mut invalid = config("YOKOGAWA_GS210", METERS[1].0, iv_core::Mode::Vi, 0.0, 1);
+    invalid.step = 0.0;
+    engine.send(json!({"command":"run","config":invalid,"path":path("invalid-retry")}));
+    let state = engine.wait(|s| s["phase"] == "Failed");
+    assert!(state["protection_alert"].is_null(), "{state}");
+    cleanup(&output);
 }

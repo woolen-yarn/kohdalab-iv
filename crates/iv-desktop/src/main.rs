@@ -99,7 +99,10 @@ fn run() -> Result<(), String> {
     } else {
         None
     };
-    let smoke = hardware_smoke || args.iter().any(|a| a == "--gui-smoke");
+    let smoke = hardware_smoke
+        || args
+            .iter()
+            .any(|a| a == "--gui-smoke" || a == "--gui-settings-smoke" || a == "--gui-limit-smoke");
     let screenshot = argument(&args, "--screenshot").map(std::path::PathBuf::from);
     let icon =
         eframe::icon_data::from_png_bytes(include_bytes!("../../../assets/kohdalab-iv-window.png"))
@@ -147,6 +150,7 @@ fn command_measure(args: &[String]) -> Result<(), String> {
         source_model: argument(args, "--source-model").unwrap_or_else(|| "YOKOGAWA_GS210".into()),
         meter_model: argument(args, "--meter-model").unwrap_or_else(|| "AGILENT_34411A".into()),
         pattern: iv_core::Pattern::Linear,
+        source_compliance: (!simulation).then_some(0.001),
         step: 0.001,
         ..Default::default()
     };
@@ -187,7 +191,11 @@ fn command_measure(args: &[String]) -> Result<(), String> {
         if state.run_id > 0
             && matches!(
                 state.phase,
-                Phase::Completed | Phase::Stopped | Phase::Failed | Phase::ComplianceStop
+                Phase::Completed
+                    | Phase::Stopped
+                    | Phase::Failed
+                    | Phase::ComplianceStop
+                    | Phase::SourceLimitStop
             )
         {
             println!(

@@ -1,4 +1,11 @@
 //! IPC acceptance checks: continuous idle monitoring must not create sweep data.
+#[cfg(unix)]
+mod protection_fixture {
+    include!("support/source_protection.rs");
+    pub(super) fn decorate(s: String, dir: &std::path::Path) -> String {
+        with_source_protection(s, "op", dir)
+    }
+}
 use serde_json::{Value, json};
 use std::io::{BufRead, BufReader, Write};
 use std::process::{Child, ChildStdin, Command, Stdio};
@@ -319,6 +326,7 @@ fn native_mock_idle_monitor_uses_actual_source_mode_and_never_enables_output() {
         " if [ \"$op\" = QUERY ] && [ \"$address\" = 3 ] && [ \"$payload\" = '{}' ] && [ -f '{}' ]; then response='{}'; fi\n printf 'KIV\\tOK\\t%s\\n'",
         hex(":OUTP?\n"), off_failure.display(), hex("1")
     ));
+    let script = protection_fixture::decorate(script, &directory);
     for name in ["kohdalab-gpib-helper", "kohdalab-usbtmc-helper"] {
         let path = directory.join(name);
         std::fs::write(&path, &script).unwrap();

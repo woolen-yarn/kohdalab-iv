@@ -64,9 +64,95 @@ pub(super) fn output_state(reply: &str) -> Result<OutputState, String> {
     }
 }
 
+/// Decode only documented condition bits. Bit12 (TRP) is not a condition
+/// bit and must not be mistaken for the event-register trip flag.
+#[derive(Clone, Debug, serde::Serialize)]
+pub(super) struct SourceCondition {
+    pub register: u16,
+    pub low_limiter: bool,
+    pub high_limiter: bool,
+    pub emergency: bool,
+}
+impl SourceCondition {
+    pub fn stopped(&self) -> bool {
+        self.low_limiter || self.high_limiter || self.emergency
+    }
+    pub fn indicator(&self) -> &'static str {
+        if self.emergency {
+            "EMR"
+        } else if self.low_limiter && self.high_limiter {
+            "H+L"
+        } else if self.high_limiter {
+            "H"
+        } else if self.low_limiter {
+            "L"
+        } else {
+            "none"
+        }
+    }
+}
+pub(super) fn source_condition(
+    reply: &str,
+    profile: iv_core::SourceProtectionProfile,
+) -> Result<SourceCondition, String> {
+    let register = reply.trim().parse::<u16>()
+        .map_err(|_| format!("Cannot read source hardware limiter status: invalid condition register {reply:?}. Output OFF will be verified."))?;
+    Ok(SourceCondition {
+        register,
+        low_limiter: register & profile.low_limiter_mask != 0,
+        high_limiter: register & profile.high_limiter_mask != 0,
+        emergency: register & profile.emergency_mask != 0,
+    })
+}
+pub(super) fn verify_hardware_limit(expected: f64, reply: &str) -> Result<(), String> {
+    let actual = reply
+        .trim()
+        .parse::<f64>()
+        .ok()
+        .filter(|v| v.is_finite() && *v > 0.0);
+    if actual.is_some_and(|actual| (actual / expected - 1.0).abs() < 1e-6) {
+        Ok(())
+    } else {
+        Err(format!(
+            "Source hardware protection limit mismatch: requested {expected:e}, returned {reply:?}. Output will remain off."
+        ))
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn gs210_condition_bits_are_strict_and_non_monitor_capability_is_explicit() {
+        let profile = iv_core::source_protection_profile("YOKOGAWA_GS210")
+            .unwrap()
+            .unwrap();
+        assert_eq!(profile.query, ":STAT:COND?");
+        for (reply, label) in [
+            ("+2304\n", "H"),
+            ("1280", "L"),
+            ("3328", "H+L"),
+            ("8448", "EMR"),
+        ] {
+            let status = source_condition(reply, profile).unwrap();
+            assert!(status.stopped());
+            assert_eq!(status.indicator(), label);
+        }
+        for value in ["0", "256", "4096"] {
+            assert!(!source_condition(value, profile).unwrap().stopped());
+        }
+        for value in ["", "1.0", "NaN", "-1", "65536", "H"] {
+            assert!(source_condition(value, profile).is_err());
+        }
+        assert!(
+            iv_core::source_protection_profile("YOKOGAWA_7651")
+                .unwrap()
+                .is_none()
+        );
+        assert!(verify_hardware_limit(1.0, "1e0").is_ok());
+        assert!(verify_hardware_limit(1.0, "2e0").is_err());
+    }
+
     #[test]
     fn all_source_profile_ranges_use_their_own_command_units() {
         for model in ["YOKOGAWA_GS210", "YOKOGAWA_7651"] {

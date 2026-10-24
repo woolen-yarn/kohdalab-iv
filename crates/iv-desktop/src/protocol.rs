@@ -45,6 +45,34 @@ pub enum Command {
     Shutdown,
 }
 
+/// Latched safety event from the run's frozen configuration, not GUI edits.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ProtectionKind {
+    SourceCompliance,
+    MeasurementLimit,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct ProtectionAlert {
+    pub kind: ProtectionKind,
+    pub limit: f64,
+    pub unit: String,
+    pub observed: Option<f64>,
+    pub indicator: String,
+}
+impl ProtectionAlert {
+    pub(crate) fn measurement(config: &RunConfig, observed: f64) -> Self {
+        Self {
+            kind: ProtectionKind::MeasurementLimit,
+            limit: config.compliance,
+            unit: if config.mode == Mode::Iv { "A" } else { "V" }.into(),
+            observed: Some(observed),
+            indicator: String::new(),
+        }
+    }
+}
+
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct Snapshot {
     pub phase: Phase,
@@ -69,6 +97,8 @@ pub struct Snapshot {
     pub live: Option<Record>,
     #[serde(default)]
     pub live_error: String,
+    #[serde(default)]
+    pub protection_alert: Option<ProtectionAlert>,
     pub path: String,
     #[serde(flatten)]
     pub error: Failure,
@@ -101,6 +131,7 @@ impl Default for Snapshot {
             last: None,
             live: None,
             live_error: String::new(),
+            protection_alert: None,
             path: String::new(),
             source_resource: String::new(),
             meter_resource: String::new(),

@@ -45,6 +45,16 @@ of physical output accuracy. The policy applies to all supported meter models.
 Software compliance can only react to acquired samples; retain conservative
 instrument hardware compliance and a manual way to disable output.
 
+Source hardware protection and external Meter software stop are independent.
+In four-terminal wiring, the source sees lead/contact drops that the voltage
+probes may not measure. A below-limit Meter voltage does not prove the source
+is delivering its programmed current. GS210 H/L and EMR are monitored through
+`:STAT:COND?` without /MON; these are finite-rate software checks, not an
+interlock. A limited target is excluded from analysis, and raw evidence retained.
+A failure to read/verify protection requests OFF and stops the run. Settings
+shows actual source protection and selected range. Raising either limit requires
+checking the sample, wiring and instrument ratings.
+
 ---
 
 # 安全に関する注意
@@ -83,3 +93,10 @@ KohdaLab IV は電気的なソースおよび測定計測器を制御します�
 ランプ・待機中も取得した各メーター読み値に制限を適用します。制限到達時は追加の機器照会や保存より先に OFF を要求し、出力を入れたまま終了ランプを行いません。通常の Stop はゼロへ戻してから OFF にします。ライブ保護の読み値は実行記録に残し、通常のスイープ点や抵抗フィットには混ぜません。平均化中の停止後にゼロへ戻った値を、変換時のソース読み値として保存しません。
 
 出力開始前に機能・設定レンジ（GS210 は SI 単位、7651 はレンジコード）・ゼロ設定を確認し、開始後に ON 状態を確認します。これは設定値の照合であり、外部校正や実出力の精度保証ではありません。対応する両ソース・全メーターに共通の方針です。ソフトウェアは取得済みの読み値にしか反応できません。機器本体の制限と出力を手動で切る手段を維持してください。
+
+Sourceのハードウェア保護と外部Meterのソフトウェア停止は独立です。4端子配線では、
+Sourceが見る配線・接点の電圧降下をMeterが含まない場合があります。Meterの電圧が
+制限以下でも、設定電流が実際に流れている保証にはなりません。GS210のH/L・EMRは
+/MON不要で監視しますが、有限周期のソフトウェア照会でありインターロックではありません。
+保護状態の取得・確認に失敗した場合も停止してOFFを要求します。制限値を上げる前に
+試料・配線・計測器の定格を確認してください。

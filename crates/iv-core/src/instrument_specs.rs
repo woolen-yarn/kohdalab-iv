@@ -75,6 +75,41 @@ pub fn source_range_query(model: &str) -> Result<Option<&'static str>, String> {
         .and_then(toml::Value::as_str))
 }
 
+/// Reviewed non-clearing hardware status capability. Unsupported profiles
+/// return None; a malformed declared profile is an error, never guessed.
+#[derive(Clone, Copy, Debug)]
+pub struct SourceProtectionProfile {
+    pub query: &'static str,
+    pub low_limiter_mask: u16,
+    pub high_limiter_mask: u16,
+    pub emergency_mask: u16,
+}
+pub fn source_protection_profile(model: &str) -> Result<Option<SourceProtectionProfile>, String> {
+    let Some(profile) = sources()?
+        .get(model)
+        .and_then(|s| s.get("protection_status"))
+    else {
+        return Ok(None);
+    };
+    let mask = |key| {
+        profile
+            .get(key)
+            .and_then(toml::Value::as_integer)
+            .and_then(|v| u16::try_from(v).ok())
+            .filter(|v| *v != 0)
+            .ok_or_else(|| format!("Invalid source protection profile {model}: {key}"))
+    };
+    Ok(Some(SourceProtectionProfile {
+        query: profile
+            .get("query")
+            .and_then(toml::Value::as_str)
+            .ok_or_else(|| format!("Missing protection query for {model}"))?,
+        low_limiter_mask: mask("low_limiter_mask")?,
+        high_limiter_mask: mask("high_limiter_mask")?,
+        emergency_mask: mask("emergency_mask")?,
+    }))
+}
+
 pub fn simulation_display_precision(mode: Mode) -> Result<(Option<f64>, Option<f64>), String> {
     let (ranges, source_key, meter_key) = if mode == Mode::Iv {
         ("voltage_ranges", "resolution_V", "current_resolution_A")

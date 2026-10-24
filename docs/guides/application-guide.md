@@ -82,8 +82,36 @@ The Mac app is ad hoc signed and is not notarized.
    incompatible instrument. Only one GPIB adapter may be attached; both roles
    share its session. Disconnecting the source verifies output OFF first.
 4. Review Mode, Sweep and Start / End / Step in Measurement. Each quantity has
-   its own unit. Timing / Compliance opens a dialog with OK / Cancel;
+   its own unit. Settings… opens a dialog with OK / Cancel;
    extra timing settings and Readings per point (Repeat) are under Advanced.
+   **Source compliance** protects the source circuit,
+   including leads and contacts. **Measurement limit**
+   stops on the external meter reading; it does not set the meter range. Four-terminal probe voltage can stay
+   below its Meter stop while the source reaches its hardware voltage limit.
+   Both values have unit selectors, using A/mA/uA/nA/pA for V source or
+   V/mV/uV/nV/pV for I source. Unit changes preserve the physical value.
+   A compliance/measurement-limit stop shows an English popup with the actual
+   run limit, trigger reading/status, output-OFF verification and recovery advice.
+   The popup shows the limit and trigger/status, a colored OFF confirmation,
+   and a Review settings button. Extended guidance is under Details. The
+   settings shortcut is disabled if OFF is unverified or EMR is present.
+   A pulsing red badge with white LIMIT text stays beside LIVE on the Source/Meter monitor respectively,
+   with threshold details on hover and no change to plot height, even
+   after dismissing the popup, until the next run attempt. Neither event raises
+   limits or resumes output automatically. OFF failures are reported explicitly.
+   These are separate settings; do not increase either without checking the sample.
+   GS210 H/L and emergency status are queried without requiring the /MON option.
+   A hardware-limited target is excluded from analysis CSV and fitting; its meter
+   reply and condition register are retained in raw CSV and run metadata.
+   An invalid or unreadable protection status stops the run and requests OFF.
+   Source protection is checked after each ramp level, even with zero wait time,
+   before conversions, and after conversions before other readback queries.
+   The GS210 10/100 mV source ranges have fixed 200 mA current protection.
+   An explicitly lower Source current limit automatically selects an adjustable
+   range (at least 1 V); its coarser resolution also applies to sweep targets.
+   Settings displays the effective protection and selected source range.
+   Older settings preserve their previous range and protection until a protection
+   field is edited. Cancel restores the prior values.
    Repeat holds each source target, averages N meter readings and saves one
    CSV row; it does not repeat the sweep. NPLC stays under Meter.
    Source range and ramp step are automatic. Ramp step is the larger of the
@@ -402,7 +430,7 @@ ZIP 全体を展開します。Windows は `Install-Application.cmd` を実行�
 1. 左は Config / Source / Meter、中央は Measurement 操作とグラフ、右はログ／Field-Value 表です。背の高い `<` / `>` で左右列を折り畳みます。
 2. 各計測器グループで Device を選びます。試運転には `SIMULATED_SOURCE` と `SIMULATED_METER` を選びます。レガシーモデルは開発版で有効ですが実機検証は保留中です。
 3. 実機では Refresh を押し各 Resource を選択または入力して、独立した Connect または All Connect を使います。識別確認は不適合機器を拒否します。GPIB アダプターは一台だけで両役割がセッションを共有します。source 切断は先に output OFF を検証します。
-4. Measurement で Mode、Sweep、Start / End / Step を確認し、量ごとの単位を選びます。Timing / Compliance は OK / Cancel のダイアログで開き、追加時間設定と Readings per point (Repeat) は Advanced にあります。Repeat は各 source target を保持して N 回の meter 読みを平均し、CSV 一行を保存します。スイープ全体を反復するものではありません。NPLC は Meter にあります。source range/ramp step は自動で、ramp step はスイープ step と公称 source range の 1% の大きい方を選択 range で上限にします。Step は source 分解能の整数倍へ切り上げ（100 mA に達する GS210 スイープでは 1 uA）られ、有効 step/ramp を Start 下に表示します。Start/End も分解能に一致する必要があります。無効設定は理由を Start 下に表示し、制限を自動で増やしません。Start は問題と修正法を英語ダイアログで示します。実スイープは設定前に output OFF を検証して source level をゼロへ戻し、失敗時は開始しません。run JSON は要求値と有効値を保持し、CSV target は有効スイープを使います。
+4. Measurement で Mode、Sweep、Start / End / Step を確認し、量ごとの単位を選びます。Settings… は OK / Cancel のダイアログで開き、Source側のハードウェア保護とMeter側の読み値によるソフトウェア停止を別々に設定します。4端子測定では外部Meterの電圧とSource端子の電圧は異なります。GS210のH/L検出に/MONは不要です。制限到達点は通常CSV・fitから除外し、raw CSVとrun JSONに状態を保持します。10/100 mVレンジの電流保護は200 mA固定で、より小さなSource電流保護を明示すると調整可能なレンジ（1 V以上）を自動選択します。旧設定は保護値を編集するまで従来レンジを維持します。追加時間設定と Readings per point (Repeat) は Advanced にあります。Repeat は各 source target を保持して N 回の meter 読みを平均し、CSV 一行を保存します。スイープ全体を反復するものではありません。NPLC は Meter にあります。source range/ramp step は自動で、ramp step はスイープ step と公称 source range の 1% の大きい方を選択 range で上限にします。Step は source 分解能の整数倍へ切り上げ（100 mA に達する GS210 スイープでは 1 uA）られ、有効 step/ramp を Start 下に表示します。Start/End も分解能に一致する必要があります。無効設定は理由を Start 下に表示し、制限を自動で増やしません。Start は問題と修正法を英語ダイアログで示します。実スイープは設定前に output OFF を検証して source level をゼロへ戻し、失敗時は開始しません。run JSON は要求値と有効値を保持し、CSV target は有効スイープを使います。
 5. Directory は Browse で選び、File と Auto suffix を指定します。Run は Start / Stop / Save です。測定は取得時に自動保存され、完了または Stop クリーンアップ後の Save は完全 CSV と `.run.json` のコピーを選ばせます。間引いたグラフは出力せず、既存ファイルを上書きしません。別の Output Off ボタンはありません。Stop と終了は source クリーンアップと output-off 検証を維持し、`output_off` IPC は CLI/Python/Notebook から利用できます。cleanup が Failed または output Unknown のときは前面パネルを確認し、再接続前に Disconnect で cleanup を再試行します。未検証出力状態を安全と扱いません。
 6. status strip は進捗、抵抗、コンダクタンスを示します。右ログは検出・測定中も表示され、Field / Value は保存済み CSV 14 フィールドを切替え、切詰めた値はホバーで確認します。
 7. Config Browse は JSON を選び、Load / Save は表示パスを使います。Rust デスクトップ設定形式はネイティブ Rust 形式です。
