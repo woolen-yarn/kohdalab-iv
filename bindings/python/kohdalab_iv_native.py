@@ -13,8 +13,8 @@ import time
 # Keep this contract deliberately independent of the package release number.
 # It describes the JSON-lines engine protocol, not the Python distribution.
 API_VERSION = 1
-SETTINGS_SCHEMA_VERSION = 1
-RUN_METADATA_SCHEMA_VERSION = 6
+SETTINGS_SCHEMA_VERSION = 2
+RUN_METADATA_SCHEMA_VERSION = 7
 CSV_SCHEMA = "analysis_v3"
 _MISSING = object()
 
@@ -311,11 +311,13 @@ class NativeIV:
         values = copy.deepcopy(self.default_config)
         values.update(getattr(self, "_models", {}))
         values.update(config or {})
+        if values.get("source_compliance") is not None and "source_compliance" not in self.default_config:
+            raise RuntimeError("Independent Source protection requires a newer KohdaLab IV engine. Upgrade the application before running this configuration.")
         previous = self.snapshot.get("run_id", 0)
         self._send("run", path=str(Path(path).resolve()), config=values)
         try:
             return self.wait(lambda s: s.get("run_id", 0) > previous and
-                s.get("phase") in ("Completed", "Stopped", "Compliance stop", "Failed"), timeout)
+                s.get("phase") in ("Completed", "Stopped", "Compliance stop", "Source limit stop", "Failed"), timeout)
         except BaseException:
             # Queued stop and OFF are processed by the Rust engine even if a
             # caller timeout/interrupt prevents waiting for its response here.

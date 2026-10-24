@@ -12,7 +12,10 @@ use rust_decimal::Decimal;
 use serde::{Deserialize, Serialize};
 
 mod instrument_specs;
-pub use instrument_specs::{meter_display_queries, source_display_resolution, source_range_query};
+pub use instrument_specs::{
+    SourceProtectionProfile, meter_display_queries, source_display_resolution,
+    source_protection_profile, source_range_query,
+};
 
 mod catalog;
 mod measurements;
@@ -123,6 +126,10 @@ pub struct RunConfig {
     pub source_limit: f64,
     /// Requested software compliance, A for IV and V for VI.
     pub compliance: f64,
+    /// Independent source hardware protection, A for IV or V for VI.
+    /// None preserves old configs: use the meter software stop value.
+    #[serde(default)]
+    pub source_compliance: Option<f64>,
     pub settle_s: f64,
     pub start_settle_s: f64,
     pub nplc: f64,
@@ -155,6 +162,7 @@ impl Default for RunConfig {
             custom_points: Vec::new(),
             source_limit: 0.001,
             compliance: 0.001,
+            source_compliance: None,
             settle_s: 0.2,
             start_settle_s: 0.5,
             nplc: 1.0,
@@ -225,6 +233,8 @@ struct RangeSpec {
     max_abs_a: Option<f64>,
     #[serde(rename = "resolution_A")]
     resolution_a: Option<f64>,
+    #[serde(default)]
+    fixed_current_limit_a: Option<f64>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -382,13 +392,31 @@ fn select_range(
     model: &str,
     mode: Mode,
     maximum: f64,
+    requested_protection: Option<f64>,
 ) -> Result<(f64, f64, f64), String> {
+    let effective_protection = requested_protection
+        .map(|value| {
+            finite_positive(value, "Source protection limit", None)?;
+            quantized_hardware_compliance(spec, model, mode, value)
+        })
+        .transpose()?;
     let entries = match mode {
         Mode::Iv => &spec.voltage_ranges,
         Mode::Vi => &spec.current_ranges,
     };
     entries
         .iter()
+        // Honor an explicit Source hardware limit without silently weakening
+        // it: GS210 divider ranges are ineligible below their fixed 200 mA.
+        // Legacy None preserves the previous range/physical limit behaviour.
+        .filter(|entry| {
+            mode != Mode::Iv
+                || effective_protection.is_none_or(|limit| {
+                    entry
+                        .fixed_current_limit_a
+                        .is_none_or(|fixed| fixed <= limit + f64::EPSILON)
+                })
+        })
         .filter_map(|entry| match mode {
             Mode::Iv => entry
                 .max_abs_v
@@ -443,7 +471,7 @@ fn quantized_hardware_compliance(
     };
     if requested > maximum {
         return Err(format!(
-            "compliance {requested} exceeds {model} hardware maximum {maximum}."
+            "Source protection limit (source_compliance) {requested} exceeds {model} hardware maximum {maximum}."
         ));
     }
     if !resolution.is_finite() || resolution <= 0.0 {
@@ -498,8 +526,13 @@ pub fn prepare_config(config: &RunConfig) -> Result<RunConfig, String> {
     // Validate the meter here as well so UI previews report a bad model before
     // a run is started. `plan` validates its mode-dependent limits below.
     meter_spec(&config.meter_model)?;
-    let (source_range, range_maximum, resolution) =
-        select_range(&source, &config.source_model, config.mode, maximum)?;
+    let (source_range, range_maximum, resolution) = select_range(
+        &source,
+        &config.source_model,
+        config.mode,
+        maximum,
+        config.source_compliance,
+    )?;
     let increment = decimal(resolution, "source resolution")?;
     let requested = decimal(config.step, "step")?;
     if requested.is_zero() {
@@ -561,7 +594,13 @@ pub fn plan(config: &RunConfig) -> Result<Plan, String> {
         return Err("repeat must be >= 1.".to_owned());
     }
     finite_positive(config.source_limit, "source_limit", None)?;
-    finite_positive(config.compliance, "compliance", None)?;
+    finite_positive(config.compliance, "Meter stop limit (compliance)", None)?;
+    let source_protection = config.source_compliance.unwrap_or(config.compliance);
+    finite_positive(
+        source_protection,
+        "Source protection limit (source_compliance)",
+        None,
+    )?;
     finite_positive(config.ramp_step, "ramp_step", None)?;
     finite_positive(config.nplc, "nplc", None)?;
     if config.average_count == 0 || config.average_count > 10_000 {
@@ -601,7 +640,7 @@ pub fn plan(config: &RunConfig) -> Result<Plan, String> {
     if config.compliance > meter_input_limit + f64::EPSILON {
         let unit = if config.mode == Mode::Iv { "A" } else { "V" };
         return Err(format!(
-            "compliance {} {} exceeds {} meter maximum input {} {}.",
+            "Meter stop limit (compliance) {} {} exceeds {} meter maximum input {} {}.",
             config.compliance, unit, config.meter_model, meter_input_limit, unit
         ));
     }
@@ -617,8 +656,13 @@ pub fn plan(config: &RunConfig) -> Result<Plan, String> {
     } else {
         config.start.abs().max(config.stop.abs())
     };
-    let (source_range, range_maximum, resolution) =
-        select_range(&source, &config.source_model, config.mode, maximum)?;
+    let (source_range, range_maximum, resolution) = select_range(
+        &source,
+        &config.source_model,
+        config.mode,
+        maximum,
+        config.source_compliance,
+    )?;
     let unit = if config.mode == Mode::Vi { "A" } else { "V" };
     let start = if config.pattern != Pattern::CustomList {
         aligned_value(config.start, resolution, "Start", unit)?
@@ -641,12 +685,7 @@ pub fn plan(config: &RunConfig) -> Result<Plan, String> {
     if config.ramp_step > range_maximum + f64::EPSILON {
         return Err("ramp_step exceeds the selected source range.".to_owned());
     }
-    aligned_value(
-        config.ramp_step,
-        resolution,
-        "Ramp step (Timing / Compliance)",
-        unit,
-    )?;
+    aligned_value(config.ramp_step, resolution, "Ramp step (Settings)", unit)?;
     let base_points = match config.pattern {
         Pattern::CustomList => {
             if config.custom_points.is_empty() {
@@ -710,8 +749,21 @@ pub fn plan(config: &RunConfig) -> Result<Plan, String> {
         &source,
         &config.source_model,
         config.mode,
-        config.compliance,
+        source_protection,
     )?;
+    // GS210 low-voltage ranges use a divider and have a fixed 200 mA
+    // current limiter (manual §5.4). Report/program the physical setting,
+    // rather than promising an unavailable lower hardware threshold.
+    let hardware_compliance = if config.mode == Mode::Iv {
+        source
+            .voltage_ranges
+            .iter()
+            .find(|range| range.command_value == source_range)
+            .and_then(|range| range.fixed_current_limit_a)
+            .unwrap_or(hardware_compliance)
+    } else {
+        hardware_compliance
+    };
 
     let targets = base_points
         .iter()
@@ -1407,6 +1459,10 @@ mod tests {
     #[test]
     fn compliance_is_quantized_up_and_software_value_is_retained() {
         let config = RunConfig {
+            start: -0.2,
+            stop: 0.2,
+            step: 0.1,
+            source_limit: 1.0,
             compliance: 0.0014,
             ..RunConfig::default()
         };
@@ -1414,6 +1470,58 @@ mod tests {
         // The plan's hardware setting is separate from the caller-owned
         // software limit, which the measurement engine enforces on readings.
         assert_eq!(config.compliance, 0.0014);
+    }
+
+    #[test]
+    fn source_hardware_and_meter_stop_limits_are_independent_and_legacy_is_preserved() {
+        let mut config = RunConfig {
+            mode: Mode::Vi,
+            pattern: Pattern::Linear,
+            start: -0.0004,
+            stop: 0.0004,
+            step: 0.00004,
+            source_limit: 0.001,
+            compliance: 0.2,
+            source_compliance: Some(5.0),
+            ..Default::default()
+        };
+        assert_eq!(plan(&config).unwrap().hardware_compliance, 5.0);
+        assert_eq!(prepare_config(&config).unwrap().compliance, 0.2);
+        config.source_compliance = None;
+        assert_eq!(plan(&config).unwrap().hardware_compliance, 1.0);
+        for invalid in [0.0, -1.0, f64::NAN, f64::INFINITY, 31.0] {
+            config.source_compliance = Some(invalid);
+            assert!(
+                plan(&config).is_err(),
+                "invalid source protection {invalid}"
+            );
+        }
+        config.source_compliance = Some(1.1);
+        assert_eq!(plan(&config).unwrap().hardware_compliance, 2.0);
+    }
+
+    #[test]
+    fn low_voltage_gs210_range_reports_the_fixed_hardware_current_limit() {
+        let mut config = RunConfig {
+            compliance: 0.0001,
+            ..Default::default()
+        };
+        let planned = plan(&config).unwrap();
+        assert_eq!(planned.source_range, 0.01);
+        assert_eq!(planned.hardware_compliance, 0.2);
+        config.source_compliance = Some(0.002);
+        let protected = plan(&config).unwrap();
+        assert_eq!(protected.source_range, 1.0);
+        assert_eq!(protected.hardware_compliance, 0.002);
+        assert_eq!(config.compliance, 0.0001);
+        config.source_compliance = Some(0.2);
+        assert_eq!(plan(&config).unwrap().source_range, 0.01);
+        let legacy = RunConfig {
+            source_model: "YOKOGAWA_7651".into(),
+            source_compliance: Some(0.002),
+            ..config
+        };
+        assert_eq!(plan(&legacy).unwrap().hardware_compliance, 0.005);
     }
 
     #[test]

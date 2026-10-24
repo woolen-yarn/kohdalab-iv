@@ -78,7 +78,9 @@ impl Client {
                 }
             }
             if let Ok(mut state) = reader_state.lock() {
-                if !matches!(state.phase, Phase::Completed | Phase::Stopped | Phase::Idle) {
+                if !matches!(state.phase, Phase::Completed | Phase::Stopped | Phase::Idle)
+                    && !(state.phase == Phase::SourceLimitStop && state.output == OutputState::Off)
+                {
                     state.phase = Phase::Failed;
                     state.error =
                         "The measurement engine exited. Reconnect before continuing.".into();

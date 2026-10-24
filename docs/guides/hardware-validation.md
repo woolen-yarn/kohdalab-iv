@@ -32,7 +32,7 @@ This simulation does not qualify physical communication or measurement accuracy.
 ## Review and run a small sweep
 
 In the GUI, select the source mode and a conservative range, compliance, ramp,
-settling time, NPLC, and output directory. Review Timing / Compliance before
+settling time, NPLC, and output directory. Review Settings… before
 Start. Keep the first sweep as small as the sample and instrument allow.
 
 1. Watch the source front panel and check measured sign and approximate magnitude.
@@ -81,7 +81,7 @@ preserve the log, and resolve the fault before increasing the range.
 ## 小さなスイープを確認・実行する
 
 GUI でソースモード、保守的な範囲、コンプライアンス、ランプ、待機時間、NPLC、出力ディレクトリを
-選びます。Start の前に Timing / Compliance を確認してください。最初のスイープは、試料と計測器が
+選びます。Start の前に Settings… を確認してください。最初のスイープは、試料と計測器が
 許容する範囲でできるだけ小さく保ちます。
 
 1. ソース前面パネルを監視し、測定値の符号とおおよその大きさを確認します。

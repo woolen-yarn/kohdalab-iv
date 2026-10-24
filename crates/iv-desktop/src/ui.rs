@@ -18,7 +18,7 @@ use widgets::{
 };
 
 use crate::client::Client;
-use crate::protocol::{Command, Snapshot};
+use crate::protocol::{Command, ProtectionAlert, ProtectionKind, Snapshot};
 use eframe::egui::{self, Color32, RichText, Stroke, Vec2};
 use egui_plot::{
     Legend, Line, LineStyle, MarkerShape, Plot, PlotMemory, PlotPoint, PlotPoints, Points,
@@ -47,6 +47,8 @@ struct SweepPreview {
     effective_ramp: f64,
     requested_step: f64,
     planned_points: usize,
+    source_range: f64,
+    hardware_compliance: f64,
     route: Vec<f64>,
     unit: &'static str,
     custom: bool,
@@ -77,6 +79,7 @@ pub struct IvApp {
     config_path: String,
     notice: String,
     start_error: Option<String>,
+    protection_dialog: Option<ProtectionAlert>,
     save_notice: Option<String>,
     logs: Vec<String>,
     started: Instant,
@@ -125,6 +128,10 @@ impl IvApp {
             };
             settings.config.start_settle_s = 0.03;
             settings.config.settle_s = 0.02;
+            if std::env::args().any(|arg| arg == "--gui-limit-smoke") {
+                settings.config.compliance = 0.5e-6;
+                settings.config.source_compliance = Some(0.001);
+            }
             settings.output_dir = std::env::temp_dir()
                 .join("kohdalab-iv-smoke")
                 .display()
@@ -135,6 +142,7 @@ impl IvApp {
                 settings.meter = meter;
                 settings.config = RunConfig {
                     pattern: Pattern::Linear,
+                    source_compliance: Some(0.001),
                     step: 0.001,
                     ..Default::default()
                 };
@@ -144,6 +152,11 @@ impl IvApp {
             settings.source_model = "SIMULATED_SOURCE".into();
             settings.meter_model = "SIMULATED_METER".into();
         }
+        // Keep an existing source-protection request paired with its mode.
+        // Fresh defaults deliberately remain `None` until the user edits
+        // a protection field in Settings, retaining the legacy hardware-follows-meter-stop policy.
+        settings.store_active_protection();
+        settings.activate_mode_protection();
         let preview = sweep_preview(&settings.config);
         let validated_config = settings.config.clone();
         let custom_text = settings
@@ -178,6 +191,7 @@ impl IvApp {
             config_path: settings_path().display().to_string(),
             notice: settings_notice,
             start_error: None,
+            protection_dialog: None,
             save_notice: None,
             logs: vec![],
             started: Instant::now(),
@@ -344,6 +358,17 @@ impl IvApp {
                     next.error
                 ));
             }
+            if next.protection_alert.is_some()
+                && matches!(
+                    next.phase,
+                    Phase::SourceLimitStop | Phase::ComplianceStop | Phase::Failed
+                )
+                && (next.protection_alert != self.state.protection_alert
+                    || next.phase != self.state.phase)
+            {
+                self.start_error = None;
+                self.protection_dialog = next.protection_alert.clone();
+            }
             let log = if next.error.is_empty() {
                 next.message.clone()
             } else {
@@ -433,6 +458,7 @@ impl IvApp {
             self.start_error = Some("The measurement request could not be sent. Check the log and reconnect the instruments before trying again.".into());
             return;
         }
+        self.protection_dialog = None;
         self.pending_run = true;
         self.pending_base = self.state.run_id;
         self.state.phase = Phase::Preparing;
@@ -614,6 +640,11 @@ impl IvApp {
             .is_some_and(|s| self.boot.elapsed().as_secs_f64() - s.time > 3.0);
         ui.add_space(4.0);
         ui.separator();
+        let alert = self
+            .state
+            .protection_alert
+            .as_ref()
+            .filter(|alert| protection_role(alert) == source);
         ui.horizontal(|ui| {
             ui.label(
                 RichText::new(if channel == 0 { "I" } else { "V" })
@@ -649,6 +680,51 @@ impl IvApp {
                 .size(9.0)
                 .color(if running { BLUE } else { MUTED }),
             );
+            // Reserve the same small slot in both states: no extra row,
+            // and neither plot height nor the output badge moves on a trip.
+            let bright = (self.boot.elapsed().as_millis() / 500).is_multiple_of(2);
+            let limit_label = if alert.is_some_and(|alert| alert.indicator.contains("EMR")) {
+                "FAULT"
+            } else if alert.is_some() {
+                "LIMIT"
+            } else {
+                ""
+            };
+            let (badge_rect, response) =
+                ui.allocate_exact_size(egui::vec2(34.0, 14.0), egui::Sense::hover());
+            if alert.is_some() {
+                ui.painter().rect_filled(
+                    badge_rect,
+                    3.0,
+                    if bright {
+                        Color32::from_rgb(220, 49, 66)
+                    } else {
+                        Color32::from_rgb(142, 39, 48)
+                    },
+                );
+                ui.painter().text(
+                    badge_rect.center(),
+                    egui::Align2::CENTER_CENTER,
+                    limit_label,
+                    egui::FontId::proportional(9.0),
+                    Color32::WHITE,
+                );
+            }
+            if let Some(alert) = alert {
+                ui.ctx().request_repaint_after(Duration::from_millis(100));
+                let mut detail = format!(
+                    "{}\nLimit: {}",
+                    protection_summary(alert).0,
+                    fmt_quantity(alert.limit, &alert.unit)
+                );
+                if let Some(value) = alert.observed {
+                    detail.push_str(&format!("\nMeasured: {}", fmt_quantity(value, &alert.unit)));
+                }
+                if !alert.indicator.is_empty() {
+                    detail.push_str(&format!("\nInstrument: {}", alert.indicator));
+                }
+                response.on_hover_text(detail);
+            }
             if source {
                 state_badge(
                     ui,
@@ -1029,19 +1105,11 @@ impl IvApp {
                     });
                 ui.end_row();
                 if self.settings.config.mode != old_mode {
-                    if old_mode == Mode::Iv {
-                        self.settings.current_compliance = self.settings.config.compliance;
-                    } else {
-                        self.settings.voltage_compliance = self.settings.config.compliance;
-                    }
+                    self.settings.store_active_protection();
                     let definition = measurement_definition(self.settings.config.mode);
                     self.settings.config = definition.default_config();
                     self.settings.units = [definition.preferred_unit_index; 3];
-                    self.settings.config.compliance = if self.settings.config.mode == Mode::Iv {
-                        self.settings.current_compliance
-                    } else {
-                        self.settings.voltage_compliance
-                    };
+                    self.settings.activate_mode_protection();
                     self.samples.clear();
                     self.rebuild_plot_series();
                     self.custom_text.clear();
@@ -1113,13 +1181,9 @@ impl IvApp {
                     ui.end_row();
                 }
                 form_label(ui, "", 45.0);
-                if button(ui, "Timing / Compliance…", width.min(196.0), true).clicked() {
-                    if self.settings.config.mode == Mode::Iv {
-                        self.settings.current_compliance = self.settings.config.compliance;
-                    } else {
-                        self.settings.voltage_compliance = self.settings.config.compliance;
-                    }
+                if button(ui, "Settings…", width.min(196.0), true).clicked() {
                     self.timing_before = Some((self.settings.clone(), self.custom_text.clone()));
+                    self.settings.store_active_protection();
                     self.timing_open = true;
                 }
                 ui.end_row();
@@ -1349,20 +1413,141 @@ impl IvApp {
         }
     }
 
+    fn protection_dialog(&mut self, ctx: &egui::Context) {
+        let Some(alert) = self.protection_dialog.clone() else {
+            return;
+        };
+        let off = self.state.output == OutputState::Off;
+        let emergency = alert.indicator.contains("EMR");
+        let (heading, action) = protection_summary(&alert);
+        let accent = if !off || emergency { RED } else { ORANGE };
+        let mut open_settings = false;
+        let response = egui::Modal::new(egui::Id::new("protection_stop"))
+            .frame(egui::Frame::popup(&ctx.style()).fill(BG).inner_margin(18))
+            .show(ctx, |ui| {
+                ui.set_width(380.0);
+                ui.label(RichText::new(heading).size(20.0).strong().color(accent));
+                ui.add_space(6.0);
+                ui.label(
+                    RichText::new(if off {
+                        "Stopped · Source output OFF verified"
+                    } else {
+                        "Stopped · Output OFF not confirmed"
+                    })
+                    .color(if off {
+                        Color32::from_rgb(75, 192, 135)
+                    } else {
+                        RED
+                    }),
+                );
+                ui.add_space(14.0);
+                egui::Frame::new()
+                    .fill(INPUT)
+                    .corner_radius(8)
+                    .inner_margin(12)
+                    .show(ui, |ui| {
+                        ui.set_width(ui.available_width());
+                        egui::Grid::new("protection_values")
+                            .num_columns(2)
+                            .spacing([16.0, 8.0])
+                            .show(ui, |ui| {
+                                ui.label(RichText::new("Limit").color(MUTED));
+                                ui.label(
+                                    RichText::new(fmt_quantity(alert.limit, &alert.unit))
+                                        .size(20.0)
+                                        .strong()
+                                        .color(accent),
+                                );
+                                ui.end_row();
+                                if let Some(value) = alert.observed {
+                                    ui.label(RichText::new("Measured").color(MUTED));
+                                    ui.label(
+                                        RichText::new(fmt_quantity(value, &alert.unit)).size(18.0),
+                                    );
+                                    ui.end_row();
+                                } else if !alert.indicator.is_empty() {
+                                    ui.label(RichText::new("Instrument").color(MUTED));
+                                    ui.label(&alert.indicator);
+                                    ui.end_row();
+                                }
+                            });
+                    });
+                ui.add_space(14.0);
+                if !off {
+                    ui.label(
+                        RichText::new("Turn output OFF on the instrument first.")
+                            .strong()
+                            .color(RED),
+                    );
+                    ui.add_space(5.0);
+                }
+                ui.label(action);
+                ui.add_space(8.0);
+                ui.label(
+                    RichText::new("Raise limits only after checking the sample ratings.")
+                        .small()
+                        .color(MUTED),
+                );
+                ui.add_space(8.0);
+                egui::CollapsingHeader::new("Details").show(ui, |ui| {
+                    egui::ScrollArea::vertical()
+                        .max_height((ctx.content_rect().height() - 500.0).clamp(70.0, 180.0))
+                        .show(ui, |ui| {
+                            ui.label(protection_message(&alert, self.state.output));
+                            if !self.state.error.is_empty() {
+                                ui.label(self.state.error.as_str());
+                            }
+                        });
+                });
+                ui.add_space(14.0);
+                ui.horizontal(|ui| {
+                    if button(ui, "Close", 90.0, true).clicked() {
+                        ui.close();
+                    }
+                    let review = ui.add_enabled(
+                        off && !self.busy() && !emergency,
+                        egui::Button::new(RichText::new("Review settings").color(Color32::WHITE))
+                            .fill(BLUE)
+                            .min_size(egui::vec2(145.0, 28.0)),
+                    );
+                    if review.clicked() {
+                        open_settings = true;
+                        ui.close();
+                    }
+                });
+            });
+        if response.should_close() {
+            self.protection_dialog = None;
+            if open_settings {
+                self.timing_before = Some((self.settings.clone(), self.custom_text.clone()));
+                self.settings.store_active_protection();
+                self.timing_open = true;
+            }
+        }
+    }
+
     fn start_error_dialog(&mut self, ctx: &egui::Context) {
         let Some(reason) = self.start_error.clone() else {
             return;
         };
         let response = egui::Modal::new(egui::Id::new("start_error")).show(ctx, |ui| {
-            ui.set_width(380.0);
+            ui.set_width(420.0);
             ui.heading("Measurement needs attention");
             ui.add_space(8.0);
-            ui.label(reason);
+            egui::ScrollArea::vertical()
+                .max_height((ctx.content_rect().height() - 200.0).max(160.0))
+                .show(ui, |ui| {
+                    ui.label(reason);
+                });
             ui.add_space(8.0);
             ui.label(
-                RichText::new("Review the settings, then press Start again.")
-                    .small()
-                    .color(MUTED),
+                RichText::new(if self.state.output == OutputState::Off {
+                    "Review the settings before starting a new run."
+                } else {
+                    "Verify source output is OFF before continuing."
+                })
+                .small()
+                .color(MUTED),
             );
             ui.add_space(12.0);
             if button(ui, "OK", 80.0, true).clicked() {
@@ -1379,11 +1564,11 @@ impl IvApp {
             return;
         }
         let mut accepted = false;
-        let response = egui::Modal::new(egui::Id::new("timing_compliance"))
+        let response = egui::Modal::new(egui::Id::new("measurement_settings"))
             .frame(egui::Frame::popup(&ctx.style()).fill(BG).inner_margin(16))
             .show(ctx, |ui| {
                 ui.set_width(360.0);
-                ui.strong("Timing / Compliance");
+                ui.strong("Measurement Settings");
                 ui.add_space(8.0);
                 egui::ScrollArea::vertical().max_height((ctx.content_rect().height() - 150.0).clamp(200.0, 600.0)).show(ui, |ui| {
                     ui.add_enabled_ui(!self.busy(), |ui| {
@@ -1392,24 +1577,51 @@ impl IvApp {
 
                         });
                         ui.add_space(8.0);
-                        section(ui, "Compliance", |ui| {
+                        section(ui, "Protection and stop", |ui| {
                             let width = ui.available_width();
-                            ui.label("Current limit (V source)");
-                            quantity(ui, "current_compliance", &mut self.settings.current_compliance,
-                                &mut self.settings.compliance_units[0], "A", width, true);
+                            let effective_source = self.preview.as_ref().ok()
+                                .map(|preview| preview.hardware_compliance)
+                                .unwrap_or(self.settings.config.compliance);
+                            let (source_value, meter_value, source_unit, meter_unit, protection_unit) =
+                                match self.settings.config.mode {
+                                    Mode::Iv => (&mut self.settings.source_current_protection,
+                                        &mut self.settings.current_compliance,
+                                        &mut self.settings.source_protection_units[0],
+                                        &mut self.settings.compliance_units[0], "A"),
+                                    Mode::Vi => (&mut self.settings.source_voltage_protection,
+                                        &mut self.settings.voltage_compliance,
+                                        &mut self.settings.source_protection_units[1],
+                                        &mut self.settings.compliance_units[1], "V"),
+                                };
+                            let mut displayed_source = source_value.unwrap_or(effective_source);
+                            let original_source = displayed_source;
+                            let original_meter = *meter_value;
+                            ui.label("Source compliance")
+                                .on_hover_text("Limits the source output. Applies to the source circuit, including leads and contacts.");
+                            quantity(ui, "source_protection", &mut displayed_source,
+                                source_unit, protection_unit, width, true);
                             ui.add_space(8.0);
-                            ui.label("Voltage limit (I source)");
-                            quantity(ui, "voltage_compliance", &mut self.settings.voltage_compliance,
-                                &mut self.settings.compliance_units[1], "V", width, true);
-                            self.settings.config.compliance = if self.settings.config.mode == Mode::Iv {
-                                self.settings.current_compliance
-                            } else { self.settings.voltage_compliance };
-                            ui.label("Stop when |measured value| ≥ limit.\nChecked after every individual meter reading.");
+                            ui.label("Measurement limit")
+                                .on_hover_text("Stops the sweep when the external meter's measured magnitude reaches this value. This does not set the meter range.");
+                            quantity(ui, "meter_stop", meter_value,
+                                meter_unit, protection_unit, width, true);
+                            if displayed_source != original_source || *meter_value != original_meter {
+                                // A Meter-only edit preserves the actual source protection.
+                                // Opening/accepting unrelated timing settings preserves legacy None.
+                                *source_value = Some(displayed_source);
+                            }
+                            self.settings.activate_mode_protection();
+                            self.source_protection_effective_note(ui, protection_unit);
+                            ui.add_space(5.0);
+                            egui::CollapsingHeader::new("About limits").show(ui, |ui| {
+                                ui.label(RichText::new("Source compliance protects the source circuit, including leads and contacts. Measurement limit stops on the external meter reading; it does not set the meter range. In four-terminal wiring, the two voltages can differ. The instrument may round or constrain compliance. GS210 limiter detection does not require /MON.").small().color(MUTED));
+                            });
                         });
                         ui.add_space(8.0);
                         egui::CollapsingHeader::new("Advanced").show(ui, |ui| {
                             let unit = if self.settings.config.mode == Mode::Iv { "mV" } else { "mA" };
-                            number(ui, iv_core::parameter_definition("source_limit").unwrap().label, &mut self.settings.config.source_limit, 0.001, unit, 0.0..=f64::MAX);
+                            number(ui, "Maximum source target", &mut self.settings.config.source_limit, 0.001, unit, 0.0..=f64::MAX);
+                            ui.label(RichText::new("Software planning bound for Start, End, and custom targets. It is separate from source hardware protection.").small().color(MUTED));
                             number(ui, iv_core::parameter_definition("start_settle_s").unwrap().label, &mut self.settings.config.start_settle_s, 1.0, "", 0.0..=iv_core::MAX_SECONDS);
                             ui.label("Ramp step: automatic (at least the sweep step)");
                             number(ui, iv_core::parameter_definition("ramp_wait_s").unwrap().label, &mut self.settings.config.ramp_wait_s, 1.0, "", 0.0..=iv_core::MAX_SECONDS);
@@ -1448,6 +1660,50 @@ impl IvApp {
             self.timing_before = None;
             self.timing_open = false;
         }
+    }
+
+    fn source_protection_effective_note(&self, ui: &mut egui::Ui, unit: &str) {
+        let Ok(preview) = &self.preview else {
+            return;
+        };
+        let requested = self
+            .settings
+            .config
+            .source_compliance
+            .unwrap_or(self.settings.config.compliance);
+        let differs = (preview.hardware_compliance - requested).abs()
+            > preview.hardware_compliance.abs().max(requested.abs()) * f64::EPSILON * 8.0;
+        let gs210_low_voltage_range = self.settings.source_model == "YOKOGAWA_GS210"
+            && self.settings.config.mode == Mode::Iv
+            && preview.source_range <= 0.1;
+        let note = if gs210_low_voltage_range {
+            format!(
+                "GS210 10 mV / 100 mV range: fixed {} source current protection. The requested value cannot lower this hardware limiter.",
+                fmt_quantity(preview.hardware_compliance, unit),
+            )
+        } else {
+            format!(
+                "Effective source protection: {}. Source range: {}.",
+                fmt_quantity(preview.hardware_compliance, unit),
+                fmt_quantity(
+                    preview.source_range,
+                    if self.settings.config.mode == Mode::Iv {
+                        "V"
+                    } else {
+                        "A"
+                    }
+                ),
+            )
+        };
+        ui.label(
+            RichText::new(note)
+                .small()
+                .color(if differs || gs210_low_voltage_range {
+                    ORANGE
+                } else {
+                    MUTED
+                }),
+        );
     }
 
     fn detail_panel(&mut self, ctx: &egui::Context) {
@@ -1752,8 +2008,22 @@ impl eframe::App for IvApp {
         egui::CentralPanel::default()
             .frame(egui::Frame::new().fill(BG).inner_margin(8))
             .show(ctx, |ui| self.main_view(ui));
+        // Reproducible Settings screenshots use the existing simulator smoke path.
+        if self.smoke
+            && self.state.phase == Phase::Completed
+            && !self.timing_open
+            && !self.screenshot_requested
+            && std::env::args().any(|arg| arg == "--gui-settings-smoke")
+        {
+            self.timing_before = Some((self.settings.clone(), self.custom_text.clone()));
+            self.timing_open = true;
+        }
         self.timing_dialog(ctx);
-        self.start_error_dialog(ctx);
+        if self.protection_dialog.is_some() {
+            self.protection_dialog(ctx);
+        } else {
+            self.start_error_dialog(ctx);
+        }
         self.save_dialog(ctx);
         if self.busy() || self.state.connected {
             ctx.request_repaint_after(Duration::from_millis(33));
@@ -1772,10 +2042,21 @@ impl eframe::App for IvApp {
         if self.smoke && self.state.connected && self.state.run_id == 0 && !self.pending_run {
             self.start_run();
         }
+        let limit_smoke = self.smoke && std::env::args().any(|arg| arg == "--gui-limit-smoke");
+        let smoke_outcome = if limit_smoke {
+            self.state.phase == Phase::ComplianceStop
+                && self
+                    .state
+                    .protection_alert
+                    .as_ref()
+                    .is_some_and(|alert| alert.kind == ProtectionKind::MeasurementLimit)
+        } else {
+            self.state.phase == Phase::Completed && self.state.points == self.state.total
+        };
         if self.screenshot.is_some()
             && !self.screenshot_requested
             && self.started.elapsed() > Duration::from_secs(2)
-            && (!self.smoke || self.state.phase == Phase::Completed)
+            && (!self.smoke || smoke_outcome)
         {
             self.screenshot_requested = true;
             ctx.send_viewport_cmd(egui::ViewportCommand::Screenshot(Default::default()));
@@ -1799,8 +2080,7 @@ impl eframe::App for IvApp {
         }
         if self.smoke {
             ctx.request_repaint_after(Duration::from_millis(30));
-            if self.state.phase == Phase::Completed
-                && self.state.points == self.state.total
+            if smoke_outcome
                 && self.state.output == OutputState::Off
                 && self.state.error.is_empty()
                 && self.started.elapsed() > Duration::from_secs(4)
@@ -1826,6 +2106,61 @@ impl eframe::App for IvApp {
     }
 }
 
+fn protection_role(alert: &ProtectionAlert) -> bool {
+    alert.kind == ProtectionKind::SourceCompliance
+}
+
+fn protection_summary(alert: &ProtectionAlert) -> (&'static str, &'static str) {
+    match alert.kind {
+        ProtectionKind::SourceCompliance if alert.indicator.contains("EMR") => (
+            "Source protection triggered",
+            "Check the instrument and its temperature. Clear the emergency condition before restarting.",
+        ),
+        ProtectionKind::SourceCompliance => (
+            "Source compliance reached",
+            "Check wiring and contacts. Reduce the sweep range or review Source compliance.",
+        ),
+        ProtectionKind::MeasurementLimit => (
+            "Measurement limit reached",
+            "Reduce the sweep range or review Measurement limit.",
+        ),
+    }
+}
+
+fn protection_message(alert: &ProtectionAlert, output: OutputState) -> String {
+    let output_status = if output == OutputState::Off {
+        "Measurement stopped. Source output OFF verified."
+    } else {
+        "Measurement stopped. Source output OFF could not be verified. Turn output OFF on the instrument and check the connections before continuing."
+    };
+    let limit = fmt_quantity(alert.limit, &alert.unit);
+    let detail = match alert.kind {
+        ProtectionKind::SourceCompliance => {
+            let reason = if alert.indicator.contains("EMR") {
+                "Source emergency protection triggered. Check the instrument and its temperature before restarting."
+            } else {
+                "Source compliance reached. The source may no longer deliver the requested output."
+            };
+            format!(
+                "{reason}\n\nCurrent source compliance: {limit}\nInstrument status: {}\n\nCheck the sample, current-path contacts and wiring. Four-terminal Meter voltage can differ from the source terminal voltage. Reduce the sweep range, or review Settings > Source compliance. Increase compliance only if the sample and wiring ratings permit it.",
+                alert.indicator
+            )
+        }
+        ProtectionKind::MeasurementLimit => {
+            let reading = alert
+                .observed
+                .map(|value| fmt_quantity(value, &alert.unit))
+                .unwrap_or_else(|| "Unavailable".into());
+            format!(
+                "Measurement limit reached.\n\nCurrent measurement limit: {limit}\nTrigger reading: {reading}\n\nCheck the sample and wiring. Reduce the sweep range, or review Settings > Measurement limit. Increase the limit only if safe for the sample. Changing this limit does not change Source compliance."
+            )
+        }
+    };
+    format!(
+        "{detail}\n\n{output_status}\n\nThe run will not resume automatically. Review the settings, then press Start to begin a new run."
+    )
+}
+
 fn start_block_reason(config: &RunConfig, connected: bool, matching_modes: bool) -> Option<String> {
     if !connected {
         return Some("Connect both Source and Meter before starting. Click Refresh, select the correct resources, then click All Connect.".into());
@@ -1837,7 +2172,7 @@ fn start_block_reason(config: &RunConfig, connected: bool, matching_modes: bool)
         let help = if reason.contains("must include zero") {
             "For zero_centered, use endpoints on opposite sides of zero, or set one endpoint to zero. Otherwise choose linear or round_trip. The source will not be enabled."
         } else if reason.contains("exceeds effective limit") {
-            "Reduce Start / End, or review Source limit in Timing / Compliance > Advanced. Increase a limit only when it is safe for your setup."
+            "Reduce Start / End, or review Maximum source target in Settings > Advanced. Increase a limit only when it is safe for your setup."
         } else if reason.contains("must be a multiple") {
             "Set Start / End to whole multiples of the source resolution stated in the error. Step and ramp are adjusted automatically."
         } else if reason.contains("points") {
@@ -1845,7 +2180,7 @@ fn start_block_reason(config: &RunConfig, connected: bool, matching_modes: bool)
         } else if reason.contains("GS210 range") {
             "Reduce Start / End to values supported by the selected source."
         } else {
-            "Check Measurement and Timing / Compliance for an invalid value."
+            "Check Measurement Settings for an invalid value."
         };
         format!("{reason}\n\n{help}")
     })
@@ -1861,6 +2196,8 @@ fn sweep_preview(config: &RunConfig) -> Result<SweepPreview, String> {
         effective_ramp: effective.ramp_step,
         requested_step: config.step,
         planned_points: plan.points.len(),
+        source_range: plan.source_range,
+        hardware_compliance: plan.hardware_compliance,
         route: route_vertices(&plan.points),
         unit: if effective.mode == Mode::Vi { "A" } else { "V" },
         custom: effective.pattern == Pattern::CustomList,
@@ -2104,5 +2441,66 @@ mod tests {
         assert!(model_supported("ADCMT_7461A"));
         assert!(!model_supported("YOKOGAWA_GS200"));
         assert!(model_supported("YOKOGAWA_7651"));
+    }
+    #[test]
+    fn protection_popups_use_frozen_limits_and_never_claim_unverified_off() {
+        let source = ProtectionAlert {
+            kind: ProtectionKind::SourceCompliance,
+            limit: 5.0,
+            unit: "V".into(),
+            observed: None,
+            indicator: "H".into(),
+        };
+        assert!(protection_role(&source));
+        assert_eq!(protection_summary(&source).0, "Source compliance reached");
+        assert!(
+            protection_summary(&source)
+                .1
+                .contains("wiring and contacts")
+        );
+        let mut emergency = source.clone();
+        emergency.indicator = "EMR".into();
+        assert_eq!(
+            protection_summary(&emergency).0,
+            "Source protection triggered"
+        );
+        assert!(
+            protection_summary(&emergency)
+                .1
+                .contains("before restarting")
+        );
+        let text = protection_message(&source, OutputState::Off);
+        assert!(
+            text.contains("Current source compliance: 5.0000 V"),
+            "{text}"
+        );
+        assert!(text.contains("Instrument status: H"));
+        assert!(text.contains("OFF verified"));
+        assert!(text.contains("Settings > Source compliance"));
+        for output in [OutputState::Unknown, OutputState::On] {
+            let text = protection_message(&source, output);
+            assert!(!text.contains("OFF verified"));
+            assert!(text.contains("could not be verified"));
+        }
+        let meter = ProtectionAlert::measurement(
+            &RunConfig {
+                mode: Mode::Vi,
+                compliance: 0.2,
+                ..Default::default()
+            },
+            -0.3,
+        );
+        assert!(!protection_role(&meter));
+        assert_eq!(protection_summary(&meter).0, "Measurement limit reached");
+        assert!(
+            protection_summary(&meter)
+                .1
+                .contains("review Measurement limit")
+        );
+        let text = protection_message(&meter, OutputState::Off);
+        assert!(text.contains("Current measurement limit:"));
+        assert!(text.contains("Trigger reading: -300.0000 mV"), "{text}");
+        assert!(text.contains("Settings > Measurement limit"));
+        assert!(text.contains("will not resume automatically"));
     }
 }

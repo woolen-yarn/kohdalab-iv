@@ -3,6 +3,15 @@
 > **Language navigation / 言語案内:** The English historical record appears first, followed by a complete Japanese counterpart. Versions, dates, API names, commands, compatibility wording, and historical claims are preserved in both languages.
 > 英語の履歴記録を先に置き、その後に完全な日本語対訳を掲載します。バージョン、日付、API 名、コマンド、互換性の表現、履歴上の主張は両言語で保持します。
 
+## 1.3.0-alpha.12 — 2026-10-24
+
+- Show latched, pulsing Source/Meter live-monitor warnings and limit-stop popups with frozen run thresholds, trigger/status evidence, verified OFF status and safe recovery guidance. Preserve alerts on OFF failures and clear them on the next run attempt, including invalid attempts.
+
+- Separate Source hardware protection from the external Meter software stop in **Settings… / Measurement Settings**, including four-terminal wiring guidance and effective range/protection values.
+- Detect GS210 H/L and EMR with the non-clearing condition register without /MON, including zero-wait ramp steps. Request OFF before persisting a trigger; exclude the limited target from analysis CSV/fitting while retaining raw replies and structured stop metadata.
+- Verify programmed GS210 protection before enabling output. Account for fixed 200 mA protection in 10/100 mV ranges; an explicitly smaller current protection selects a compatible range. Preserve legacy range/resolution until protection fields are edited.
+- Use settings schema 2 and run metadata schema 7; keep the 18-column analysis CSV. Update Python terminal-state and compatibility handling.
+
 ## 1.3.0-alpha.11 — 2026-10-23
 
 - Fix zero-centered sweeps to follow 0 → End → Start → 0 within the entered bounds. Reject intervals excluding zero before enabling output; a zero endpoint is valid.
@@ -264,6 +273,15 @@
 ---
 
 # 変更履歴（日本語）
+
+## 1.3.0-alpha.12 — 2026-10-24
+
+- Source/Meterのライブ表示に制限到達の点滅警告を保持し、停止時の実設定値・トリガー・OFF確認結果・復旧案をポップアップ表示します。OFF失敗を明示し、次の実行要求（設定エラーを含む）で前回の警告を解除します。
+
+- **Settings… / Measurement Settings**でSource側のハードウェア保護と外部Meter側のソフトウェア停止を分離し、4端子配線の説明と実効レンジ・保護値を表示します。
+- GS210のH/L・EMRを/MON不要の非消去条件レジスタで検出します。0秒待機のランプも監視し、停止時は証跡保存より先にOFFを要求します。制限到達点は通常CSV・fitから除外し、生応答と停止情報を保持します。
+- 出力ON前にGS210の実設定保護値を確認します。10/100 mVレンジの200 mA固定保護を扱い、より小さい電流保護を明示した場合は対応レンジを選択します。旧設定のレンジ・分解能は保護欄を編集するまで維持します。
+- Settings schemaを2、run metadata schemaを7に更新し、18列の解析CSVは維持します。Pythonの終了状態と互換性判定も更新します。
 
 ## 1.3.0-alpha.11 — 2026-10-23
 

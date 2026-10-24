@@ -6,9 +6,9 @@
 use serde::{Deserialize, Serialize};
 
 /// On-disk GUI settings understood by this application.
-pub(crate) const SETTINGS_SCHEMA_VERSION: u32 = 1;
+pub(crate) const SETTINGS_SCHEMA_VERSION: u32 = 2;
 /// Sidecar `.run.json` metadata understood by this application.
-pub(crate) const RUN_METADATA_SCHEMA_VERSION: u32 = 6;
+pub(crate) const RUN_METADATA_SCHEMA_VERSION: u32 = 7;
 /// CSV field contract written by the native engine.
 pub(crate) const CSV_SCHEMA: &str = "analysis_v3";
 /// JSON-lines engine protocol understood by bundled clients.
@@ -51,8 +51,8 @@ mod tests {
             ProtocolInfo {
                 version: 1,
                 minimum_client_version: 1,
-                settings_schema_version: 1,
-                run_metadata_schema_version: 6,
+                settings_schema_version: 2,
+                run_metadata_schema_version: 7,
                 csv_schema: "analysis_v3".into(),
             }
         );

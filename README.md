@@ -27,19 +27,30 @@ Simulation example: instrument setup and live signals on the left, sweep and plo
 
 シミュレーション例です。左に計測器の設定とライブ信号、中央にスイープとプロット、右に保存値とログを表示します。
 
+<details>
+<summary>Compliance and measurement-limit alerts / 制限到達時の表示</summary>
+
+![Limit-stop popup and fixed-height live indicator](docs/images/limit-stop.png)
+
+A stopped simulation: the popup shows the threshold, trigger reading and verified output OFF. The live monitor keeps its height and pulses a white-on-red LIMIT badge. Review settings opens the matching measurement settings; output never resumes automatically.
+
+シミュレーション例です。上限値・トリガー値・出力OFFの確認結果を表示し、ライブ表示は高さを変えずに赤地白抜きのLIMITを点滅させます。Review settingsから設定を確認でき、出力は自動再開しません。
+
+</details>
+
 ## Downloads / ダウンロード
 
 | Channel / 配布チャネル | Version / バージョン | Platforms / 対応プラットフォーム |
 | --- | --- | --- |
 | Stable / 安定版 | [1.2.0](https://github.com/woolen-yarn/kohdalab-iv/releases/tag/portable-v1.2.0) | Windows x64 Setup / portable ZIP; macOS Apple silicon portable ZIP / Windows x64 セットアップ・ポータブル ZIP、macOS Apple silicon ポータブル ZIP |
-| Preview / プレビュー | [1.3.0-alpha.11](https://github.com/woolen-yarn/kohdalab-iv/releases/tag/preview-v1.3.0-alpha.11) | Windows x64 Setup / preview ZIP; macOS Apple silicon preview ZIP / Windows x64 セットアップ・プレビュー ZIP、macOS Apple silicon プレビュー ZIP |
+| Preview / プレビュー | [1.3.0-alpha.12](https://github.com/woolen-yarn/kohdalab-iv/releases/tag/preview-v1.3.0-alpha.12) | Windows x64 Setup / preview ZIP; macOS Apple silicon preview ZIP / Windows x64 セットアップ・プレビュー ZIP、macOS Apple silicon プレビュー ZIP |
 
 | Preview package / プレビューパッケージ | Kohdalab | Personal / 個人ミラー |
 | --- | --- | --- |
-| Windows Setup | [Download](https://github.com/Kohdalab/kohdalab-iv/releases/download/preview-v1.3.0-alpha.11/kohdalab-iv-1.3.0-alpha.11-windows-x64-Setup.exe) | [Download](https://github.com/woolen-yarn/kohdalab-iv/releases/download/preview-v1.3.0-alpha.11/kohdalab-iv-1.3.0-alpha.11-windows-x64-Setup.exe) |
-| Windows portable | [Download](https://github.com/Kohdalab/kohdalab-iv/releases/download/preview-v1.3.0-alpha.11/kohdalab-iv-1.3.0-alpha.11-windows-x64-preview.zip) | [Download](https://github.com/woolen-yarn/kohdalab-iv/releases/download/preview-v1.3.0-alpha.11/kohdalab-iv-1.3.0-alpha.11-windows-x64-preview.zip) |
-| Mac portable (Apple silicon) | [Download](https://github.com/Kohdalab/kohdalab-iv/releases/download/preview-v1.3.0-alpha.11/kohdalab-iv-1.3.0-alpha.11-macos-arm64-preview.zip) | [Download](https://github.com/woolen-yarn/kohdalab-iv/releases/download/preview-v1.3.0-alpha.11/kohdalab-iv-1.3.0-alpha.11-macos-arm64-preview.zip) |
-| Source build kit / ソースビルドキット | [Download](https://github.com/Kohdalab/kohdalab-iv/releases/download/preview-v1.3.0-alpha.11/kohdalab-iv-1.3.0-alpha.11-build-kit.zip) | [Download](https://github.com/woolen-yarn/kohdalab-iv/releases/download/preview-v1.3.0-alpha.11/kohdalab-iv-1.3.0-alpha.11-build-kit.zip) |
+| Windows Setup | [Download](https://github.com/Kohdalab/kohdalab-iv/releases/download/preview-v1.3.0-alpha.12/kohdalab-iv-1.3.0-alpha.12-windows-x64-Setup.exe) | [Download](https://github.com/woolen-yarn/kohdalab-iv/releases/download/preview-v1.3.0-alpha.12/kohdalab-iv-1.3.0-alpha.12-windows-x64-Setup.exe) |
+| Windows portable | [Download](https://github.com/Kohdalab/kohdalab-iv/releases/download/preview-v1.3.0-alpha.12/kohdalab-iv-1.3.0-alpha.12-windows-x64-preview.zip) | [Download](https://github.com/woolen-yarn/kohdalab-iv/releases/download/preview-v1.3.0-alpha.12/kohdalab-iv-1.3.0-alpha.12-windows-x64-preview.zip) |
+| Mac portable (Apple silicon) | [Download](https://github.com/Kohdalab/kohdalab-iv/releases/download/preview-v1.3.0-alpha.12/kohdalab-iv-1.3.0-alpha.12-macos-arm64-preview.zip) | [Download](https://github.com/woolen-yarn/kohdalab-iv/releases/download/preview-v1.3.0-alpha.12/kohdalab-iv-1.3.0-alpha.12-macos-arm64-preview.zip) |
+| Source build kit / ソースビルドキット | [Download](https://github.com/Kohdalab/kohdalab-iv/releases/download/preview-v1.3.0-alpha.12/kohdalab-iv-1.3.0-alpha.12-build-kit.zip) | [Download](https://github.com/woolen-yarn/kohdalab-iv/releases/download/preview-v1.3.0-alpha.12/kohdalab-iv-1.3.0-alpha.12-build-kit.zip) |
 
 Rust and Python are not required to run the packaged application. Current Windows
 artifacts are unsigned; download packages and checksums together from Releases.
@@ -103,6 +114,10 @@ Active-sweep protection checks every acquired meter reading, including live
 readings during ramps and settling. On software compliance, source OFF is
 requested before further instrument queries or saving; protection cleanup does
 not ramp with output enabled. Normal Stop still returns to zero before OFF.
+GS210 hardware H/L protection is checked separately from the external Meter
+software stop, including zero-wait ramps; a limited target is kept as raw evidence
+and excluded from analysis. **Settings…** separates Source compliance
+from Measurement limit and shows the effective source range/protection.
 Before enabling output, the engine verifies source function, programmed range,
 zero setting and output ON. This common policy covers both supported sources
 and every supported meter. See [safety notes](SAFETY.md) for limits.

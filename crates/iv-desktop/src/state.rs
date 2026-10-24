@@ -24,7 +24,7 @@ wire_states!(Phase {
     Idle => "Idle", Scanning => "Scanning", Connecting => "Connecting",
     Ready => "Ready", SwitchingMode => "Switching mode", Preparing => "Preparing",
     Running => "Running", CleaningUp => "Cleaning up", Failed => "Failed",
-    ComplianceStop => "Compliance stop", Stopped => "Stopped", Completed => "Completed",
+    ComplianceStop => "Compliance stop", SourceLimitStop => "Source limit stop", Stopped => "Stopped", Completed => "Completed",
 });
 wire_states!(OutputState { Unknown => "Unknown", Off => "Off", On => "On" });
 
@@ -159,6 +159,7 @@ mod tests {
             Phase::CleaningUp,
             Phase::Failed,
             Phase::ComplianceStop,
+            Phase::SourceLimitStop,
             Phase::Stopped,
             Phase::Completed,
         ] {
