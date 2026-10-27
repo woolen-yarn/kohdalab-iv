@@ -8,8 +8,9 @@ use std::time::{Duration, Instant};
 
 const SAFETY_NONE: u8 = 0;
 const SAFETY_STOP: u8 = 1;
-const SAFETY_OUTPUT_OFF: u8 = 2;
-const SAFETY_SHUTDOWN: u8 = 3;
+const SAFETY_GATE_OFF: u8 = 2;
+const SAFETY_OUTPUT_OFF: u8 = 3;
+const SAFETY_SHUTDOWN: u8 = 4;
 
 pub struct Client {
     child: Child,
@@ -93,6 +94,8 @@ impl Client {
                 }
                 state.connected = false;
                 state.source_connected = false;
+                state.source2_connected = false;
+                state.gate_connected = false;
                 state.meter_connected = false;
                 reader_revision.fetch_add(1, Ordering::Release);
             }
@@ -147,7 +150,11 @@ fn submit_command(
         safety.fetch_max(level, Ordering::AcqRel);
         return Ok(());
     }
-    if matches!(command, Command::Run { .. }) && safety.load(Ordering::Acquire) != SAFETY_NONE {
+    if matches!(
+        command,
+        Command::Run { .. } | Command::SetGateVoltage { .. }
+    ) && safety.load(Ordering::Acquire) != SAFETY_NONE
+    {
         return Err(
             "A safety command is pending. Wait for Stop or Output Off before starting a run."
                 .into(),
@@ -164,6 +171,7 @@ fn submit_command(
 fn safety_level(command: &Command) -> Option<u8> {
     match command {
         Command::Stop => Some(SAFETY_STOP),
+        Command::GateOutputOff => Some(SAFETY_GATE_OFF),
         Command::OutputOff => Some(SAFETY_OUTPUT_OFF),
         Command::Shutdown => Some(SAFETY_SHUTDOWN),
         _ => None,
@@ -173,6 +181,7 @@ fn safety_level(command: &Command) -> Option<u8> {
 fn safety_command(level: u8) -> Command {
     match level {
         SAFETY_STOP => Command::Stop,
+        SAFETY_GATE_OFF => Command::GateOutputOff,
         SAFETY_OUTPUT_OFF => Command::OutputOff,
         SAFETY_SHUTDOWN => Command::Shutdown,
         _ => Command::Heartbeat,
@@ -201,25 +210,13 @@ fn writer_loop<W: Write>(
     loop {
         let level = safety.load(Ordering::Acquire);
         if level != SAFETY_NONE {
-            // A command already removed from the queue counts toward the 16
-            // queued commands. Sending it before safety preserves FIFO: an
-            // earlier Run cannot arrive after its Stop command.
-            let mut drained = 0usize;
-            if let Some(command) = pending_normal.take() {
-                if write_command(&mut output, &command).is_err() {
-                    break;
-                }
-                drained += 1;
-            }
-            while drained < 16 {
+            // Discard queued operations rather than allow Run/Gate ON to
+            // execute after a safety request. Already-written commands see
+            // the engine reader's immediate cancellation latch.
+            pending_normal.take();
+            for _ in 0..16 {
                 match receive.try_recv() {
-                    Ok(command) => {
-                        if write_command(&mut output, &command).is_err() {
-                            alive.store(false, Ordering::Release);
-                            return output;
-                        }
-                        drained += 1;
-                    }
+                    Ok(_) => {}
                     Err(mpsc::TryRecvError::Empty) => break,
                     Err(mpsc::TryRecvError::Disconnected) => {
                         safety.fetch_max(SAFETY_SHUTDOWN, Ordering::AcqRel);
@@ -336,7 +333,7 @@ mod tests {
     }
 
     #[test]
-    fn pending_run_is_written_before_stop() {
+    fn safety_discards_queued_run_and_gate_before_they_can_energize() {
         let (sender, receiver) = mpsc::sync_channel(16);
         sender
             .send(Command::Run {
@@ -344,7 +341,14 @@ mod tests {
                 path: "result.csv".into(),
             })
             .unwrap();
-        let safety = Arc::new(AtomicU8::new(SAFETY_STOP));
+        sender
+            .send(Command::SetGateVoltage {
+                voltage: 1.0,
+                compliance: 0.001,
+                ramp_step: 0.01,
+            })
+            .unwrap();
+        let safety = Arc::new(AtomicU8::new(SAFETY_OUTPUT_OFF));
         let alive = Arc::new(AtomicBool::new(true));
         let writer = TestWriter::default();
         let bytes = writer.0.clone();
@@ -354,7 +358,7 @@ mod tests {
             std::thread::spawn(move || writer_loop(writer, receiver, thread_safety, thread_alive));
         let deadline = Instant::now() + Duration::from_secs(1);
         while Instant::now() < deadline {
-            if String::from_utf8_lossy(&bytes.lock().unwrap()).contains("\"stop\"") {
+            if String::from_utf8_lossy(&bytes.lock().unwrap()).contains("\"output_off\"") {
                 break;
             }
             std::thread::sleep(Duration::from_millis(5));
@@ -362,9 +366,10 @@ mod tests {
         submit_command(&sender, &safety, &alive, Command::Shutdown).unwrap();
         let _ = handle.join().unwrap();
         let wire = String::from_utf8(bytes.lock().unwrap().clone()).unwrap();
-        let run = wire.find("\"run\"").unwrap();
-        let stop = wire.find("\"stop\"").unwrap();
+        assert!(!wire.contains("\"run\""), "{wire}");
+        assert!(!wire.contains("\"set_gate_voltage\""), "{wire}");
+        let stop = wire.find("\"output_off\"").unwrap();
         let shutdown = wire.find("\"shutdown\"").unwrap();
-        assert!(run < stop && stop < shutdown, "wire order was {wire:?}");
+        assert!(stop < shutdown, "wire order was {wire:?}");
     }
 }

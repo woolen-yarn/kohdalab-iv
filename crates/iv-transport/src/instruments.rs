@@ -5,14 +5,14 @@ use iv_core::{InstrumentDialect, InstrumentRole, instrument_descriptor};
 
 fn catalog_role(role: Role) -> InstrumentRole {
     match role {
-        Role::Source => InstrumentRole::Source,
+        Role::Source | Role::Source2 | Role::Gate => InstrumentRole::Source,
         Role::Meter => InstrumentRole::Meter,
     }
 }
 
 pub fn default_model(role: Role) -> &'static str {
     match role {
-        Role::Source => "YOKOGAWA_GS210",
+        Role::Source | Role::Source2 | Role::Gate => "YOKOGAWA_GS210",
         Role::Meter => "AGILENT_34411A",
     }
 }
@@ -44,7 +44,9 @@ pub fn verify_model(role: Role, model: &str, identity: &str) -> Result<(), Strin
         InstrumentDialect::Yokogawa7651 => {
             (first.starts_with("7651") || first.starts_with("YOKOGAWA")) && has("7651")
         }
-        InstrumentDialect::Scpi if role == Role::Source => has("YOKOGAWA") && has("GS210"),
+        InstrumentDialect::Scpi if matches!(role, Role::Source | Role::Source2 | Role::Gate) => {
+            has("YOKOGAWA") && has("GS210")
+        }
         InstrumentDialect::Adc7461 => {
             (has("ADC") || has("ADCMT") || has("ADVANTEST")) && (has("7461A") || has("AD7461A"))
         }

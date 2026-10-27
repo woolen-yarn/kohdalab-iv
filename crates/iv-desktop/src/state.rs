@@ -3,9 +3,10 @@ use serde::{Deserialize, Serialize};
 use std::{fmt, ops::Deref};
 
 macro_rules! wire_states {
-    ($name:ident { $($variant:ident => $label:literal),+ $(,)? }) => {
+    ($(#[$enum_meta:meta])* $name:ident { $($(#[$variant_meta:meta])* $variant:ident => $label:literal),+ $(,)? }) => {
+        $(#[$enum_meta])*
         #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
-        pub(crate) enum $name { $(#[serde(rename = $label)] $variant),+ }
+        pub(crate) enum $name { $($(#[$variant_meta])* #[serde(rename = $label)] $variant),+ }
         impl $name {
             pub(crate) const fn as_str(self) -> &'static str {
                 match self { $(Self::$variant => $label),+ }
@@ -26,7 +27,7 @@ wire_states!(Phase {
     Running => "Running", CleaningUp => "Cleaning up", Failed => "Failed",
     ComplianceStop => "Compliance stop", SourceLimitStop => "Source limit stop", Stopped => "Stopped", Completed => "Completed",
 });
-wire_states!(OutputState { Unknown => "Unknown", Off => "Off", On => "On" });
+wire_states!(#[derive(Default)] OutputState { #[default] Unknown => "Unknown", Off => "Off", On => "On" });
 
 /// Internal execution activity, independent of the unchanged UI phase labels.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]

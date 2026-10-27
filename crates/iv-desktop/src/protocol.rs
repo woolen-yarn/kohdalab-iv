@@ -27,6 +27,24 @@ pub enum Command {
         simulation: bool,
         resource: String,
     },
+    ConnectSource2 {
+        #[serde(default = "default_source_model")]
+        model: String,
+        simulation: bool,
+        resource: String,
+    },
+    ConnectGate {
+        #[serde(default = "default_source_model")]
+        model: String,
+        simulation: bool,
+        resource: String,
+    },
+    SetGateVoltage {
+        voltage: f64,
+        compliance: f64,
+        ramp_step: f64,
+    },
+    GateOutputOff,
     ConnectMeter {
         #[serde(default = "default_meter_model")]
         model: String,
@@ -34,6 +52,8 @@ pub enum Command {
         resource: String,
     },
     DisconnectSource,
+    DisconnectSource2,
+    DisconnectGate,
     DisconnectMeter,
     Run {
         config: RunConfig,
@@ -60,6 +80,8 @@ pub struct ProtectionAlert {
     pub unit: String,
     pub observed: Option<f64>,
     pub indicator: String,
+    #[serde(default)]
+    pub source_index: Option<u8>,
 }
 impl ProtectionAlert {
     pub(crate) fn measurement(config: &RunConfig, observed: f64) -> Self {
@@ -69,12 +91,48 @@ impl ProtectionAlert {
             unit: if config.mode == Mode::Iv { "A" } else { "V" }.into(),
             observed: Some(observed),
             indicator: String::new(),
+            source_index: None,
         }
     }
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct Snapshot {
+    /// Acknowledged explicit safety commands, including cancellation before Run starts.
+    #[serde(default)]
+    pub safety_revision: u64,
+    #[serde(default)]
+    pub source2_connected: bool,
+    #[serde(default)]
+    pub source2_simulation: bool,
+    #[serde(default)]
+    pub source2_identity: String,
+    #[serde(default)]
+    pub source2_resource: String,
+    #[serde(default)]
+    pub source2_output: OutputState,
+    #[serde(default)]
+    pub source2_level: Option<f64>,
+    #[serde(default)]
+    pub source2_resolution: Option<f64>,
+    #[serde(default)]
+    pub balanced_active: bool,
+    #[serde(default)]
+    pub gate_connected: bool,
+    #[serde(default)]
+    pub gate_simulation: bool,
+    #[serde(default)]
+    pub gate_identity: String,
+    #[serde(default)]
+    pub gate_resource: String,
+    #[serde(default)]
+    pub gate_output: OutputState,
+    #[serde(default)]
+    pub gate_voltage: Option<f64>,
+    #[serde(default)]
+    pub gate_compliance: Option<f64>,
+    #[serde(default)]
+    pub gate_revision: u64,
     pub phase: Phase,
     pub message: String,
     pub connected: bool,
@@ -114,6 +172,23 @@ pub struct Snapshot {
 impl Default for Snapshot {
     fn default() -> Self {
         Self {
+            safety_revision: 0,
+            source2_connected: false,
+            source2_simulation: false,
+            source2_identity: String::new(),
+            source2_resource: String::new(),
+            source2_output: OutputState::Unknown,
+            source2_level: None,
+            source2_resolution: None,
+            balanced_active: false,
+            gate_connected: false,
+            gate_simulation: false,
+            gate_identity: String::new(),
+            gate_resource: String::new(),
+            gate_output: OutputState::Unknown,
+            gate_voltage: None,
+            gate_compliance: None,
+            gate_revision: 0,
             phase: Phase::Idle,
             message: "Choose your instruments or explore Simulation.".into(),
             connected: false,

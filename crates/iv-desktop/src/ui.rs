@@ -4,6 +4,7 @@
 
 use crate::state::{OutputState, Phase};
 
+mod control;
 mod formatting;
 mod history;
 mod settings;
@@ -56,6 +57,7 @@ struct SweepPreview {
 
 pub struct IvApp {
     client: Result<Client, String>,
+    control: Option<crate::gui_control::GuiControl>,
     settings: Settings,
     state: Snapshot,
     previous_phase: Option<Phase>,
@@ -66,6 +68,7 @@ pub struct IvApp {
     plot_series: [Vec<PlotPoint>; 3],
     plot_extent: [f64; 2],
     live_samples: VecDeque<LiveSample>,
+    source2_samples: VecDeque<LiveSample>,
     live_reading: Option<iv_core::Record>,
     last_live_timestamp: String,
     table_values: Vec<String>,
@@ -100,6 +103,7 @@ pub struct IvApp {
     ui_frames: usize,
     pending_run: bool,
     pending_base: u64,
+    pending_safety: u64,
 }
 
 impl IvApp {
@@ -128,6 +132,13 @@ impl IvApp {
             };
             settings.config.start_settle_s = 0.03;
             settings.config.settle_s = 0.02;
+            if std::env::args()
+                .any(|arg| arg == "--gui-balanced-smoke" || arg == "--gui-control-smoke")
+            {
+                settings.config.balanced_source = Some(iv_core::BalancedSourceConfig::default());
+                settings.config.source_compliance = Some(0.001);
+                settings.source2_model = "SIMULATED_SOURCE".into();
+            }
             if std::env::args().any(|arg| arg == "--gui-limit-smoke") {
                 settings.config.compliance = 0.5e-6;
                 settings.config.source_compliance = Some(0.001);
@@ -148,9 +159,15 @@ impl IvApp {
                 };
             }
         }
+        settings.migrate_inventory();
         if settings.simulation {
             settings.source_model = "SIMULATED_SOURCE".into();
             settings.meter_model = "SIMULATED_METER".into();
+            if settings.config.balanced_source.is_some() {
+                settings.source2_model = "SIMULATED_SOURCE".into();
+            }
+            // Legacy simulation settings have only scalar device fields.
+            settings.store_active_entries();
         }
         // Keep an existing source-protection request paired with its mode.
         // Fresh defaults deliberately remain `None` until the user edits
@@ -166,8 +183,16 @@ impl IvApp {
             .map(|v| v.to_string())
             .collect::<Vec<_>>()
             .join(", ");
+        let control = match crate::gui_control::GuiControl::start() {
+            Ok(control) => Some(control),
+            Err(error) => {
+                eprintln!("GUI external control unavailable: {error}");
+                None
+            }
+        };
         Self {
             client,
+            control,
             settings,
             state: Snapshot::default(),
             previous_phase: None,
@@ -178,6 +203,7 @@ impl IvApp {
             plot_series: std::array::from_fn(|_| Vec::new()),
             plot_extent: [0.0; 2],
             live_samples: VecDeque::new(),
+            source2_samples: VecDeque::new(),
             live_reading: None,
             last_live_timestamp: String::new(),
             table_values: vec![],
@@ -212,6 +238,7 @@ impl IvApp {
             ui_frames: 0,
             pending_run: false,
             pending_base: 0,
+            pending_safety: 0,
         }
     }
 
@@ -259,6 +286,13 @@ impl IvApp {
         } else {
             self.settings.meter_model.clone()
         };
+        if let Some(dual) = &mut self.settings.config.balanced_source {
+            dual.source_model = if self.settings.source2_model == "SIMULATED_SOURCE" {
+                "YOKOGAWA_GS210".into()
+            } else {
+                self.settings.source2_model.clone()
+            };
+        }
         let config_changed = self.settings.config != self.validated_config;
         if config_changed {
             self.preview = sweep_preview(&self.settings.config);
@@ -271,12 +305,24 @@ impl IvApp {
                 return;
             };
             state_changed = true;
+            if next.balanced_active != self.state.balanced_active {
+                self.live_samples.clear();
+                self.source2_samples.clear();
+                self.last_live_timestamp.clear();
+            }
             if let Some(record) = &next.live
                 && self.last_live_timestamp != record.timestamp
             {
                 let mut sample = record.clone();
                 sample.elapsed_s = self.boot.elapsed().as_secs_f64();
                 append_live_sample(&mut self.live_samples, &sample);
+                if let Some(level) = next.source2_level {
+                    let mut secondary = sample.clone();
+                    secondary.source_set = level;
+                    secondary.source_readback = Some(level);
+                    secondary.mode = Mode::Iv;
+                    append_live_sample(&mut self.source2_samples, &secondary);
+                }
                 self.last_live_timestamp.clone_from(&record.timestamp);
                 self.live_reading = Some(record.clone());
             }
@@ -359,12 +405,8 @@ impl IvApp {
                 ));
             }
             if next.protection_alert.is_some()
-                && matches!(
-                    next.phase,
-                    Phase::SourceLimitStop | Phase::ComplianceStop | Phase::Failed
-                )
                 && (next.protection_alert != self.state.protection_alert
-                    || next.phase != self.state.phase)
+                    || next.run_id != self.state.run_id)
             {
                 self.start_error = None;
                 self.protection_dialog = next.protection_alert.clone();
@@ -381,7 +423,11 @@ impl IvApp {
                     self.logs.remove(0);
                 }
             }
-            if self.pending_run && next.run_id <= self.pending_base && next.phase != Phase::Failed {
+            if self.pending_run
+                && next.run_id <= self.pending_base
+                && next.phase != Phase::Failed
+                && next.safety_revision <= self.pending_safety
+            {
                 self.state.phase = Phase::Preparing;
                 self.state.message = "Sending the validated measurement plan…".into();
             } else if next.run_id >= self.run_id {
@@ -419,13 +465,20 @@ impl IvApp {
     }
 
     fn start_run(&mut self) {
+        self.start_run_impl(true);
+    }
+
+    fn start_run_impl(&mut self, save_preferences: bool) {
         if self.pending_run {
             return;
         }
         if let Some(reason) = start_block_reason(
             &self.settings.config,
-            self.state.connected,
-            self.state.source_simulation == self.state.meter_simulation,
+            self.state.connected
+                && (self.settings.config.balanced_source.is_none() || self.state.source2_connected),
+            self.state.source_simulation == self.state.meter_simulation
+                && (self.settings.config.balanced_source.is_none()
+                    || self.state.source_simulation == self.state.source2_simulation),
         ) {
             self.report(reason.clone());
             self.start_error = Some(reason);
@@ -447,7 +500,8 @@ impl IvApp {
         } else {
             format!("{basename}.csv")
         });
-        if !self.smoke {
+        if !self.smoke && save_preferences {
+            self.settings.store_active_entries();
             self.settings.simulation = self.both_simulated();
             let _ = save_settings(&self.settings, Path::new(&self.config_path));
         }
@@ -459,14 +513,19 @@ impl IvApp {
             return;
         }
         self.protection_dialog = None;
+        self.start_error = None;
+        self.state.error.clear();
         self.pending_run = true;
         self.pending_base = self.state.run_id;
+        self.pending_safety = self.state.safety_revision;
         self.state.phase = Phase::Preparing;
     }
 
     fn both_simulated(&self) -> bool {
         self.settings.source_model == "SIMULATED_SOURCE"
             && self.settings.meter_model == "SIMULATED_METER"
+            && (self.settings.config.balanced_source.is_none()
+                || self.settings.source2_model == "SIMULATED_SOURCE")
     }
 
     fn report(&mut self, message: String) {
@@ -507,8 +566,38 @@ impl IvApp {
                                 .auto_shrink([false, false])
                                 .show(ui, |ui| {
                                     self.instrument(ui, true);
+                                    if self.settings.config.balanced_source.is_some() {
+                                        ui.add_space(4.0);
+                                        self.secondary_source(ui);
+                                    }
                                     ui.add_space(4.0);
                                     self.instrument(ui, false);
+                                    let inactive_sources = self
+                                        .settings
+                                        .sources
+                                        .iter()
+                                        .filter(|entry| {
+                                            entry.id != self.settings.source1_id
+                                                && (self.settings.config.balanced_source.is_none()
+                                                    || entry.id != self.settings.source2_id)
+                                        })
+                                        .map(|entry| entry.id)
+                                        .collect::<Vec<_>>();
+                                    for id in inactive_sources {
+                                        ui.add_space(4.0);
+                                        self.inactive_instrument(ui, true, id);
+                                    }
+                                    let inactive_meters = self
+                                        .settings
+                                        .meters
+                                        .iter()
+                                        .filter(|entry| entry.id != self.settings.meter_id)
+                                        .map(|entry| entry.id)
+                                        .collect::<Vec<_>>();
+                                    for id in inactive_meters {
+                                        ui.add_space(4.0);
+                                        self.inactive_instrument(ui, false, id);
+                                    }
                                 });
                         },
                     );
@@ -560,7 +649,9 @@ impl IvApp {
                         ui,
                         "Load",
                         row_width,
-                        !self.state.source_connected && !self.state.meter_connected,
+                        !self.state.source_connected
+                            && !self.state.source2_connected
+                            && !self.state.meter_connected,
                     )
                     .clicked()
                     {
@@ -573,6 +664,7 @@ impl IvApp {
                                     settings.source_model = "SIMULATED_SOURCE".into();
                                     settings.meter_model = "SIMULATED_METER".into();
                                 }
+                                settings.migrate_inventory();
                                 self.settings = settings;
                                 self.custom_text = self
                                     .settings
@@ -588,6 +680,7 @@ impl IvApp {
                         }
                     }
                     if button(ui, "Save", row_width, true).clicked() {
+                        self.settings.store_active_entries();
                         self.settings.simulation = self.both_simulated();
                         let result = save_settings(&self.settings, Path::new(&self.config_path));
                         self.report(match result {
@@ -600,13 +693,18 @@ impl IvApp {
                 ui.horizontal(|ui| {
                     if button(ui, "All Connect", row_width, true).clicked() {
                         self.connect_instrument(true);
+                        if self.settings.config.balanced_source.is_some() {
+                            self.connect_secondary();
+                        }
                         self.connect_instrument(false);
                     }
                     if button(
                         ui,
                         "All Disconnect",
                         row_width,
-                        self.state.source_connected || self.state.meter_connected,
+                        self.state.source_connected
+                            || self.state.source2_connected
+                            || self.state.meter_connected,
                     )
                     .clicked()
                     {
@@ -640,11 +738,9 @@ impl IvApp {
             .is_some_and(|s| self.boot.elapsed().as_secs_f64() - s.time > 3.0);
         ui.add_space(4.0);
         ui.separator();
-        let alert = self
-            .state
-            .protection_alert
-            .as_ref()
-            .filter(|alert| protection_role(alert) == source);
+        let alert = self.state.protection_alert.as_ref().filter(|alert| {
+            protection_role(alert) == source && (!source || alert.source_index != Some(2))
+        });
         ui.horizontal(|ui| {
             ui.label(
                 RichText::new(if channel == 0 { "I" } else { "V" })
@@ -743,11 +839,20 @@ impl IvApp {
             self.live_samples.back().map_or(0.0, |s| s.time)
         };
         let window = newest.clamp(2.0, 30.0);
+        let source1_factor = if self.state.balanced_active {
+            self.settings
+                .config
+                .balanced_source
+                .as_ref()
+                .map_or(0.5, |dual| dual.source1_fraction())
+        } else {
+            1.0
+        };
         let extent = self.live_samples.iter().fold(0_f64, |m, s| {
             m.max(if channel == 0 {
                 s.current.abs()
             } else {
-                s.voltage.abs()
+                s.voltage.abs() * if source { source1_factor } else { 1.0 }
             })
         });
         let scale = AxisScale::for_magnitude(extent);
@@ -755,10 +860,15 @@ impl IvApp {
             .live_reading
             .as_ref()
             .map(|record| {
-                let source = record.source_readback.unwrap_or(record.source_set);
+                let source = record.source_readback.unwrap_or(record.source_set) * source1_factor;
                 let source_channel = if record.mode == Mode::Iv { 1 } else { 0 };
                 let (value, resolution) = if channel == source_channel {
-                    (source, record.source_resolution)
+                    (
+                        source,
+                        record
+                            .source_resolution
+                            .map(|resolution| resolution * source1_factor),
+                    )
                 } else {
                     (record.meter_value, record.meter_resolution)
                 };
@@ -782,7 +892,11 @@ impl IvApp {
             .map(|s| {
                 [
                     s.time - newest,
-                    if channel == 0 { s.current } else { s.voltage },
+                    if channel == 0 {
+                        s.current
+                    } else {
+                        s.voltage * if source { source1_factor } else { 1.0 }
+                    },
                 ]
             })
             .collect();
@@ -884,9 +998,353 @@ impl IvApp {
         }
     }
 
+    fn connect_secondary(&mut self) {
+        self.send(Command::ConnectSource2 {
+            model: self.settings.source2_model.clone(),
+            simulation: self.settings.source2_model == "SIMULATED_SOURCE",
+            resource: self.settings.source2.clone(),
+        });
+    }
+
+    fn secondary_source(&mut self, ui: &mut egui::Ui) {
+        let index = self
+            .settings
+            .sources
+            .iter()
+            .position(|entry| entry.id == self.settings.source2_id)
+            .unwrap_or(1)
+            + 1;
+        let title = if index == 2 {
+            "Source 2".into()
+        } else {
+            format!("Source {index} · S2")
+        };
+        section(ui, &title, |ui| {
+            let connected = self.state.source2_connected;
+            let idle = !self.busy();
+            ui.painter().text(
+                ui.max_rect().right_top() + Vec2::new(-2.0, -18.0),
+                egui::Align2::RIGHT_TOP,
+                if connected {
+                    "Connected"
+                } else {
+                    "Disconnected"
+                },
+                egui::FontId::proportional(10.0),
+                if connected { TEAL } else { MUTED },
+            );
+            let summary = device_summary(&self.settings.source2_model);
+            egui::CollapsingHeader::new(format!("Device · {summary}"))
+                .id_salt("source2_device")
+                .show_background(true)
+                .show(ui, |ui| {
+                    ui.add_enabled_ui(idle && !connected, |ui| {
+                        egui::ComboBox::from_id_salt("source2_model")
+                            .width(ui.available_width())
+                            .selected_text(&self.settings.source2_model)
+                            .show_ui(ui, |ui| {
+                                ui.set_min_width(230.0);
+                                for descriptor in instrument_catalog(InstrumentRole::Source) {
+                                    if model_supported(descriptor.id) {
+                                        ui.selectable_value(
+                                            &mut self.settings.source2_model,
+                                            descriptor.id.into(),
+                                            descriptor.id,
+                                        );
+                                    }
+                                }
+                            });
+                        ui.horizontal(|ui| {
+                            let summary = resource_summary(&self.settings.source2);
+                            let width = (ui.available_width() - 30.0).max(65.0);
+                            compact_field(
+                                ui,
+                                "source2_resource",
+                                &mut self.settings.source2,
+                                width,
+                                summary,
+                            );
+                            egui::ComboBox::from_id_salt("source2_resources")
+                                .width(20.0)
+                                .selected_text("")
+                                .show_ui(ui, |ui| {
+                                    ui.set_min_width(470.0);
+                                    for resource in &self.state.resources {
+                                        ui.selectable_value(
+                                            &mut self.settings.source2,
+                                            resource.resource.clone(),
+                                            &resource.label,
+                                        );
+                                    }
+                                });
+                        });
+                    });
+                    ui.horizontal(|ui| {
+                        if button(ui, "Refresh", 70.0, idle).clicked() {
+                            self.send(Command::Discover);
+                        }
+                        if button(
+                            ui,
+                            "Connect",
+                            70.0,
+                            idle && !connected
+                                && (self.settings.source2_model == "SIMULATED_SOURCE"
+                                    || !self.settings.source2.is_empty()),
+                        )
+                        .clicked()
+                        {
+                            self.connect_secondary();
+                        }
+                        if button(ui, "Disconnect", 80.0, idle && connected).clicked() {
+                            self.send(Command::DisconnectSource2);
+                        }
+                    });
+                });
+            ui.add_space(4.0);
+            ui.separator();
+            ui.horizontal(|ui| {
+                ui.label(RichText::new("V").color(ORANGE).strong());
+                ui.label(
+                    RichText::new(if self.state.source2_simulation {
+                        "SIM"
+                    } else {
+                        "SOURCE LEVEL"
+                    })
+                    .size(9.0)
+                    .color(MUTED),
+                );
+                ui.label(
+                    RichText::new(if connected { "LIVE" } else { "WAITING" })
+                        .size(9.0)
+                        .color(if connected { BLUE } else { MUTED }),
+                );
+                let alert = self.state.protection_alert.as_ref().filter(|a| {
+                    a.kind == ProtectionKind::SourceCompliance && a.source_index == Some(2)
+                });
+                let (rect, response) =
+                    ui.allocate_exact_size(egui::vec2(34.0, 14.0), egui::Sense::hover());
+                if let Some(alert) = alert {
+                    let bright = (self.boot.elapsed().as_millis() / 500).is_multiple_of(2);
+                    ui.ctx().request_repaint_after(Duration::from_millis(100));
+                    ui.painter().rect_filled(
+                        rect,
+                        3.0,
+                        if bright {
+                            RED
+                        } else {
+                            Color32::from_rgb(142, 39, 48)
+                        },
+                    );
+                    ui.painter().text(
+                        rect.center(),
+                        egui::Align2::CENTER_CENTER,
+                        "LIMIT",
+                        egui::FontId::proportional(9.0),
+                        Color32::WHITE,
+                    );
+                    response.on_hover_text(format!(
+                        "Source 2 compliance: {}",
+                        fmt_quantity(alert.limit, &alert.unit)
+                    ));
+                }
+                state_badge(
+                    ui,
+                    &format!("Output {}", self.state.source2_output.to_lowercase()),
+                    MUTED,
+                );
+            });
+            let value = self.state.source2_level;
+            let resolution = self
+                .state
+                .source2_resolution
+                .or(if self.state.source2_simulation {
+                    Some(1e-9)
+                } else {
+                    None
+                });
+            let text = value
+                .map(|v| display_reading(v, resolution, "V"))
+                .unwrap_or_else(|| "— V".into());
+            ui.label(RichText::new(text).monospace().size(22.0).color(ORANGE));
+            let now = self.boot.elapsed().as_secs_f64();
+            let scale = AxisScale::for_magnitude(
+                self.source2_samples
+                    .iter()
+                    .fold(0.0_f64, |m, s| m.max(s.voltage.abs())),
+            );
+            let points: Vec<[f64; 2]> = self
+                .source2_samples
+                .iter()
+                .filter(|s| now - s.time <= 30.0)
+                .map(|s| [s.time - now, s.voltage])
+                .collect();
+            Plot::new("source2_live")
+                .height(55.0)
+                .show_background(false)
+                .allow_drag(false)
+                .allow_zoom(false)
+                .allow_scroll(false)
+                .include_x(-now.clamp(2.0, 30.0))
+                .include_x(0.0)
+                .include_y(0.0)
+                .y_axis_formatter(move |mark, _| scale.tick(mark.value, mark.step_size))
+                .show(ui, |plot| {
+                    plot.line(Line::new("source2", points).color(ORANGE).fill(0.0_f32));
+                });
+            ui.label(
+                RichText::new("Time · s ago · programmed source level")
+                    .size(9.0)
+                    .color(MUTED),
+            );
+        });
+    }
+
+    /// Saved devices that are not assigned to an active measurement role stay
+    /// visible and editable, but deliberately have no Connect control.  This
+    /// prevents a configuration card from energising an unselected source.
+    fn inactive_instrument(&mut self, ui: &mut egui::Ui, source: bool, id: u64) {
+        let entries = if source {
+            &self.settings.sources
+        } else {
+            &self.settings.meters
+        };
+        let Some(position) = entries.iter().position(|entry| entry.id == id) else {
+            return;
+        };
+        let title = if source {
+            format!("Source {}", position + 1)
+        } else {
+            format!("Meter {}", position + 1)
+        };
+        let (model, resource) = {
+            let entry = &entries[position];
+            (entry.model.clone(), entry.resource.clone())
+        };
+        ui.add_space(4.0);
+        let idle = !self.busy();
+        let frame = egui::Frame::new()
+            .fill(BG.gamma_multiply(0.9))
+            .corner_radius(10)
+            .stroke(Stroke::new(1.0_f32, BORDER.gamma_multiply(0.62)))
+            .inner_margin(egui::Margin::symmetric(10, 8))
+            .show(ui, |ui| {
+                ui.horizontal(|ui| {
+                    ui.label(RichText::new(&title).color(MUTED));
+                    ui.label(RichText::new("INACTIVE").size(9.0).color(MUTED));
+                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                        let can_remove = !self.busy()
+                            && if source {
+                                self.settings.sources.len() > 2
+                            } else {
+                                self.settings.meters.len() > 1
+                            };
+                        if button(ui, "Remove", 62.0, can_remove)
+                            .on_hover_text("Choose another active device in Settings before removing this card.")
+                            .clicked()
+                        {
+                            if source {
+                                self.settings.remove_source(id);
+                            } else {
+                                self.settings.remove_meter(id);
+                            }
+                        }
+                    });
+                });
+                ui.add_space(3.0);
+                egui::CollapsingHeader::new(format!("Device · {}", device_summary(&model)))
+                    .id_salt(("inactive_device", source, id))
+                    .default_open(false)
+                    .show(ui, |ui| {
+                        ui.label(
+                            RichText::new(
+                                "Stored only. Select this device in Settings to connect or use it in a run.",
+                            )
+                            .small()
+                            .color(MUTED),
+                        );
+                        let entries = if source {
+                            &mut self.settings.sources
+                        } else {
+                            &mut self.settings.meters
+                        };
+                        let Some(entry) = entries.iter_mut().find(|entry| entry.id == id) else {
+                            return;
+                        };
+                        ui.add_enabled_ui(idle, |ui| {
+                            egui::ComboBox::from_id_salt(("inactive_model", source, id))
+                                .width(ui.available_width())
+                                .selected_text(&entry.model)
+                                .show_ui(ui, |ui| {
+                                    for descriptor in instrument_catalog(if source {
+                                        InstrumentRole::Source
+                                    } else {
+                                        InstrumentRole::Meter
+                                    }) {
+                                        ui.add_enabled_ui(model_supported(descriptor.id), |ui| {
+                                            ui.selectable_value(
+                                                &mut entry.model,
+                                                descriptor.id.to_owned(),
+                                                descriptor.id,
+                                            );
+                                        });
+                                    }
+                                });
+                            ui.horizontal(|ui| {
+                                let width = (ui.available_width() - 28.0).max(55.0);
+                                let summary = resource_summary(&entry.resource);
+                                compact_field(
+                                    ui,
+                                    ("inactive_resource", source, id),
+                                    &mut entry.resource,
+                                    width,
+                                    summary,
+                                );
+                                egui::ComboBox::from_id_salt(("inactive_resources", source, id))
+                                    .width(20.0)
+                                    .selected_text("")
+                                    .show_ui(ui, |ui| {
+                                        ui.set_min_width(470.0);
+                                        for item in &self.state.resources {
+                                            ui.selectable_value(
+                                                &mut entry.resource,
+                                                item.resource.clone(),
+                                                &item.label,
+                                            );
+                                        }
+                                    });
+                            });
+                        });
+                    });
+            });
+        frame
+            .response
+            .on_hover_text(format!("{model}\n{}", resource_summary(&resource)));
+    }
+
     fn instrument(&mut self, ui: &mut egui::Ui, source: bool) {
-        let title = if source { "Source" } else { "Meter" };
-        section(ui, title, |ui| {
+        let index = if source {
+            self.settings
+                .sources
+                .iter()
+                .position(|entry| entry.id == self.settings.source1_id)
+        } else {
+            self.settings
+                .meters
+                .iter()
+                .position(|entry| entry.id == self.settings.meter_id)
+        }
+        .unwrap_or(0)
+            + 1;
+        let title = if source {
+            if self.settings.config.balanced_source.is_some() && index != 1 {
+                format!("Source {index} · S1")
+            } else {
+                format!("Source {index}")
+            }
+        } else {
+            format!("Meter {index}")
+        };
+        section(ui, &title, |ui| {
             let connected = if source {
                 self.state.source_connected
             } else {
@@ -1081,34 +1539,60 @@ impl IvApp {
 
     fn sweep(&mut self, ui: &mut egui::Ui) {
         let old_mode = self.settings.config.mode;
+        let was_dual = self.settings.config.balanced_source.is_some();
         let width = (ui.available_width() - 57.0).max(150.0);
         egui::Grid::new("sweep_conditions")
             .num_columns(2)
             .spacing([6.0, 8.0])
             .show(ui, |ui| {
                 form_label(ui, "Mode", 45.0);
-                egui::ComboBox::from_id_salt("mode")
-                    .width(width)
-                    .selected_text(mode_name(old_mode))
-                    .show_ui(ui, |ui| {
-                        ui.set_min_width(250.0);
-                        ui.selectable_value(
-                            &mut self.settings.config.mode,
-                            Mode::Iv,
-                            mode_name(Mode::Iv),
-                        );
-                        ui.selectable_value(
-                            &mut self.settings.config.mode,
-                            Mode::Vi,
-                            mode_name(Mode::Vi),
-                        );
-                    });
+                let mut choice = if was_dual {
+                    2_u8
+                } else if old_mode == Mode::Iv {
+                    0
+                } else {
+                    1
+                };
+                let mode_editable = !self.busy() && !self.state.source2_connected;
+                let response = ui.add_enabled_ui(mode_editable, |ui| {
+                    egui::ComboBox::from_id_salt("mode")
+                        .width(width)
+                        .selected_text(match choice {
+                            0 => mode_name(Mode::Iv),
+                            1 => mode_name(Mode::Vi),
+                            _ => "Dual V-I",
+                        })
+                        .show_ui(ui, |ui| {
+                            ui.set_min_width(250.0);
+                            ui.selectable_value(&mut choice, 0, mode_name(Mode::Iv));
+                            ui.selectable_value(&mut choice, 1, mode_name(Mode::Vi));
+                            ui.selectable_value(&mut choice, 2, "Dual V-I · differential voltage");
+                        })
+                });
+                response.response.on_disabled_hover_text(
+                    "Disconnect Source 2 before leaving Dual mode. Wait for the current operation to finish.",
+                );
                 ui.end_row();
-                if self.settings.config.mode != old_mode {
+                if choice
+                    != if was_dual {
+                        2
+                    } else if old_mode == Mode::Iv {
+                        0
+                    } else {
+                        1
+                    }
+                {
                     self.settings.store_active_protection();
-                    let definition = measurement_definition(self.settings.config.mode);
-                    self.settings.config = definition.default_config();
-                    self.settings.units = [definition.preferred_unit_index; 3];
+                    let next_mode = if choice == 1 { Mode::Vi } else { Mode::Iv };
+                    if old_mode != next_mode {
+                        let definition = measurement_definition(next_mode);
+                        self.settings.config = definition.default_config();
+                        self.settings.units = [definition.preferred_unit_index; 3];
+                    }
+                    self.settings.config.mode = next_mode;
+                    self.settings.config.balanced_source =
+                        (choice == 2).then(iv_core::BalancedSourceConfig::default);
+                    self.settings.bind_active_entries();
                     self.settings.activate_mode_protection();
                     self.samples.clear();
                     self.rebuild_plot_series();
@@ -1120,6 +1604,15 @@ impl IvApp {
                             mode: self.settings.config.mode,
                         });
                     }
+                }
+                if self.settings.config.balanced_source.is_some() {
+                    form_label(ui, "", 45.0);
+                    ui.label(
+                        RichText::new("Differential V · split is configured in Settings")
+                            .small()
+                            .color(MUTED),
+                    );
+                    ui.end_row();
                 }
                 form_label(ui, "Sweep", 45.0);
                 egui::ComboBox::from_id_salt("pattern")
@@ -1244,6 +1737,183 @@ impl IvApp {
                 section(&mut columns[1], "Run", |ui| self.run_controls(ui));
             });
         });
+    }
+
+    fn device_bindings(&mut self, ui: &mut egui::Ui) {
+        self.settings.store_active_entries();
+        section(ui, "Devices", |ui| {
+            ui.label(
+                RichText::new(
+                    "Choose the saved instruments used by this IV run. Other cards remain stored choices.",
+                )
+                .small()
+                .color(MUTED),
+            );
+            ui.add_space(6.0);
+            let locked = self.busy()
+                || self.state.source_connected
+                || self.state.source2_connected
+                || self.state.meter_connected;
+            let source_choices = self
+                .settings
+                .sources
+                .iter()
+                .enumerate()
+                .map(|(index, entry)| {
+                    (
+                        entry.id,
+                        format!("Source {} · {}", index + 1, device_summary(&entry.model)),
+                    )
+                })
+                .collect::<Vec<_>>();
+            let meter_choices = self
+                .settings
+                .meters
+                .iter()
+                .enumerate()
+                .map(|(index, entry)| {
+                    (
+                        entry.id,
+                        format!("Meter {} · {}", index + 1, device_summary(&entry.model)),
+                    )
+                })
+                .collect::<Vec<_>>();
+            let mut changed = false;
+            let response = ui.add_enabled_ui(!locked, |ui| {
+                egui::Grid::new("device_role_bindings")
+                    .num_columns(2)
+                    .spacing([6.0, 6.0])
+                    .show(ui, |ui| {
+                        form_label(ui, "Source 1", 65.0);
+                        let before = self.settings.source1_id;
+                        egui::ComboBox::from_id_salt("source1_binding")
+                            .width(ui.available_width())
+                            .selected_text(self.inventory_name(true, before))
+                            .show_ui(ui, |ui| {
+                                for (id, label) in &source_choices {
+                                    ui.add_enabled_ui(
+                                        self.settings.config.balanced_source.is_none()
+                                            || *id != self.settings.source2_id,
+                                        |ui| {
+                                            ui.selectable_value(
+                                                &mut self.settings.source1_id,
+                                                *id,
+                                                label,
+                                            );
+                                        },
+                                    );
+                                }
+                            });
+                        changed |= before != self.settings.source1_id;
+                        ui.end_row();
+
+                        if self.settings.config.balanced_source.is_some() {
+                            form_label(ui, "Source 2", 65.0);
+                            let before = self.settings.source2_id;
+                            egui::ComboBox::from_id_salt("source2_binding")
+                                .width(ui.available_width())
+                                .selected_text(self.inventory_name(true, before))
+                                .show_ui(ui, |ui| {
+                                    for (id, label) in &source_choices {
+                                        ui.add_enabled_ui(*id != self.settings.source1_id, |ui| {
+                                            ui.selectable_value(
+                                                &mut self.settings.source2_id,
+                                                *id,
+                                                label,
+                                            );
+                                        });
+                                    }
+                                });
+                            changed |= before != self.settings.source2_id;
+                            ui.end_row();
+                        }
+
+                        form_label(ui, "Meter", 65.0);
+                        let before = self.settings.meter_id;
+                        egui::ComboBox::from_id_salt("meter_binding")
+                            .width(ui.available_width())
+                            .selected_text(self.inventory_name(false, before))
+                            .show_ui(ui, |ui| {
+                                for (id, label) in &meter_choices {
+                                    ui.selectable_value(&mut self.settings.meter_id, *id, label);
+                                }
+                            });
+                        changed |= before != self.settings.meter_id;
+                        ui.end_row();
+                    });
+                ui.horizontal(|ui| {
+                    if button(ui, "+ Source", 82.0, true).clicked() {
+                        self.settings.add_source();
+                    }
+                    if button(ui, "+ Meter", 78.0, true).clicked() {
+                        self.settings.add_meter();
+                    }
+                });
+                if let Some(dual) = &mut self.settings.config.balanced_source {
+                    ui.add_space(6.0);
+                    ui.separator();
+                    ui.horizontal(|ui| {
+                        ui.label("Voltage ratio");
+                        ui.add(
+                            egui::DragValue::new(&mut dual.ratio[0])
+                                .range(1..=1000)
+                                .speed(1),
+                        );
+                        ui.label(":");
+                        ui.add(
+                            egui::DragValue::new(&mut dual.ratio[1])
+                                .range(1..=1000)
+                                .speed(1),
+                        );
+                    });
+                    ui.label(
+                        RichText::new(format!(
+                            "S1 = +{}/{} · V    S2 = −{}/{} · V",
+                            dual.ratio[0],
+                            dual.ratio[0] + dual.ratio[1],
+                            dual.ratio[1],
+                            dual.ratio[0] + dual.ratio[1],
+                        ))
+                        .small()
+                        .color(MUTED),
+                    );
+                }
+            });
+            response.response.on_disabled_hover_text(
+                "Disconnect the active instruments before changing device bindings or the dual-source split.",
+            );
+            if changed {
+                if self.settings.source1_id == self.settings.source2_id {
+                    self.settings.source2_id = self
+                        .settings
+                        .sources
+                        .iter()
+                        .find(|entry| entry.id != self.settings.source1_id)
+                        .map_or(self.settings.source1_id, |entry| entry.id);
+                }
+                self.settings.bind_active_entries();
+            }
+        });
+    }
+
+    fn inventory_name(&self, source: bool, id: u64) -> String {
+        let entries = if source {
+            &self.settings.sources
+        } else {
+            &self.settings.meters
+        };
+        let role = if source { "Source" } else { "Meter" };
+        entries
+            .iter()
+            .position(|entry| entry.id == id)
+            .map(|index| {
+                format!(
+                    "{role} {} · {}",
+                    index + 1,
+                    device_summary(&entries[index].model)
+                )
+            })
+            .unwrap_or_else(|| format!("{role} unavailable"))
     }
 
     fn save_measurement(&mut self) {
@@ -1572,6 +2242,8 @@ impl IvApp {
                 ui.add_space(8.0);
                 egui::ScrollArea::vertical().max_height((ctx.content_rect().height() - 150.0).clamp(200.0, 600.0)).show(ui, |ui| {
                     ui.add_enabled_ui(!self.busy(), |ui| {
+                        self.device_bindings(ui);
+                        ui.add_space(8.0);
                         section(ui, "Timing", |ui| {
                             number(ui, iv_core::parameter_definition("settle_s").unwrap().label, &mut self.settings.config.settle_s, 1.0, "", 0.0..=iv_core::MAX_SECONDS);
 
@@ -1609,6 +2281,11 @@ impl IvApp {
                                 // A Meter-only edit preserves the actual source protection.
                                 // Opening/accepting unrelated timing settings preserves legacy None.
                                 *source_value = Some(displayed_source);
+                            }
+                            if let Some(dual)=&mut self.settings.config.balanced_source {
+                                ui.add_space(8.0);ui.label("Source 2 compliance");
+                                quantity(ui,"source2_compliance",&mut dual.source_compliance,
+                                    &mut self.settings.source2_compliance_unit,"A",width,true);
                             }
                             self.settings.activate_mode_protection();
                             self.source_protection_effective_note(ui, protection_unit);
@@ -1879,7 +2556,16 @@ impl IvApp {
         ui.add_space(8.0);
         let graph_height = (ui.clip_rect().bottom() - ui.cursor().top() - 2.0).max(320.0);
         let [x_axis, y_axis] = measurement_definition(self.settings.config.mode).axes;
-        let (x_name, x_unit, y_name, y_unit) = (x_axis.name, x_axis.unit, y_axis.name, y_axis.unit);
+        let (x_name, x_unit, y_name, y_unit) = (
+            if self.settings.config.balanced_source.is_some() {
+                "Differential voltage"
+            } else {
+                x_axis.name
+            },
+            x_axis.unit,
+            y_axis.name,
+            y_axis.unit,
+        );
         let mut extent = self.plot_extent;
         if self.samples.is_empty() {
             extent[0] = self
@@ -1993,6 +2679,8 @@ impl eframe::App for IvApp {
             self.first_frame_s = Some(self.boot.elapsed().as_secs_f64());
         }
         self.sync();
+        self.external_control();
+        ctx.request_repaint_after(Duration::from_millis(100));
         if ctx.input(|i| i.viewport().close_requested()) && self.active() {
             ctx.send_viewport_cmd(egui::ViewportCommand::CancelClose);
             if self.send(Command::Stop) {
@@ -2025,7 +2713,7 @@ impl eframe::App for IvApp {
             self.start_error_dialog(ctx);
         }
         self.save_dialog(ctx);
-        if self.busy() || self.state.connected {
+        if self.busy() || self.state.connected || self.state.gate_connected {
             ctx.request_repaint_after(Duration::from_millis(33));
         }
         if self.smoke && !self.smoke_started && self.started.elapsed() > Duration::from_millis(100)
@@ -2038,12 +2726,31 @@ impl eframe::App for IvApp {
                 source: self.settings.source.clone(),
                 meter: self.settings.meter.clone(),
             });
+            if self.settings.config.balanced_source.is_some() {
+                self.connect_secondary();
+            }
         }
-        if self.smoke && self.state.connected && self.state.run_id == 0 && !self.pending_run {
+        let control_smoke = self.smoke && std::env::args().any(|arg| arg == "--gui-control-smoke");
+        if self.smoke
+            && !control_smoke
+            && self.state.connected
+            && (self.settings.config.balanced_source.is_none() || self.state.source2_connected)
+            && self.state.run_id == 0
+            && !self.pending_run
+        {
             self.start_run();
         }
         let limit_smoke = self.smoke && std::env::args().any(|arg| arg == "--gui-limit-smoke");
-        let smoke_outcome = if limit_smoke {
+        let smoke_outcome = if control_smoke {
+            self.state.run_id >= 2
+                && self.state.points == self.state.total
+                && self.state.gate_connected
+                && self.state.gate_output == OutputState::Off
+                && !self
+                    .control
+                    .as_ref()
+                    .is_some_and(|control| control.has_lease())
+        } else if limit_smoke {
             self.state.phase == Phase::ComplianceStop
                 && self
                     .state
@@ -2082,6 +2789,8 @@ impl eframe::App for IvApp {
             ctx.request_repaint_after(Duration::from_millis(30));
             if smoke_outcome
                 && self.state.output == OutputState::Off
+                && (self.settings.config.balanced_source.is_none()
+                    || self.state.source2_output == OutputState::Off)
                 && self.state.error.is_empty()
                 && self.started.elapsed() > Duration::from_secs(4)
                 && (self.screenshot.is_none() || self.screenshot_saved)
@@ -2095,12 +2804,15 @@ impl eframe::App for IvApp {
                 }
                 ctx.send_viewport_cmd(egui::ViewportCommand::Close);
             }
-            if self.started.elapsed() > Duration::from_secs(20) {
+            if self.started.elapsed() > Duration::from_secs(if control_smoke { 60 } else { 20 }) {
                 eprintln!("GUI smoke failed: {}", self.state.error);
                 self.send(Command::Stop);
                 ctx.send_viewport_cmd(egui::ViewportCommand::Close);
             }
         }
+        // Active cards edit the legacy role fields directly; retain those
+        // edits in the selected inventory entries before the next frame.
+        self.settings.store_active_entries();
         self.ui_cpu_s += ui_start.elapsed().as_secs_f64();
         self.ui_frames += 1;
     }
@@ -2115,6 +2827,10 @@ fn protection_summary(alert: &ProtectionAlert) -> (&'static str, &'static str) {
         ProtectionKind::SourceCompliance if alert.indicator.contains("EMR") => (
             "Source protection triggered",
             "Check the instrument and its temperature. Clear the emergency condition before restarting.",
+        ),
+        ProtectionKind::SourceCompliance if alert.source_index == Some(2) => (
+            "Source 2 compliance reached",
+            "Check wiring and contacts. Reduce the differential sweep range or review Source 2 compliance.",
         ),
         ProtectionKind::SourceCompliance => (
             "Source compliance reached",
@@ -2277,6 +2993,14 @@ fn pattern_name(pattern: Pattern) -> &'static str {
 
 fn model_supported(model: &str) -> bool {
     instrument_descriptor(model).is_some()
+}
+
+fn device_summary(model: &str) -> &str {
+    if model.starts_with("SIMULATED_") {
+        "Simulation"
+    } else {
+        model.split_once('_').map_or(model, |(_, name)| name)
+    }
 }
 
 #[cfg(test)]
@@ -2450,6 +3174,7 @@ mod tests {
             unit: "V".into(),
             observed: None,
             indicator: "H".into(),
+            source_index: Some(1),
         };
         assert!(protection_role(&source));
         assert_eq!(protection_summary(&source).0, "Source compliance reached");

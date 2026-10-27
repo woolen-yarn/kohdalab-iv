@@ -66,7 +66,7 @@ pub(crate) fn write_commands(
 }
 
 pub(crate) fn source_write_marks_adc_discard(role: Role, meter_model: &str, command: &str) -> bool {
-    role == Role::Source
+    matches!(role, Role::Source | Role::Source2 | Role::Gate)
         && is_adc_meter(meter_model)
         && command.to_ascii_uppercase().contains("SOUR:LEV:FIX ")
 }

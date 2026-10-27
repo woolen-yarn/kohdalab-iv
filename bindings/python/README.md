@@ -104,6 +104,41 @@ After connecting, `iv.set_mode("dc_vi")` selects source current / measure voltag
 `iv.set_mode("dc_iv")` selects source voltage / measure current. Rust verifies
 output OFF and zero level before switching. Use these calls while idle.
 
+## Fixed gate bias and balanced IV
+
+Recent engines can keep a fixed gate source on while two IV sources sweep an
+equal-and-opposite differential voltage. All devices remain in one Rust engine
+session, including shared GPIB adapters; do not create separate `NativeIV`
+sessions for the gate or second source.
+
+```python
+with NativeIV() as iv:
+    iv.connect(simulation=True)             # Source 1 + meter
+    iv.connect_source2(simulation=True)     # Source 2
+    iv.connect_gate(simulation=True)        # fixed gate source, initially OFF
+    iv.set_gate_voltage(0.10, compliance=1e-3, ramp_step=1e-3)
+    result = iv.run("balanced.csv", {
+        "mode": "dc_iv", "start": -1e-3, "stop": 1e-3, "step": 1e-3,
+        "source_compliance": 1e-3,
+        "balanced_source": {
+            "source_model": "YOKOGAWA_GS210", "source_compliance": 1e-3,
+        },
+    })
+    iv.gate_output_off()
+```
+
+For a differential target `D`, Rust plans Source 1 as `D / 2` and Source 2 as
+`-D / 2`. It validates both hardware grids before enabling either sweep output.
+Gate output remains on during the IV run and must be explicitly turned off when
+the bias is no longer needed; context shutdown also requests gate cleanup.
+`set_gate_voltage` rejects a live compliance or range change rather than
+cycling an enabled gate. Use only explicit, sample-approved current
+compliances. The gate is voltage-source only and this client does not infer a
+gate leakage current without an independent meter or `/MON` connection.
+
+Open [the gate and balanced-IV simulation tutorial](examples/gate-balanced-control.ipynb)
+for a complete no-hardware example.
+
 ## Development model selection
 
 The 1.3 development engine accepts explicit models (both the client and engine must be the matching development version):
@@ -262,3 +297,24 @@ Python 測定エンジンや VISA 依存関係をインストールしません�
 終了を要求します。`iv.protocol` は受け入れた契約を公開します。`iv.snapshot["error"]` は元のエラー文を
 保持し、新しいエンジンはプログラム上の診断用に `error_kind` と `activity` も提供します。これらの追加は
 既存のクライアントメソッドや CSV 列を変更しません。
+
+## Control the GUI already on screen
+
+`GuiIV` attaches to the running GUI instead of starting another engine. Select
+and connect the IV instruments in the GUI, then use its existing sweep settings:
+
+```python
+from kohdalab_iv_native import GuiIV
+
+with GuiIV() as iv:
+    # Change external parameters / wait for stability in your own code.
+    result = iv.run(filename="field_0T_temperature_4K")
+    print(result["path"])
+```
+
+The GUI displays the plot and saves the CSV normally. `run` raises on stopped,
+limited or failed measurements. `stop()` and the GUI Stop button interrupt a run.
+Gate source methods are also available on `GuiIV`; a normal run keeps the gate
+bias while context exit turns outputs off. No external-parameter GUI is added.
+See [dual-source and GUI control](../../docs/reference/dual-source-and-gui-control.md)
+for wiring semantics, integer ratios, safety behavior and a gate-bias loop.

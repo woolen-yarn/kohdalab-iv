@@ -194,3 +194,5 @@ dependencies retain their own licenses; keep the accompanying notices and source
 See [redistribution terms](REDISTRIBUTION.md), [code signing](CODE_SIGNING_POLICY.md), and [privacy](PRIVACY.md).
 
 プロジェクトコードは [MIT ライセンス](LICENSE)です。ネイティブヘルパーと再配布する依存関係にはそれぞれのライセンスが適用されるため、付属の通知とソースを保持してください。[再配布条件](REDISTRIBUTION.md)、[コード署名](CODE_SIGNING_POLICY.md)、[プライバシー](PRIVACY.md)も参照してください。
+
+Development: [Dual source and control of the open GUI](docs/reference/dual-source-and-gui-control.md).

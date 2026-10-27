@@ -13,8 +13,8 @@ import time
 # Keep this contract deliberately independent of the package release number.
 # It describes the JSON-lines engine protocol, not the Python distribution.
 API_VERSION = 1
-SETTINGS_SCHEMA_VERSION = 2
-RUN_METADATA_SCHEMA_VERSION = 7
+SETTINGS_SCHEMA_VERSION = 3
+RUN_METADATA_SCHEMA_VERSION = 8
 CSV_SCHEMA = "analysis_v3"
 _MISSING = object()
 
@@ -207,6 +207,8 @@ class NativeIV:
         self._eof = False
         self._closed = False
         self._source_was_connected = False
+        self._source2_was_connected = False
+        self._gate_was_connected = False
         self._process = subprocess.Popen([self.executable, "--engine"],
             stdin=subprocess.PIPE, stdout=subprocess.PIPE, text=True, bufsize=1)
         self._reader = threading.Thread(target=self._read, daemon=True)
@@ -242,6 +244,8 @@ class NativeIV:
                         self._state = event["data"]
                         self._received_snapshot = True
                         self._source_was_connected |= self._state.get("source_connected", False)
+                        self._source2_was_connected |= self._state.get("source2_connected", False)
+                        self._gate_was_connected |= self._state.get("gate_connected", False)
                         self._condition.notify_all()
         except Exception as error:
             self._reader_error = error
@@ -292,6 +296,44 @@ class NativeIV:
         self._send("connect", source=source, meter=meter, simulation=simulation, **self._models)
         return self.wait(lambda s: s.get("connected", False), timeout)
 
+    def _require_multi_source_support(self):
+        if "balanced_source" not in self.default_config:
+            raise RuntimeError(
+                "Dual-source and gate control require a newer KohdaLab IV engine. "
+                "Upgrade the application before connecting an additional source."
+            )
+
+    def connect_source2(self, resource="", *, simulation=False,
+                        model="YOKOGAWA_GS210", timeout=30):
+        """Connect the second balanced-IV source in this engine session."""
+        self._require_multi_source_support()
+        self._send("connect_source2", model=model, simulation=simulation, resource=resource)
+        return self.wait(lambda s: s.get("source2_connected", False), timeout)
+
+    def connect_gate(self, resource="", *, simulation=False,
+                     model="YOKOGAWA_GS210", timeout=30):
+        """Connect a fixed gate-bias source; this does not enable output."""
+        self._require_multi_source_support()
+        self._send("connect_gate", model=model, simulation=simulation, resource=resource)
+        return self.wait(lambda s: s.get("gate_connected", False), timeout)
+
+    def set_gate_voltage(self, voltage, *, compliance, ramp_step, timeout=30):
+        """Ramp a fixed gate voltage using Rust-owned protection and cleanup."""
+        self._require_multi_source_support()
+        previous = self.snapshot.get("gate_revision", 0)
+        self._send("set_gate_voltage", voltage=voltage, compliance=compliance,
+                   ramp_step=ramp_step)
+        return self.wait(lambda s: s.get("gate_revision", 0) > previous and
+                         s.get("gate_output") == "On", timeout)
+
+    def gate_output_off(self, timeout=30):
+        """Turn off only the fixed gate source and verify its output state."""
+        self._require_multi_source_support()
+        previous = self.snapshot.get("gate_revision", 0)
+        self._send("gate_output_off")
+        return self.wait(lambda s: s.get("gate_revision", 0) > previous and
+                         s.get("gate_output") == "Off", timeout)
+
     def set_mode(self, mode, timeout=20):
         """Switch dc_iv/dc_vi while idle; Rust verifies output OFF and zero first."""
         if mode not in ("dc_iv", "dc_vi"):
@@ -313,6 +355,8 @@ class NativeIV:
         values.update(config or {})
         if values.get("source_compliance") is not None and "source_compliance" not in self.default_config:
             raise RuntimeError("Independent Source protection requires a newer KohdaLab IV engine. Upgrade the application before running this configuration.")
+        if values.get("balanced_source") is not None:
+            self._require_multi_source_support()
         previous = self.snapshot.get("run_id", 0)
         self._send("run", path=str(Path(path).resolve()), config=values)
         try:
@@ -333,7 +377,10 @@ class NativeIV:
 
     def disconnect(self):
         self._send("disconnect")
-        return self.wait(lambda s: not s.get("source_connected") and not s.get("meter_connected"))
+        return self.wait(lambda s: not s.get("source_connected") and
+                         not s.get("source2_connected") and
+                         not s.get("gate_connected") and
+                         not s.get("meter_connected"))
 
     def close(self, timeout=40):
         if self._closed:
@@ -350,8 +397,216 @@ class NativeIV:
         self._process.stdout.close()
         self._closed = True
         state = self.snapshot
-        if self._process.returncode or state.get("error") or (self._source_was_connected and state.get("output") != "Off"):
+        source_unsafe = self._source_was_connected and state.get("output") != "Off"
+        source2_unsafe = self._source2_was_connected and state.get("source2_output") != "Off"
+        gate_unsafe = self._gate_was_connected and state.get("gate_output") != "Off"
+        if self._process.returncode or state.get("error") or source_unsafe or source2_unsafe or gate_unsafe:
             raise RuntimeError(f"Engine shutdown could not be verified: {state}")
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *exc):
+        self.close()
+
+
+class _GuiControlRejected(RuntimeError):
+    """The GUI explicitly rejected a request before taking an action."""
+
+
+class GuiIV:
+    """Attach to an already running IV GUI; never open a second device owner.
+
+    Choose/connect instruments and set sweep conditions in the GUI first.
+    External parameters stay in Python; pass their values in ``filename``.
+    The context manager turns outputs off before releasing its control lease.
+    """
+    def __init__(self, endpoint=None):
+        import socket
+        self._socket = socket
+        self._lease = None
+        self._closed = False
+        self._heartbeat_error = None
+        self._stop_heartbeat = threading.Event()
+        if endpoint is None:
+            home = Path(os.environ.get("USERPROFILE") or Path.home())
+            candidates = []
+            for path in (home / ".kohdalab" / "control").glob("iv-*.json"):
+                try:
+                    declaration = self._load_endpoint(path)
+                    self._endpoint = declaration
+                    self._request("status", timeout=1)
+                    candidates.append((path, declaration))
+                except (OSError, ValueError, RuntimeError):
+                    continue
+            if not candidates:
+                raise RuntimeError("No running KohdaLab IV GUI found. Open the updated application first.")
+            if len(candidates) > 1:
+                raise RuntimeError("Several IV GUIs are open. Pass endpoint= with the desired .kohdalab/control/iv-*.json file.")
+            endpoint, self._endpoint = candidates[0]
+        else:
+            self._endpoint = self._load_endpoint(endpoint)
+        self.endpoint = Path(endpoint)
+        self._lease = self._request("claim")["lease"]
+        self._heartbeat = threading.Thread(target=self._beat_gui, daemon=True)
+        self._heartbeat.start()
+
+    @staticmethod
+    def _load_endpoint(path):
+        import ipaddress
+        declaration = json.loads(Path(path).read_text(encoding="utf-8"))
+        host, port = declaration["address"].rsplit(":", 1)
+        if declaration.get("protocol") != 1 or not ipaddress.ip_address(host).is_loopback:
+            raise ValueError("Unsupported or non-local GUI control endpoint")
+        if not 0 < int(port) < 65536 or not isinstance(declaration.get("token"), str):
+            raise ValueError("Invalid GUI control endpoint")
+        return declaration
+
+    def _request(self, method, timeout=12, **values):
+        if self._closed:
+            raise RuntimeError("GUI control is closed")
+        host, port = self._endpoint["address"].rsplit(":", 1)
+        payload = json.dumps({"token": self._endpoint["token"], "lease": self._lease,
+                              "method": method, **values}, allow_nan=False).encode() + b"\n"
+        with self._socket.create_connection((host, int(port)), timeout=timeout) as connection:
+            connection.settimeout(timeout)
+            connection.sendall(payload)
+            with connection.makefile("rb") as stream:
+                line = stream.readline(2_097_153)
+        if len(line) > 2_097_152 or not line.endswith(b"\n"):
+            raise RuntimeError("Invalid GUI control response")
+        response = json.loads(line)
+        if not response.get("ok"):
+            raise _GuiControlRejected(response.get("error", "GUI control failed"))
+        return response["data"]
+
+    def _beat_gui(self):
+        while not self._stop_heartbeat.wait(1):
+            try:
+                self._request("heartbeat", timeout=3)
+            except Exception as error:
+                self._heartbeat_error = error
+                return
+
+    @property
+    def snapshot(self):
+        return self._request("status")
+
+    @property
+    def configuration(self):
+        """Read the GUI's current sweep settings; edits remain in the GUI."""
+        return self._request("configuration")
+
+    def wait(self, predicate, timeout=30):
+        deadline = time.monotonic() + timeout
+        while True:
+            if self._heartbeat_error:
+                raise RuntimeError(f"GUI control heartbeat failed: {self._heartbeat_error}")
+            state = self.snapshot
+            if state.get("error"):
+                raise RuntimeError(state["error"])
+            if predicate(state):
+                return state
+            if time.monotonic() >= deadline:
+                raise TimeoutError("GUI response timed out. Inspect the GUI before retrying.")
+            time.sleep(0.1)
+
+    def run(self, filename=None, *, directory=None, timeout=120):
+        """Start the GUI's configured sweep and wait. GUI plots/CSV update normally."""
+        try:
+            accepted = self._request("start", filename=filename,
+                                     directory=str(Path(directory).resolve()) if directory is not None else None)
+        except _GuiControlRejected:
+            raise  # e.g. a manual run is busy: do not interrupt it.
+        except BaseException as original:
+            self._abort_after_error(original)
+            raise
+        try:
+            target = accepted["run_id"]
+            safety = accepted.get("safety_revision", 0)
+            state = self.wait(lambda s: (s.get("run_id", 0) >= target and s.get("phase") in
+                              ("Completed", "Stopped", "Compliance stop", "Source limit stop", "Failed")) or
+                              s.get("safety_revision", 0) > safety, timeout)
+            if state.get("run_id", 0) < target:
+                raise RuntimeError("GUI measurement was cancelled before it started.")
+            if state["phase"] != "Completed":
+                raise RuntimeError(f"GUI measurement ended with {state['phase']}: {state.get('message', '')}")
+            return state
+        except BaseException as original:
+            self._abort_after_error(original)
+            raise
+
+    def _abort_after_error(self, original):
+        failures = []
+        for operation in (self.stop, self.output_off):
+            try:
+                operation()
+            except Exception as failure:
+                failures.append(str(failure))
+        if failures:
+            raise RuntimeError(f"{original}. Safety cleanup could not be confirmed: {'; '.join(failures)}. Check instrument outputs manually.") from original
+
+    def connect_gate(self, resource="", *, simulation=False, model="YOKOGAWA_GS210", timeout=30):
+        if self.snapshot.get("gate_connected"):
+            raise RuntimeError("Gate is already connected. Disconnect it before changing its binding.")
+        self._request("connect_gate", resource=resource, simulation=simulation, model=model)
+        return self.wait(lambda s: s.get("gate_connected"), timeout)
+
+    def set_gate_voltage(self, voltage, *, compliance, ramp_step=0.001, timeout=30):
+        try:
+            previous = self.snapshot.get("gate_revision", 0)
+            self._request("set_gate_voltage", voltage=voltage, compliance=compliance, ramp_step=ramp_step)
+        except _GuiControlRejected:
+            raise
+        except BaseException as original:
+            self._abort_after_error(original)
+            raise
+        try:
+            return self.wait(lambda s: s.get("gate_revision", 0) > previous and s.get("gate_output") == "On", timeout)
+        except BaseException as original:
+            self._abort_after_error(original)
+            raise
+
+    def gate_output_off(self, timeout=30):
+        self._request("gate_output_off")
+        return self.wait(lambda s: s.get("gate_output") == "Off", timeout)
+
+    def disconnect_gate(self, timeout=30):
+        self._request("disconnect_gate")
+        return self.wait(lambda s: not s.get("gate_connected"), timeout)
+
+    def stop(self):
+        self._request("stop")
+
+    def output_off(self):
+        self._request("output_off")
+
+    def close(self, timeout=40):
+        if self._closed:
+            return
+        error = None
+        try:
+            self.output_off()
+            deadline = time.monotonic() + timeout
+            while True:
+                state = self.snapshot
+                off = (not state.get("source_connected") or state.get("output") == "Off") and \
+                      (not state.get("source2_connected") or state.get("source2_output") == "Off") and \
+                      (not state.get("gate_connected") or state.get("gate_output") == "Off")
+                if off and state.get("phase") not in ("Preparing", "Running", "Cleaning up"):
+                    break
+                if time.monotonic() >= deadline:
+                    raise TimeoutError("Output OFF could not be verified. Check all instrument outputs manually.")
+                time.sleep(0.1)
+            self._request("release")
+        except BaseException as failure:
+            error = failure
+        finally:
+            self._stop_heartbeat.set()
+            self._heartbeat.join(timeout=4)
+            self._closed = True
+        if error:
+            raise error
 
     def __enter__(self):
         return self

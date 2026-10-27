@@ -3,7 +3,7 @@
 > **日本語の案内:** 列名、単位、数値の直列化規則は互換性契約です。CSV の列名は翻訳せず、
 > 本文の原表記を使用してください。
 
-The native analysis CSV uses 18 columns (`analysis_v3`), with run metadata schema 7.
+The native analysis CSV uses 18 columns (`analysis_v3`), with run metadata schema 8.
 Each new run has a matching multiline-safe `<name>.raw.csv` and `<name>.run.json`.
 
 ## Three-file contract / 3ファイルの役割
@@ -123,7 +123,7 @@ autorange history and output cleanup. Full legacy CSV tests remain intact.
 
 ## 日本語 — 全文対訳
 
-ネイティブCSVは18列の`analysis_v3`で、run metadata schemaは7です。新しいrunはmultiline-safeな`.raw.csv`を作成し、旧runの`.readings.jsonl`は保存時に維持します。
+ネイティブCSVは18列の`analysis_v3`で、run metadata schemaは8です。新しいrunはmultiline-safeな`.raw.csv`を作成し、旧runの`.readings.jsonl`は保存時に維持します。
 
 | 旧フィールド | 保持する情報 |
 | --- | --- |
@@ -176,8 +176,8 @@ analysis_v3の18列、単位、setpoint fallbackのorigin、負のゼロと有�
 V for I-V). An omitted/null value preserves legacy coupling to `compliance`.
 `config.compliance` is the external Meter software stop. The actual programmed
 Source threshold is `hardware_compliance_setting`; it may differ due to device
-resolution or fixed range protection. Settings files use schema 2; metadata uses
-schema 7. The 18-column analysis CSV remains `analysis_v3`.
+resolution or fixed range protection. Settings files use schema 3; metadata uses
+schema 8. The 18-column analysis CSV remains `analysis_v3`.
 
 For GS210, `source_protection_stop` records the target index/value, observation
 UTC time, raw condition register and H/L/EMR flags, and any associated failure.

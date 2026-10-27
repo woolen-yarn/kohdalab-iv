@@ -4,6 +4,7 @@
 mod client;
 mod compatibility;
 mod engine;
+mod gui_control;
 mod protocol;
 mod raw_csv;
 mod run_export;
@@ -100,9 +101,13 @@ fn run() -> Result<(), String> {
         None
     };
     let smoke = hardware_smoke
-        || args
-            .iter()
-            .any(|a| a == "--gui-smoke" || a == "--gui-settings-smoke" || a == "--gui-limit-smoke");
+        || args.iter().any(|a| {
+            a == "--gui-smoke"
+                || a == "--gui-settings-smoke"
+                || a == "--gui-limit-smoke"
+                || a == "--gui-balanced-smoke"
+                || a == "--gui-control-smoke"
+        });
     let screenshot = argument(&args, "--screenshot").map(std::path::PathBuf::from);
     let icon =
         eframe::icon_data::from_png_bytes(include_bytes!("../../../assets/kohdalab-iv-window.png"))

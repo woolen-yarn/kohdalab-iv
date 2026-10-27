@@ -3,7 +3,41 @@
 use crate::compatibility::SETTINGS_SCHEMA_VERSION;
 use iv_core::RunConfig;
 use serde::{Deserialize, Serialize};
+use std::collections::HashSet;
 use std::path::{Path, PathBuf};
+
+/// A saved instrument connection.  The desktop engine still has one source,
+/// one optional second source and one meter role; the inventory lets users
+/// keep several prepared connections and bind those roles in Settings.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub(super) struct InstrumentEntry {
+    /// Stable within a configuration file.  IDs deliberately do not depend on
+    /// the device model or resource, which users are expected to edit.
+    pub(super) id: u64,
+    pub(super) model: String,
+    pub(super) resource: String,
+}
+
+impl InstrumentEntry {
+    fn source(id: u64, model: impl Into<String>, resource: impl Into<String>) -> Self {
+        Self {
+            id,
+            model: model.into(),
+            resource: resource.into(),
+        }
+    }
+
+    fn meter(id: u64, model: impl Into<String>, resource: impl Into<String>) -> Self {
+        Self::source(id, model, resource)
+    }
+}
+
+impl Default for InstrumentEntry {
+    fn default() -> Self {
+        Self::source(0, "YOKOGAWA_GS210", String::new())
+    }
+}
 
 #[derive(Clone, Serialize, Deserialize)]
 #[serde(default)]
@@ -13,6 +47,24 @@ pub(super) struct Settings {
     pub(super) config: RunConfig,
     pub(super) source: String,
     pub(super) meter: String,
+    pub(super) source2: String,
+    pub(super) source2_model: String,
+    pub(super) source2_compliance_unit: usize,
+    /// Saved source and meter choices.  The original scalar fields above are
+    /// retained as the active-role binding for backwards-compatible config
+    /// files and the existing device engine protocol.
+    #[serde(default)]
+    pub(super) sources: Vec<InstrumentEntry>,
+    #[serde(default)]
+    pub(super) meters: Vec<InstrumentEntry>,
+    #[serde(default)]
+    pub(super) source1_id: u64,
+    #[serde(default)]
+    pub(super) source2_id: u64,
+    #[serde(default)]
+    pub(super) meter_id: u64,
+    #[serde(default = "default_inventory_id")]
+    pub(super) next_inventory_id: u64,
     pub(super) output_dir: String,
     pub(super) filename: String,
     pub(super) simulation: bool,
@@ -39,6 +91,18 @@ impl Default for Settings {
             config: RunConfig::default(),
             source: String::new(),
             meter: String::new(),
+            source2: String::new(),
+            source2_model: "YOKOGAWA_GS210".into(),
+            source2_compliance_unit: 1,
+            sources: vec![
+                InstrumentEntry::source(1, "YOKOGAWA_GS210", String::new()),
+                InstrumentEntry::source(2, "YOKOGAWA_GS210", String::new()),
+            ],
+            meters: vec![InstrumentEntry::meter(3, "AGILENT_34411A", String::new())],
+            source1_id: 1,
+            source2_id: 2,
+            meter_id: 3,
+            next_inventory_id: 4,
             output_dir: user_dir().join("results").display().to_string(),
             filename: "iv_run".into(),
             simulation: false,
@@ -57,6 +121,155 @@ impl Default for Settings {
 }
 
 impl Settings {
+    /// Populate the inventory from legacy scalar settings and make the active
+    /// entries available through those scalar bindings.  This runs after every
+    /// JSON load and at app startup, so old settings files remain valid.
+    pub(super) fn migrate_inventory(&mut self) {
+        if self.sources.is_empty() {
+            self.sources.push(InstrumentEntry::source(
+                1,
+                self.source_model.clone(),
+                self.source.clone(),
+            ));
+            self.sources.push(InstrumentEntry::source(
+                2,
+                self.source2_model.clone(),
+                self.source2.clone(),
+            ));
+            self.source1_id = 1;
+            self.source2_id = 2;
+        }
+        if self.meters.is_empty() {
+            self.meters.push(InstrumentEntry::meter(
+                3,
+                self.meter_model.clone(),
+                self.meter.clone(),
+            ));
+            self.meter_id = 3;
+        }
+
+        let mut next = self.next_inventory_id.max(1);
+        let mut used = HashSet::new();
+        for entry in self.sources.iter_mut().chain(self.meters.iter_mut()) {
+            if entry.id == 0 || !used.insert(entry.id) {
+                while used.contains(&next) {
+                    next += 1;
+                }
+                entry.id = next;
+                used.insert(entry.id);
+                next += 1;
+            }
+            next = next.max(entry.id.saturating_add(1));
+        }
+        self.next_inventory_id = next;
+        if !self.sources.iter().any(|entry| entry.id == self.source1_id) {
+            self.source1_id = self.sources[0].id;
+        }
+        if !self.sources.iter().any(|entry| entry.id == self.source2_id)
+            || self.source2_id == self.source1_id
+        {
+            self.source2_id = self
+                .sources
+                .iter()
+                .find(|entry| entry.id != self.source1_id)
+                .map(|entry| entry.id)
+                .unwrap_or(self.source1_id);
+        }
+        if !self.meters.iter().any(|entry| entry.id == self.meter_id) {
+            self.meter_id = self.meters[0].id;
+        }
+        self.bind_active_entries();
+    }
+
+    /// Copy the active inventory entries into the legacy fields used by the
+    /// current engine commands.  Call only after role selections change.
+    pub(super) fn bind_active_entries(&mut self) {
+        if let Some(entry) = self
+            .sources
+            .iter()
+            .find(|entry| entry.id == self.source1_id)
+        {
+            self.source_model.clone_from(&entry.model);
+            self.source.clone_from(&entry.resource);
+        }
+        if let Some(entry) = self
+            .sources
+            .iter()
+            .find(|entry| entry.id == self.source2_id)
+        {
+            self.source2_model.clone_from(&entry.model);
+            self.source2.clone_from(&entry.resource);
+        }
+        if let Some(entry) = self.meters.iter().find(|entry| entry.id == self.meter_id) {
+            self.meter_model.clone_from(&entry.model);
+            self.meter.clone_from(&entry.resource);
+        }
+    }
+
+    /// Persist edits made through the existing active-device cards back to
+    /// their selected inventory entries.
+    pub(super) fn store_active_entries(&mut self) {
+        if let Some(entry) = self
+            .sources
+            .iter_mut()
+            .find(|entry| entry.id == self.source1_id)
+        {
+            entry.model.clone_from(&self.source_model);
+            entry.resource.clone_from(&self.source);
+        }
+        if self.config.balanced_source.is_some()
+            && let Some(entry) = self
+                .sources
+                .iter_mut()
+                .find(|entry| entry.id == self.source2_id)
+        {
+            entry.model.clone_from(&self.source2_model);
+            entry.resource.clone_from(&self.source2);
+        }
+        if let Some(entry) = self
+            .meters
+            .iter_mut()
+            .find(|entry| entry.id == self.meter_id)
+        {
+            entry.model.clone_from(&self.meter_model);
+            entry.resource.clone_from(&self.meter);
+        }
+    }
+
+    pub(super) fn add_source(&mut self) {
+        let id = self.allocate_inventory_id();
+        self.sources
+            .push(InstrumentEntry::source(id, "YOKOGAWA_GS210", String::new()));
+    }
+
+    pub(super) fn add_meter(&mut self) {
+        let id = self.allocate_inventory_id();
+        self.meters
+            .push(InstrumentEntry::meter(id, "AGILENT_34411A", String::new()));
+    }
+
+    pub(super) fn remove_source(&mut self, id: u64) -> bool {
+        if id == self.source1_id || id == self.source2_id || self.sources.len() <= 2 {
+            return false;
+        }
+        self.sources.retain(|entry| entry.id != id);
+        true
+    }
+
+    pub(super) fn remove_meter(&mut self, id: u64) -> bool {
+        if id == self.meter_id || self.meters.len() <= 1 {
+            return false;
+        }
+        self.meters.retain(|entry| entry.id != id);
+        true
+    }
+
+    fn allocate_inventory_id(&mut self) -> u64 {
+        let id = self.next_inventory_id.max(1);
+        self.next_inventory_id = id.saturating_add(1);
+        id
+    }
+
     /// Store the values belonging to the mode currently held by `config`.
     /// This is called before switching modes or opening the Settings dialog.
     pub(super) fn store_active_protection(&mut self) {
@@ -149,8 +362,13 @@ pub(super) fn load_settings(bytes: &[u8]) -> Result<Settings, String> {
     // Merely loading/opening settings must not opt into a different range.
     settings.store_active_protection();
     settings.activate_mode_protection();
+    settings.migrate_inventory();
     settings.schema_version = SETTINGS_SCHEMA_VERSION;
     Ok(settings)
+}
+
+const fn default_inventory_id() -> u64 {
+    1
 }
 
 #[cfg(test)]
@@ -174,7 +392,7 @@ mod tests {
     fn autosave_cannot_overwrite_a_future_versioned_file() {
         let path =
             std::env::temp_dir().join(format!("iv-future-settings-{}.json", std::process::id()));
-        let original = br#"{"schema_version":3,"filename":"future"}"#;
+        let original = br#"{"schema_version":4,"filename":"future"}"#;
         std::fs::write(&path, original).unwrap();
         assert!(save_settings(&Settings::default(), &path).is_err());
         assert_eq!(std::fs::read(&path).unwrap(), original);
@@ -255,8 +473,8 @@ mod tests {
                 .filename,
             "current"
         );
-        let error = load_settings(br#"{"schema_version":3}"#).err().unwrap();
-        assert!(error.contains("schema version 3"));
+        let error = load_settings(br#"{"schema_version":4}"#).err().unwrap();
+        assert!(error.contains("schema version 4"));
         assert!(error.contains("newer KohdaLab IV"));
     }
 
@@ -264,5 +482,67 @@ mod tests {
     fn malformed_marker_is_rejected_before_deserialization() {
         let error = load_settings(br#"{"schema_version":"one"}"#).err().unwrap();
         assert!(error.contains("non-negative integer"));
+    }
+
+    #[test]
+    fn legacy_scalar_devices_migrate_to_two_sources_and_one_meter() {
+        let settings = load_settings(
+            br#"{
+                "source_model":"YOKOGAWA_7651",
+                "source":"GPIB0::3::INSTR",
+                "source2_model":"YOKOGAWA_GS210",
+                "source2":"GPIB0::4::INSTR",
+                "meter_model":"AGILENT_34411A",
+                "meter":"GPIB0::7::INSTR"
+            }"#,
+        )
+        .unwrap();
+        assert_eq!(settings.sources.len(), 2);
+        assert_eq!(settings.meters.len(), 1);
+        assert_ne!(settings.source1_id, settings.source2_id);
+        assert_eq!(settings.sources[0].model, "YOKOGAWA_7651");
+        assert_eq!(settings.sources[1].resource, "GPIB0::4::INSTR");
+        assert_eq!(settings.meters[0].model, "AGILENT_34411A");
+    }
+
+    #[test]
+    fn editing_inactive_second_source_survives_active_card_storage() {
+        let mut settings = Settings::default();
+        settings.migrate_inventory();
+        let second = settings.source2_id;
+        settings
+            .sources
+            .iter_mut()
+            .find(|entry| entry.id == second)
+            .unwrap()
+            .resource = "GPIB0::9::INSTR".into();
+        settings.store_active_entries();
+        assert_eq!(
+            settings
+                .sources
+                .iter()
+                .find(|entry| entry.id == second)
+                .unwrap()
+                .resource,
+            "GPIB0::9::INSTR"
+        );
+        settings.config.balanced_source = Some(iv_core::BalancedSourceConfig::default());
+        settings.bind_active_entries();
+        assert_eq!(settings.source2, "GPIB0::9::INSTR");
+    }
+
+    #[test]
+    fn active_inventory_binding_preserves_inactive_devices() {
+        let mut settings = Settings::default();
+        settings.add_source();
+        let inactive = settings.sources[2].clone();
+        settings.source_model = "YOKOGAWA_7651".into();
+        settings.source = "GPIB0::3::INSTR".into();
+        settings.store_active_entries();
+        settings.bind_active_entries();
+        assert_eq!(settings.source_model, "YOKOGAWA_7651");
+        assert_eq!(settings.sources[2], inactive);
+        assert!(settings.remove_source(settings.sources[2].id));
+        assert_eq!(settings.sources.len(), 2);
     }
 }
