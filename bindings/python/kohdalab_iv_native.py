@@ -1,4 +1,6 @@
 """Standard-library client for the Rust IV engine. No instrument driver in Python."""
+from __future__ import annotations
+
 import copy
 import json
 import math
@@ -11,6 +13,7 @@ import threading
 import time
 import uuid
 import weakref
+from typing import Any
 
 
 # Keep this contract deliberately independent of the package release number.
@@ -416,9 +419,62 @@ class NativeIV:
 class GuiIVError(RuntimeError):
     """A GUI API error with a stable, machine-readable error code."""
 
-    def __init__(self, message, code=None):
+    def __init__(self, message, code=None, receipt=None):
         super().__init__(message)
         self.code = code
+        self.receipt = receipt
+        self.stop_error = None
+
+
+GuiError = GuiIVError
+
+
+class GuiTransportError(GuiIVError):
+    """Communication failed; the outcome of an action may be unknown."""
+
+
+class GuiOwnershipError(GuiIVError):
+    """Exclusive control is absent, expired, or revoked."""
+
+
+class GuiDeviceError(GuiIVError):
+    """A device operation failed."""
+
+
+class GuiProtectionError(GuiDeviceError):
+    """An explicit device protection condition prevented an operation."""
+
+
+class GuiSaveError(GuiIVError):
+    """Recording creation, writing, or finalization failed."""
+
+
+class GuiInitializationError(GuiDeviceError):
+    """Device initialization failed."""
+
+
+class GuiRunStopped(GuiIVError):
+    """Raised when a GUI-managed run was stopped before completion."""
+
+
+class GuiTimeoutError(GuiIVError, TimeoutError):
+    """The wait expired; receipt describes the last observed state only."""
+
+
+_ERROR_TYPES = {
+    "transport": GuiTransportError, "protocol": GuiTransportError,
+    "disconnected": GuiTransportError, "heartbeat_failed": GuiOwnershipError,
+    "protection_stop": GuiProtectionError, "storage": GuiSaveError,
+    "ownership_lost": GuiOwnershipError,
+    "device_error": GuiDeviceError, "protection": GuiProtectionError,
+    "save_failed": GuiSaveError, "initialization_failed": GuiInitializationError,
+    "stopped": GuiRunStopped, "timeout": GuiTimeoutError,
+}
+
+
+def _typed_gui_error(message: str, code: str | None = None,
+               receipt: dict[str, Any] | None = None) -> GuiError:
+    return _ERROR_TYPES.get(code, GuiError)(message, code, receipt)
 
 
 class _GuiControlRejected(GuiIVError):
@@ -439,8 +495,14 @@ class GuiIV:
         "gate_output_off", "disconnect_gate",
     ))
 
-    def __init__(self, endpoint=None):
+    def __init__(self, endpoint=None, *, stop_on_disconnect=True,
+                 stop_on_error=True, stop_on_timeout=True):
         import socket
+        self._stop_policy = dict(stop_on_disconnect=stop_on_disconnect,
+                                 stop_on_error=stop_on_error, stop_on_timeout=stop_on_timeout)
+        for name, value in self._stop_policy.items():
+            if not isinstance(value, bool):
+                raise TypeError(f"{name} must be bool")
         self._socket = socket
         self._lease = None
         self._closed = False
@@ -474,12 +536,19 @@ class GuiIV:
         # change a GUI-owned instrument, or when used as a context manager.
 
     @classmethod
-    def launch(cls, profile=None, binary=None, timeout=15):
+    def launch(cls, profile=None, binary=None, timeout=15, *, stop_on_disconnect=True,
+               stop_on_error=True, stop_on_timeout=True):
         """Launch a GUI API process and attach to its matching descriptor.
 
         ``profile`` is the GUI config path.  The process id in the descriptor
         prevents attachment to an older GUI that happened to be open already.
         """
+        policy = dict(stop_on_disconnect=stop_on_disconnect, stop_on_error=stop_on_error,
+                      stop_on_timeout=stop_on_timeout)
+        for name, value in policy.items():
+            if not isinstance(value, bool):
+                raise TypeError(f"{name} must be bool")
+
         executable = resolve_executable(binary)
         command = [executable, "--gui-api"]
         if profile is not None:
@@ -496,7 +565,7 @@ class GuiIV:
                 except (OSError, ValueError, json.JSONDecodeError):
                     continue
                 if declaration.get("pid") == process.pid:
-                    candidate = cls(endpoint=path)
+                    candidate = cls(endpoint=path, **policy)
                     try:
                         candidate.status()
                     except BaseException:
@@ -552,24 +621,29 @@ class GuiIV:
         if self._lease is not None:
             payload["lease"] = self._lease
         payload = json.dumps(payload, allow_nan=False).encode() + b"\n"
-        with self._socket.create_connection((host, int(port)), timeout=timeout) as connection:
-            connection.settimeout(timeout)
-            connection.sendall(payload)
-            with connection.makefile("rb") as stream:
-                line = stream.readline(2_097_153)
+        try:
+            with self._socket.create_connection((host, int(port)), timeout=timeout) as connection:
+                connection.settimeout(timeout)
+                connection.sendall(payload)
+                with connection.makefile("rb") as stream:
+                    line = stream.readline(2_097_153)
+        except OSError as error:
+            raise GuiTransportError("Could not reach the IV GUI; action outcome is unknown.", "transport") from error
         if len(line) > 2_097_152 or not line.endswith(b"\n"):
-            raise GuiIVError("Invalid GUI control response", "protocol")
+            raise GuiTransportError("Invalid GUI control response", "protocol")
         try:
             response = json.loads(line)
         except (TypeError, json.JSONDecodeError) as error:
-            raise GuiIVError("Invalid GUI control response", "protocol") from error
+            raise GuiTransportError("Invalid GUI control response", "protocol") from error
         if not isinstance(response, dict) or not isinstance(response.get("ok"), bool):
-            raise GuiIVError("Invalid GUI control response", "protocol")
+            raise GuiTransportError("Invalid GUI control response", "protocol")
         if response["ok"] and "data" not in response and "result" not in response:
-            raise GuiIVError("Invalid GUI control response", "protocol")
+            raise GuiTransportError("Invalid GUI control response", "protocol")
         if not response.get("ok"):
-            error = _GuiControlRejected(response.get("error", "GUI control failed"),
-                                        response.get("error_code", "rejected"))
+            code = response.get("error_code", "rejected")
+            error = _typed_gui_error(response.get("error", "GUI control failed"), code)
+            if type(error) is GuiIVError:
+                error = _GuiControlRejected(str(error), code)
             # A revoked or expired lease must never cause a later safety call
             # to acquire a different client's GUI session.
             if self._lease is not None and error.code in (
@@ -586,14 +660,29 @@ class GuiIV:
         if self._lease is not None:
             return self._lease
         method = "claim" if self._endpoint.get("protocol") == 1 else "acquire"
-        result = self._request(method, timeout=12)
+        result = self._request(method, timeout=12, **self._stop_policy)
         lease = result.get("lease") if isinstance(result, dict) else None
         if not isinstance(lease, str) or not lease:
             raise GuiIVError("GUI returned an invalid control lease", "protocol")
         self._lease = lease
+        self._confirm_policy(result)
         self._control = result.get("control", {"owned": True, "client_id": self.client_id})
         self._start_heartbeat()
         return lease
+
+    def _confirm_policy(self, result):
+        confirmed = result.get("stop_policy")
+        # Older IV APIs implemented the original fail-safe defaults only.
+        legacy = self._stop_policy == dict(stop_on_disconnect=True, stop_on_error=True,
+                                          stop_on_timeout=True)
+        if confirmed is None and legacy:
+            return
+        if confirmed != self._stop_policy:
+            # Acquisition was idle. Relinquish safely and never send a job.
+            try:
+                self.release()
+            finally:
+                raise GuiIVError("This GUI cannot confirm the selected stop conditions; update the GUI.", "unsupported_policy")
 
     def _start_heartbeat(self):
         if self._stop_heartbeat.is_set():
@@ -620,7 +709,7 @@ class GuiIV:
                 client._request("heartbeat", timeout=3, require_lease=False)
             except Exception as error:
                 if isinstance(error, OSError):
-                    error = GuiIVError("GUI control heartbeat connection was lost.", "ownership_lost")
+                    error = GuiOwnershipError("GUI control heartbeat connection was lost.", "ownership_lost")
                 client._heartbeat_error = error
                 if isinstance(error, GuiIVError):
                     client._control_lost = error
@@ -673,11 +762,12 @@ class GuiIV:
         if self._control_lost is not None:
             raise self._control_lost
         method = "claim" if self._endpoint.get("protocol") == 1 else "acquire"
-        result = self._request(method, label=str(label))
+        result = self._request(method, label=str(label), **self._stop_policy)
         lease = result.get("lease") if isinstance(result, dict) else None
         if not isinstance(lease, str) or not lease:
             raise GuiIVError("GUI returned an invalid control lease", "protocol")
         self._lease = lease
+        self._confirm_policy(result)
         self._control = result.get("control", result)
         self._start_heartbeat()
         return self._control
@@ -723,36 +813,82 @@ class GuiIV:
     def _is_job(value):
         return isinstance(value, dict) and isinstance(value.get("id"), str)
 
-    def wait(self, run_id=None, timeout=30, predicate=None, poll_interval=0.1):
-        """Wait for a job receipt, or retain legacy ``wait(predicate)`` polling."""
-        if callable(run_id):
-            predicate = run_id
-            run_id = None
+    @staticmethod
+    def _validate_wait(timeout, poll_interval):
         if timeout is not None and (not math.isfinite(timeout) or timeout < 0):
             raise ValueError("timeout must be a non-negative finite number or None")
         if not math.isfinite(poll_interval) or poll_interval <= 0:
             raise ValueError("poll_interval must be positive and finite")
+
+    def wait(self, run_id=None, timeout=30, predicate=None, poll_interval=0.1,
+             _allow_timeout_stop=True):
+        """Wait for a terminal receipt; keep legacy predicate polling supported."""
+        if callable(run_id):
+            predicate, run_id = run_id, None
+        self._validate_wait(timeout, poll_interval)
         deadline = None if timeout is None else time.monotonic() + timeout
         while True:
             if self._heartbeat_error:
-                raise GuiIVError(f"GUI control heartbeat failed: {self._heartbeat_error}",
-                                 "heartbeat_failed")
+                raise self._heartbeat_error
+            receipt = None
             if run_id is not None:
                 receipt = self.result(run_id)
-                if receipt.get("status") in ("completed", "stopped", "error"):
-                    if receipt.get("status") in ("stopped", "error"):
-                        raise GuiIVError(receipt.get("error", "GUI job failed"),
-                                         receipt.get("error_code", receipt.get("status")))
+                status = receipt.get("status")
+                if status == "completed":
                     return receipt
+                if status == "stopped":
+                    raise GuiRunStopped(receipt.get("error") or "GUI job was stopped", "stopped", receipt)
+                if status == "error":
+                    raise _typed_gui_error(receipt.get("error") or "GUI job failed",
+                                           receipt.get("error_code") or "job_failed", receipt)
             else:
                 state = self.snapshot
                 if state.get("error"):
-                    raise GuiIVError(state["error"], state.get("error_code"))
+                    raise _typed_gui_error(state["error"], state.get("error_code") or state.get("error_kind"))
                 if predicate is None or predicate(state):
                     return state
             if deadline is not None and time.monotonic() >= deadline:
-                raise GuiIVError("GUI response timed out. Inspect the GUI before retrying.", "timeout")
-            time.sleep(poll_interval)
+                error = GuiTimeoutError("GUI wait timed out; stopped hardware is not confirmed.", "timeout", receipt)
+                if _allow_timeout_stop and getattr(self, "_stop_policy", {}).get("stop_on_timeout", True):
+                    # Never acquire somebody else's GUI merely because an observer timed out.
+                    if self._lease is not None:
+                        error.stop_attempted = True
+                        for action in (lambda: self.stop(run_id), self.output_off):
+                            try:
+                                action()
+                            except Exception as failure:
+                                if error.stop_error is None:
+                                    error.stop_error = failure
+                raise error
+            time.sleep(poll_interval if deadline is None else min(poll_interval, max(0, deadline-time.monotonic())))
+
+    def stop_and_wait(self, run_id, timeout=40, poll_interval=0.1):
+        """Confirm terminal cleanup and all IV outputs OFF for an active job."""
+        if not isinstance(run_id, str) or not run_id:
+            raise ValueError("run_id must be a non-empty string")
+        self._validate_wait(timeout, poll_interval)
+        deadline = None if timeout is None else time.monotonic() + timeout
+        current = self.result(run_id)
+        if current.get("status") in ("completed", "stopped"):
+            return current
+        if current.get("status") == "error":
+            raise _typed_gui_error(current.get("error") or "GUI job failed",
+                                   current.get("error_code") or "job_failed", current)
+        self.stop(run_id)
+        self.output_off()
+        remaining = None if deadline is None else max(0, deadline-time.monotonic())
+        try:
+            current = self.wait(run_id, timeout=remaining, poll_interval=poll_interval,
+                                _allow_timeout_stop=False)
+        except GuiRunStopped as error:
+            current = error.receipt
+        remaining = None if deadline is None else max(0, deadline-time.monotonic())
+        try:
+            self._wait_outputs_off(remaining, poll_interval)
+        except GuiIVError as error:
+            error.receipt = current
+            raise
+        return current
 
     def start(self, filename=None, *, directory=None, request_id=None):
         """Start a GUI run and return its idempotent job receipt."""
@@ -778,12 +914,13 @@ class GuiIV:
 
     def run(self, filename=None, *, directory=None, timeout=120):
         """Start the GUI's configured sweep and wait. GUI plots/CSV update normally."""
+        self._validate_wait(timeout, 0.1)
         try:
             accepted = self.start(filename=filename, directory=directory)
         except _GuiControlRejected:
             raise  # e.g. a manual run is busy: do not interrupt it.
         except BaseException as original:
-            self._abort_after_error(original)
+            self._cleanup_after_failure(original, start_uncertain=True)
             raise
         try:
             target = accepted.get("id", accepted.get("run_id"))
@@ -800,11 +937,29 @@ class GuiIV:
             if state.get("run_id", 0) < target:
                 raise RuntimeError("GUI measurement was cancelled before it started.")
             if state["phase"] != "Completed":
-                raise RuntimeError(f"GUI measurement ended with {state['phase']}: {state.get('message', '')}")
+                raise GuiProtectionError(f"GUI measurement ended with {state['phase']}: {state.get('message', '')}", "protection")
             return state
         except BaseException as original:
-            self._abort_after_error(original)
+            self._cleanup_after_failure(original)
             raise
+
+    def _cleanup_after_failure(self, original, *, start_uncertain=False):
+        policy = getattr(self, "_stop_policy", dict(stop_on_disconnect=True,
+                         stop_on_error=True, stop_on_timeout=True))
+        if isinstance(original, (_GuiControlRejected, GuiOwnershipError)):
+            return
+        if isinstance(original, TimeoutError):
+            should_stop = policy["stop_on_disconnect" if start_uncertain else "stop_on_timeout"]
+            if getattr(original, "stop_attempted", False):
+                return
+        elif isinstance(original, GuiTransportError):
+            should_stop = policy["stop_on_disconnect"]
+        elif isinstance(original, GuiDeviceError):
+            should_stop = True  # Device protection is never optional.
+        else:
+            should_stop = policy["stop_on_error"]
+        if should_stop:
+            self._abort_after_error(original)
 
     def _abort_after_error(self, original):
         failures = []
@@ -836,13 +991,13 @@ class GuiIV:
         except _GuiControlRejected:
             raise
         except BaseException as original:
-            self._abort_after_error(original)
+            self._cleanup_after_failure(original)
             raise
         try:
             return self._job_snapshot_or_legacy_wait(
                 result, lambda s: s.get("gate_revision", 0) > previous and s.get("gate_output") == "On", timeout)
         except BaseException as original:
-            self._abort_after_error(original)
+            self._cleanup_after_failure(original)
             raise
 
     def gate_output_off(self, timeout=30):
@@ -886,7 +1041,10 @@ class GuiIV:
 
     def _safe_output_off(self, timeout):
         self.output_off()
-        deadline = time.monotonic() + timeout
+        return self._wait_outputs_off(timeout)
+
+    def _wait_outputs_off(self, timeout, poll_interval=0.1):
+        deadline = None if timeout is None else time.monotonic() + timeout
         while True:
             state = self.snapshot
             off = (not state.get("source_connected") or state.get("output") == "Off") and \
@@ -894,10 +1052,9 @@ class GuiIV:
                   (not state.get("gate_connected") or state.get("gate_output") == "Off")
             if off and state.get("phase") not in ("Preparing", "Running", "Cleaning up"):
                 return state
-            if time.monotonic() >= deadline:
-                raise GuiIVError("Output OFF could not be verified. Check all instrument outputs manually.",
-                                 "timeout")
-            time.sleep(0.1)
+            if deadline is not None and time.monotonic() >= deadline:
+                raise GuiTimeoutError("Output OFF could not be verified. Check all instrument outputs manually.", "timeout")
+            time.sleep(poll_interval)
 
     def close(self, timeout=40):
         if self._closed:
@@ -920,5 +1077,25 @@ class GuiIV:
         self.acquire()
         return self
 
-    def __exit__(self, *exc):
-        self.close()
+    def __exit__(self, exc_type, exc, traceback):
+        try:
+            if exc_type is not None and not any(self._stop_policy[k] for k in ("stop_on_error", "stop_on_disconnect")):
+                # Explicit opt-out of both exception and disconnect stops. Detach
+                # through the GUI so it retains exclusive ownership of active work.
+                try:
+                    if self._lease is not None:
+                        self._request("detach", require_lease=False)
+                        self._lease = None
+                finally:
+                    self._stop_heartbeat.set()
+                    self._closed = True
+            else:
+                self.close()
+        except Exception as cleanup_error:
+            if exc is None:
+                raise
+            if hasattr(exc, "add_note"):
+                exc.add_note(f"IV safety cleanup could not be confirmed: {cleanup_error}")
+            else:
+                exc.gui_cleanup_error = cleanup_error
+        return False

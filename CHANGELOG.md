@@ -3,6 +3,13 @@
 > **Language navigation / 言語案内:** The English historical record appears first, followed by a complete Japanese counterpart. Versions, dates, API names, commands, compatibility wording, and historical claims are preserved in both languages.
 > 英語の履歴記録を先に置き、その後に完全な日本語対訳を掲載します。バージョン、日付、API 名、コマンド、互換性の表現、履歴上の主張は両言語で保持します。
 
+## 1.3.0-alpha.14 — 2026-10-28
+
+- Align GUI automation stop options, typed errors and terminal receipt semantics with TRKR, retaining IV's fail-safe defaults and verified normal Output OFF cleanup.
+- Independently select disconnect, Python exception and wait-timeout stops. Keep an active detached job locked against GUI edits when continuation is explicitly selected.
+- Add `stop_and_wait()` with output verification; report failed safety cleanup as an error rather than a stopped success. Preserve CSV and profile schemas.
+- Update English/Japanese usage and stop-policy documentation. Automated tests and simulations do not constitute new physical hardware qualification.
+
 ## 1.3.0-alpha.13 — 2026-10-28
 
 - Add Dual V-I sweeps for two voltage sources with exact integer ratios, independent source safety paths, and an explicit differential `V1 - V2` analysis value.
@@ -283,6 +290,13 @@
 ---
 
 # 変更履歴（日本語）
+
+## 1.3.0-alpha.14 — 2026-10-28
+
+- GUI外部制御の停止条件・例外型・処理結果をTRKRと統一し、IVの既定保護と正常終了時のOutput OFF確認を維持。
+- 通信断・Python例外・待機タイムアウトの停止を個別指定可能に。継続を明示選択した切離し処理も完了までGUIの編集をロック。
+- 出力確認付き`stop_and_wait()`を追加し、安全停止失敗を停止済みの成功とせずエラーで報告。CSV・設定schemaは維持。
+- 利用方法・停止条件の英日文書を更新。自動テスト・模擬実験は新しい実機適合確認を意味しません。
 
 ## 1.3.0-alpha.13 — 2026-10-28
 

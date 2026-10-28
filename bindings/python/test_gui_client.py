@@ -220,3 +220,101 @@ class WaitCompatibilityTests(unittest.TestCase):
                 client.wait("id", timeout=float("nan"))
 
 if __name__=='__main__':unittest.main()
+
+
+class StopPolicyTests(unittest.TestCase):
+    def client(self, **policy):
+        directory = tempfile.TemporaryDirectory()
+        self.addCleanup(directory.cleanup)
+        endpoint = Path(directory.name) / 'iv.json'
+        endpoint.write_text(json.dumps({'protocol': 2, 'address': '127.0.0.1:8000',
+            'token': 'test', 'pid': 100, 'instance_id': 'one'}))
+        return GuiIV(endpoint, **policy)
+
+    def test_independent_options_and_policy_confirmation(self):
+        client = self.client(stop_on_disconnect=False, stop_on_error=True, stop_on_timeout=False)
+        policy = dict(client._stop_policy)
+        with patch.object(client, '_request', return_value={'lease':'lease','stop_policy':policy}), \
+             patch.object(client, '_start_heartbeat'):
+            client.acquire()
+        self.assertEqual(client._control['owned'], True)
+        with patch.object(client, 'release') as release:
+            from kohdalab_iv_native import GuiError
+            with self.assertRaises(GuiError) as caught:
+                client._confirm_policy({'lease':'lease'})
+            self.assertEqual(caught.exception.code, 'unsupported_policy')
+            release.assert_called_once()
+        with self.assertRaises(TypeError):
+            self.client(stop_on_error='yes')
+
+    def test_normal_exit_always_safe_and_python_exception_opt_out_detaches(self):
+        client = self.client(stop_on_disconnect=False, stop_on_error=False)
+        with patch.object(client, 'close') as close:
+            client.__exit__(None, None, None)
+            close.assert_called_once()
+        client._lease = 'lease'
+        with patch.object(client, '_request', return_value={}) as request, patch.object(client, 'close') as close:
+            client.__exit__(ValueError, ValueError('experiment failed'), None)
+        request.assert_called_once_with('detach', require_lease=False)
+        close.assert_not_called()
+        self.assertTrue(client._closed)
+
+    def test_python_exception_is_preserved_on_failed_safety_cleanup(self):
+        client = self.client()
+        original = ValueError('experiment failed')
+        with patch.object(client, 'close', side_effect=RuntimeError('OFF unverified')):
+            client.__exit__(ValueError, original, None)
+        self.assertIn('OFF unverified', original.__notes__[0])
+
+    def test_timeout_stop_is_selected_independently_and_never_confirms_stop(self):
+        from kohdalab_iv_native import GuiTimeoutError
+        for enabled in (False, True):
+            client = self.client(stop_on_timeout=enabled)
+            client._lease = 'lease'
+            receipt = {'id':'job','status':'running'}
+            with patch.object(client, 'result', return_value=receipt), \
+                 patch.object(client, 'stop') as stop, patch.object(client, 'output_off') as off:
+                with self.assertRaises(GuiTimeoutError) as caught:
+                    client.wait('job', timeout=0)
+            self.assertEqual(caught.exception.receipt, receipt)
+            self.assertEqual(stop.call_count, int(enabled))
+            self.assertEqual(off.call_count, int(enabled))
+
+    def test_stop_and_wait_verifies_output_off_and_does_not_repeat_terminal_stop(self):
+        from kohdalab_iv_native import GuiRunStopped, GuiTimeoutError
+        client = self.client()
+        receipt = {'id':'job','status':'stopped'}
+        with patch.object(client, 'result', return_value={'id':'job','status':'running'}), \
+             patch.object(client, 'stop') as stop, patch.object(client, 'output_off') as off, \
+             patch.object(client, 'wait', side_effect=GuiRunStopped('stopped','stopped',receipt)), \
+             patch.object(client, '_wait_outputs_off', side_effect=GuiTimeoutError('OFF unverified','timeout')):
+            with self.assertRaises(GuiTimeoutError) as caught:
+                client.stop_and_wait('job', timeout=0)
+            self.assertEqual(caught.exception.receipt, receipt)
+            stop.assert_called_once(); off.assert_called_once()
+        with patch.object(client, 'result', return_value=receipt), patch.object(client, 'stop') as stop:
+            self.assertEqual(client.stop_and_wait('job'), receipt)
+            stop.assert_not_called()
+        with patch.object(client, 'stop') as stop:
+            with self.assertRaises(ValueError):
+                client.stop_and_wait('job', timeout=float('nan'))
+            stop.assert_not_called()
+
+    def test_codes_are_typed_and_preserve_receipts(self):
+        from kohdalab_iv_native import _typed_gui_error, GuiProtectionError, GuiSaveError, GuiInitializationError, GuiError
+        for code, kind in [('protection',GuiProtectionError), ('save_failed',GuiSaveError),
+                           ('initialization_failed',GuiInitializationError), ('job_failed',GuiError)]:
+            receipt = {'id':'job','status':'error','error_code':code}
+            error = _typed_gui_error('failed', code, receipt)
+            self.assertIsInstance(error, kind)
+            self.assertIsInstance(error, GuiIVError)
+            self.assertEqual(error.receipt, receipt)
+
+    def test_run_and_gate_timeout_opt_out_is_not_overridden_by_convenience_wrapper(self):
+        from kohdalab_iv_native import GuiTimeoutError
+        client = self.client(stop_on_timeout=False, stop_on_error=False, stop_on_disconnect=False)
+        with patch.object(client, 'start', return_value={'id':'job'}), \
+             patch.object(client, 'wait', side_effect=GuiTimeoutError('wait expired','timeout')), \
+             patch.object(client, 'stop') as stop, patch.object(client, 'output_off') as off:
+            with self.assertRaises(GuiTimeoutError): client.run()
+            stop.assert_not_called(); off.assert_not_called()

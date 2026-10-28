@@ -95,7 +95,7 @@ impl IvApp {
         match method {
             "capabilities" => {
                 return Ok(
-                    json!({"application":"kohdalab-iv","application_version":env!("CARGO_PKG_VERSION"),"api_version":2,"actions":["capabilities","status","config","plan","output","acquire","heartbeat","release","configure","load_config","set_plan","set_output","start","result","stop","output_off","connect","disconnect","connect_gate","set_gate_voltage","gate_output_off","disconnect_gate"],"history_limit":32,"request_id":"uuid","safety":{"lease_timeout_seconds":10,"on_disconnect":"stop_and_output_off","on_release":"verified_output_off","gui_stop_always_available":true}}),
+                    json!({"application":"kohdalab-iv","application_version":env!("CARGO_PKG_VERSION"),"api_version":2,"actions":["capabilities","status","config","plan","output","acquire","heartbeat","release","detach","configure","load_config","set_plan","set_output","start","result","stop","output_off","connect","disconnect","connect_gate","set_gate_voltage","gate_output_off","disconnect_gate"],"history_limit":32,"request_id":"uuid","safety":{"lease_timeout_seconds":10,"on_disconnect":"configurable_default_stop_and_output_off","stop_policy_defaults":{"stop_on_disconnect":true,"stop_on_error":true,"stop_on_timeout":true},"on_release":"verified_output_off","gui_stop_always_available":true}}),
                 );
             }
             "status" => {
@@ -116,6 +116,13 @@ impl IvApp {
                 );
             }
             "result" => return control.result(body["run_id"].as_str().ok_or("Missing run_id")?),
+            "detach" => {
+                if !control.can_detach_without_stop() {
+                    return Err("Both exception and disconnect Stop conditions must be disabled before detaching.".into());
+                }
+                control.detach();
+                return Ok(control.control());
+            }
             "release" => {
                 if !outputs_off(&self.state) || self.busy() || control.has_active() {
                     return Err("Verify Output OFF and wait for cleanup before releasing the control lease.".into());
@@ -130,7 +137,7 @@ impl IvApp {
                 if let Some(id) = body.get("run_id").and_then(Value::as_str)
                     && control.active_id() != Some(id)
                 {
-                    return Err("This run is no longer active".into());
+                    return control.result(id);
                 }
                 control.cancel_pending();
                 if !self.send(match method {
@@ -140,7 +147,11 @@ impl IvApp {
                 }) {
                     return Err(self.notice.clone());
                 }
-                return Ok(json!({"accepted":true}));
+                return if let Some(id) = body.get("run_id").and_then(Value::as_str) {
+                    control.result(id)
+                } else {
+                    Ok(json!({"accepted":true}))
+                };
             }
             _ => {}
         }
@@ -394,6 +405,8 @@ impl IvApp {
                     BLUE,
                     if retiring {
                         "PYTHON DISCONNECTED · Verifying output OFF"
+                    } else if control["status"] == "detached" {
+                        "PYTHON DISCONNECTED · Finishing current operation"
                     } else {
                         "PYTHON CONTROL · GUI controls locked"
                     },
