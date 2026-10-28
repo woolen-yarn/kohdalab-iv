@@ -103,7 +103,7 @@ impl Bridge {
     fn new() -> Self {
         let dir = tempfile::tempdir().unwrap();
         let code = r#"#!/usr/bin/env python3
-import sys,json,pathlib
+import sys,json,pathlib,time
 root=pathlib.Path(__file__).parent
 statefile=root/'state.json'
 def initial(): return {str(a):{'on':False,'level':0.,'range':'1','compliance':'0.001','function':'VOLT'} for a in (3,4,5,7)}
@@ -136,6 +136,7 @@ for line in sys.stdin:
   elif cmd==':SOUR:PROT:CURR?':response=d['compliance']
   elif cmd in (':SOUR:LEV?',':SOUR:LEV:FIX?',':SOUR:LEV:AUTO?'):response=repr(d['level'])
   elif cmd==':STAT:COND?':
+   if a in ('3','4') and d['on'] and abs(d['level'])>0.00001 and (root/'slow-source-status').exists():time.sleep(0.12)
    if (root/('status-error-'+a)).exists():reply('injected status error',True);continue
    response='2048' if d['on'] and abs(d['level'])>0.00001 and (root/('trip-'+a)).exists() else '256'
   elif cmd=='SYST:ERR?':response='0,No error'
@@ -449,10 +450,13 @@ fn failed_secondary_off_is_not_certified_and_also_turns_gate_off() {
 
 #[test]
 fn balanced_live_updates_during_wait_do_not_add_csv_points_and_enforce_limit() {
-    for limited in [false, true] {
+    for (limited, slow_status) in [(false, false), (true, false), (true, true)] {
         let bridge = Bridge::new();
         let mut engine = Engine::new(bridge.dir.path());
         engine.connect(true);
+        if slow_status {
+            bridge.marker("slow-source-status");
+        }
         let mut c = config();
         c.start = 0.001;
         c.stop = 0.001;

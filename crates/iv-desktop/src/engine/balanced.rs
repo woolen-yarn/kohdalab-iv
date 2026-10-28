@@ -329,11 +329,6 @@ impl Run<'_> {
         if seconds <= 0.0 {
             return Ok(!self.control.cancelled());
         }
-        let budget = if self.pair.is_some() {
-            Duration::from_secs_f64((self.planned.config1.nplc * 2.0 / 50.0 + 0.03).max(0.05))
-        } else {
-            Duration::from_millis(1)
-        };
         let end = Instant::now() + Duration::from_secs_f64(seconds);
         loop {
             if self.control.cancelled() {
@@ -342,17 +337,18 @@ impl Run<'_> {
             if !self.check(point)? {
                 return Ok(false);
             }
-            if Instant::now() >= end {
-                return Ok(true);
-            }
-            if self.last_live.elapsed() >= Duration::from_millis(50)
-                && end.saturating_duration_since(Instant::now()) >= budget
-            {
+            // Slow source-status queries must not consume the entire settle
+            // interval and skip an already-due meter protection sample.
+            if self.last_live.elapsed() >= Duration::from_millis(50) {
                 self.last_live = Instant::now();
                 if !self.live_conversion(point)? {
                     return Ok(false);
                 }
-                continue;
+            }
+            // Check after the conversion, without looping indefinitely when
+            // each conversion itself takes longer than the live interval.
+            if Instant::now() >= end {
+                return Ok(true);
             }
             std::thread::sleep(
                 Duration::from_millis(20).min(end.saturating_duration_since(Instant::now())),
