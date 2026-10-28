@@ -851,7 +851,9 @@ class GuiIV:
                 error = GuiTimeoutError("GUI wait timed out; stopped hardware is not confirmed.", "timeout", receipt)
                 if _allow_timeout_stop and getattr(self, "_stop_policy", {}).get("stop_on_timeout", True):
                     # Never acquire somebody else's GUI merely because an observer timed out.
-                    if self._lease is not None:
+                    if getattr(self, "_lease", None) is None:
+                        error.stop_error = GuiOwnershipError("Cannot automatically stop without existing GUI control", "ownership_lost")
+                    else:
                         error.stop_attempted = True
                         for action in (lambda: self.stop(run_id), self.output_off):
                             try:
@@ -870,6 +872,12 @@ class GuiIV:
         deadline = None if timeout is None else time.monotonic() + timeout
         current = self.result(run_id)
         if current.get("status") in ("completed", "stopped"):
+            remaining = None if deadline is None else max(0, deadline-time.monotonic())
+            try:
+                self._wait_outputs_off(remaining, poll_interval)
+            except GuiIVError as error:
+                error.receipt = current
+                raise
             return current
         if current.get("status") == "error":
             raise _typed_gui_error(current.get("error") or "GUI job failed",

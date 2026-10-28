@@ -292,8 +292,15 @@ class StopPolicyTests(unittest.TestCase):
                 client.stop_and_wait('job', timeout=0)
             self.assertEqual(caught.exception.receipt, receipt)
             stop.assert_called_once(); off.assert_called_once()
-        with patch.object(client, 'result', return_value=receipt), patch.object(client, 'stop') as stop:
+        with patch.object(client, 'result', return_value=receipt), patch.object(client, 'stop') as stop, \
+             patch.object(client, '_wait_outputs_off', return_value={"output":"Off"}) as verify:
             self.assertEqual(client.stop_and_wait('job'), receipt)
+            stop.assert_not_called(); verify.assert_called_once()
+        with patch.object(client, 'result', return_value=receipt), patch.object(client, 'stop') as stop, \
+             patch.object(client, '_wait_outputs_off', side_effect=GuiTimeoutError('still on','timeout')):
+            with self.assertRaises(GuiTimeoutError) as caught:
+                client.stop_and_wait('job', timeout=0)
+            self.assertEqual(caught.exception.receipt, receipt)
             stop.assert_not_called()
         with patch.object(client, 'stop') as stop:
             with self.assertRaises(ValueError):
@@ -317,4 +324,19 @@ class StopPolicyTests(unittest.TestCase):
              patch.object(client, 'wait', side_effect=GuiTimeoutError('wait expired','timeout')), \
              patch.object(client, 'stop') as stop, patch.object(client, 'output_off') as off:
             with self.assertRaises(GuiTimeoutError): client.run()
+            stop.assert_not_called(); off.assert_not_called()
+
+
+class ObserverTimeoutTests(unittest.TestCase):
+    def test_observer_timeout_does_not_acquire_control(self):
+        from kohdalab_iv_native import GuiTimeoutError, GuiOwnershipError
+        client = GuiIV.__new__(GuiIV)
+        client._heartbeat_error = None
+        client._lease = None
+        client._stop_policy = {"stop_on_timeout": True}
+        with patch.object(client, 'result', return_value={"id":"job","status":"running"}), \
+             patch.object(client, 'stop') as stop, patch.object(client, 'output_off') as off:
+            with self.assertRaises(GuiTimeoutError) as caught:
+                client.wait('job', timeout=0)
+            self.assertIsInstance(caught.exception.stop_error, GuiOwnershipError)
             stop.assert_not_called(); off.assert_not_called()

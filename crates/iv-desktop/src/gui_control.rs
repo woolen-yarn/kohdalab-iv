@@ -43,7 +43,7 @@ pub fn error_code(message: &str) -> &'static str {
     {
         "timeout"
     } else if text.contains("engine") || text.contains("reconnect") {
-        "disconnected"
+        "transport"
     } else {
         "invalid_request"
     }
@@ -429,7 +429,7 @@ impl GuiControl {
         }
     }
     pub fn fail_dispatch(&mut self, error: String) {
-        self.finish(Value::Null, "error", Some("disconnected"), Some(error));
+        self.finish(Value::Null, "error", Some("transport"), Some(error));
     }
     /// Consume only tagged completion, never an unrelated idle/live update.
     pub fn advance(&mut self, state: &Snapshot) -> Option<(String, Command)> {
