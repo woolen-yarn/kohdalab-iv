@@ -38,7 +38,9 @@ def main():
         assert client.capabilities()["api_version"] == 2
         assert client._lease is None
         observer = GuiIV(client.endpoint)
-        assert Path(observer.config()["config_path"]).resolve() == config.resolve()
+        # Rust canonicalization keeps the Windows \\?\ prefix; Python resolve
+        # may omit it. Compare file identity rather than path spelling.
+        assert Path(observer.config()["config_path"]).samefile(config)
         observer.close()
         assert not client.status()["control"]["owned"]
         client.acquire(label="API validation")
