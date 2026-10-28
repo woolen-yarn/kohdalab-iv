@@ -513,14 +513,21 @@ impl Drop for GuiControl {
         let _ = std::fs::remove_file(&self.endpoint);
     }
 }
+fn configure_stream(stream: &TcpStream) -> Result<(), String> {
+    // Windows can inherit nonblocking mode from the listening socket. Each
+    // worker uses bounded blocking I/O so a request may arrive after accept.
+    stream.set_nonblocking(false).map_err(|e| e.to_string())?;
+    stream
+        .set_write_timeout(Some(Duration::from_secs(2)))
+        .map_err(|e| e.to_string())?;
+    Ok(())
+}
 fn serve(
     mut stream: TcpStream,
     token: &str,
     send: mpsc::SyncSender<Request>,
 ) -> Result<(), String> {
-    stream
-        .set_write_timeout(Some(Duration::from_secs(2)))
-        .map_err(|e| e.to_string())?;
+    configure_stream(&stream)?;
     let deadline = Instant::now() + Duration::from_secs(2);
     let mut bytes = Vec::new();
     loop {
@@ -796,6 +803,26 @@ mod tests {
         assert!(c.next().is_none());
         drop(c);
         assert!(!path.exists());
+    }
+    #[test]
+    fn accepted_nonblocking_stream_obeys_blocking_read_timeout() {
+        let listener = TcpListener::bind((std::net::Ipv4Addr::LOCALHOST, 0)).unwrap();
+        let _peer = TcpStream::connect(listener.local_addr().unwrap()).unwrap();
+        let (mut stream, _) = listener.accept().unwrap();
+        // Reproduce Windows inheritance on every platform. Keep the peer
+        // connected without sending: the read must wait for its timeout.
+        stream.set_nonblocking(true).unwrap();
+        configure_stream(&stream).unwrap();
+        stream
+            .set_read_timeout(Some(Duration::from_millis(100)))
+            .unwrap();
+        let started = Instant::now();
+        let error = stream.read(&mut [0]).unwrap_err();
+        assert!(matches!(
+            error.kind(),
+            std::io::ErrorKind::WouldBlock | std::io::ErrorKind::TimedOut
+        ));
+        assert!(started.elapsed() >= Duration::from_millis(50));
     }
     #[test]
     fn voluntary_release_allows_reacquire_but_uuid_payload_conflicts_fail() {
