@@ -43,7 +43,7 @@ pub fn error_code(message: &str) -> &'static str {
     {
         "timeout"
     } else if text.contains("engine") || text.contains("reconnect") {
-        "disconnected"
+        "transport"
     } else {
         "invalid_request"
     }
@@ -65,11 +65,32 @@ impl Request {
         let _ = self.reply.send(response(result));
     }
 }
+#[derive(Clone, Copy, serde::Serialize)]
+struct StopPolicy {
+    stop_on_disconnect: bool,
+    stop_on_error: bool,
+    stop_on_timeout: bool,
+}
+impl StopPolicy {
+    fn read(body: &Value) -> Result<Self, String> {
+        let flag = |key: &str| {
+            body.get(key).map_or(Ok(true), |v| {
+                v.as_bool().ok_or_else(|| format!("{key} must be boolean"))
+            })
+        };
+        Ok(Self {
+            stop_on_disconnect: flag("stop_on_disconnect")?,
+            stop_on_error: flag("stop_on_error")?,
+            stop_on_timeout: flag("stop_on_timeout")?,
+        })
+    }
+}
 struct Owner {
     lease: String,
     client: String,
     label: String,
     seen: Instant,
+    policy: StopPolicy,
 }
 struct Active {
     id: String,
@@ -169,11 +190,31 @@ impl GuiControl {
             .is_some_and(|o| o.seen.elapsed() > LEASE_TIMEOUT)
             && !self.retiring
         {
-            self.revoke(safety);
-            true
+            if self
+                .owner
+                .as_ref()
+                .is_some_and(|o| o.policy.stop_on_disconnect)
+            {
+                self.revoke(safety);
+                true
+            } else {
+                self.detach();
+                false
+            }
         } else {
             false
         }
+    }
+    /// Explicit opt-out leaves active engine work locked against GUI edits.
+    pub fn detach(&mut self) {
+        if let Some(owner) = self.owner.take() {
+            self.revoked.insert(owner.client);
+        }
+    }
+    pub fn can_detach_without_stop(&self) -> bool {
+        self.owner
+            .as_ref()
+            .is_some_and(|o| !o.policy.stop_on_disconnect && !o.policy.stop_on_error)
     }
     /// Revoke immediately, but retain GUI lock until engine safety cleanup acknowledges OFF.
     pub fn release(&mut self, safety: u64) {
@@ -209,7 +250,7 @@ impl GuiControl {
         }
     }
     pub fn control(&self) -> Value {
-        json!({"owned":self.owner.is_some(),"client_id":self.owner.as_ref().map(|o|&o.client),"label":self.owner.as_ref().map(|o|&o.label),"status":if self.retiring {"detached"} else if self.owner.is_some(){"python"}else{"idle"},"active_run":self.active.as_ref().and_then(|a|self.result(&a.id).ok())})
+        json!({"owned":self.owner.is_some(),"client_id":self.owner.as_ref().map(|o|&o.client),"label":self.owner.as_ref().map(|o|&o.label),"stop_policy":self.owner.as_ref().map(|o|o.policy),"status":if self.retiring || (self.owner.is_none() && self.active.is_some()) {"detached"} else if self.owner.is_some(){"python"}else{"idle"},"active_run":self.active.as_ref().and_then(|a|self.result(&a.id).ok())})
     }
     pub fn authorize(
         &mut self,
@@ -230,6 +271,7 @@ impl GuiControl {
                     .map(str::to_owned)
                     .unwrap_or_else(|| uuid::Uuid::new_v4().to_string());
                 uuid::Uuid::parse_str(&client).map_err(|_| "client_id must be a UUID")?;
+                let policy = StopPolicy::read(&request.body)?;
                 if self.revoked.contains(&client) {
                     return Err("GUI control was revoked. Create a new client.".into());
                 }
@@ -238,6 +280,7 @@ impl GuiControl {
                         return Err("Control belongs to another Python client.".into());
                     }
                     owner.seen = Instant::now();
+                    owner.policy = policy;
                 } else {
                     if !gui_idle || self.has_lease() {
                         return Err("GUI is busy. Finish operations and close dialogs before acquiring control.".into());
@@ -258,6 +301,7 @@ impl GuiControl {
                         client,
                         label: label.into(),
                         seen: Instant::now(),
+                        policy,
                     });
                 }
                 let mut result = self.control();
@@ -385,17 +429,28 @@ impl GuiControl {
         }
     }
     pub fn fail_dispatch(&mut self, error: String) {
-        self.finish(Value::Null, "error", Some("disconnected"), Some(error));
+        self.finish(Value::Null, "error", Some("transport"), Some(error));
     }
     /// Consume only tagged completion, never an unrelated idle/live update.
     pub fn advance(&mut self, state: &Snapshot) -> Option<(String, Command)> {
         let active = self.active.as_ref()?;
         if state.safety_revision > active.safety && !busy(state) {
+            // A safety acknowledgement can also report failed output cleanup.
+            // Never turn that into a successful stopped receipt.
+            let sweep_off = (!state.source_connected
+                || state.output == crate::state::OutputState::Off)
+                && (!state.source2_connected
+                    || state.source2_output == crate::state::OutputState::Off);
+            let failed = !state.error.is_empty() || !sweep_off;
             self.finish(
                 serde_json::to_value(state).unwrap_or(Value::Null),
-                "stopped",
-                Some("stopped"),
-                Some("Operation cancelled by Stop or Output OFF".into()),
+                if failed { "error" } else { "stopped" },
+                Some(if failed { "protection" } else { "stopped" }),
+                Some(if failed {
+                    format!("Safety cleanup was not confirmed: {}", state.error.as_str())
+                } else {
+                    "Operation cancelled by Stop or Output OFF".into()
+                }),
             );
             return None;
         }
@@ -423,13 +478,18 @@ impl GuiControl {
                     && matches!(phase, "Compliance stop" | "Source limit stop" | "Stopped"))
             {
                 let code = if matches!(phase, "Compliance stop" | "Source limit stop") {
-                    "protection_stop"
+                    "protection"
                 } else if phase == "Stopped" {
                     "stopped"
                 } else {
-                    snapshot["error_kind"]
-                        .as_str()
-                        .unwrap_or("operation_failed")
+                    match snapshot["error_kind"].as_str().unwrap_or("") {
+                        "storage" => "save_failed",
+                        "overload" | "output_safety" => "protection",
+                        "disconnected" | "timeout" | "protocol" | "identity_mismatch" => {
+                            "device_error"
+                        }
+                        _ => "job_failed",
+                    }
                 };
                 let message = if error.is_empty() {
                     phase.into()
@@ -607,6 +667,82 @@ mod tests {
         uuid::Uuid::new_v4().to_string()
     }
     #[test]
+    fn disabled_disconnect_stop_detaches_but_keeps_active_work_locked() {
+        let (_dir, mut c) = control();
+        let client_id = client();
+        let policy = json!({"client_id":client_id,"stop_on_disconnect":false,"stop_on_error":false,"stop_on_timeout":false});
+        let acquired = c
+            .authorize(&request("acquire", policy), true)
+            .unwrap()
+            .unwrap();
+        assert_eq!(acquired["stop_policy"]["stop_on_disconnect"], false);
+        let id = client();
+        let mut state = Snapshot::default();
+        c.begin_job(
+            id.clone(),
+            "connect",
+            vec![Command::Discover],
+            &state,
+            &json!({}),
+        )
+        .unwrap();
+        c.owner.as_mut().unwrap().seen = Instant::now() - LEASE_TIMEOUT - Duration::from_secs(1);
+        assert!(!c.expired(0));
+        assert!(c.has_lease());
+        assert_eq!(c.control()["status"], "detached");
+        assert!(
+            c.authorize(&request("acquire", json!({"client_id":client()})), true)
+                .is_err()
+        );
+        let (tag, _) = c.advance(&state).unwrap();
+        state.gui_job = Some(GuiJobCompletion {
+            id: tag,
+            snapshot: json!({"phase":"Ready","error":""}),
+        });
+        c.advance(&state);
+        assert_eq!(c.result(&id).unwrap()["status"], "completed");
+        assert!(!c.has_lease());
+        assert!(
+            c.authorize(&request("acquire", json!({"client_id":client_id})), true)
+                .is_err()
+        );
+    }
+    #[test]
+    fn invalid_stop_policy_is_rejected_before_ownership() {
+        let (_dir, mut c) = control();
+        assert!(
+            c.authorize(
+                &request(
+                    "acquire",
+                    json!({"client_id":client(),"stop_on_disconnect":"no"})
+                ),
+                true
+            )
+            .is_err()
+        );
+        assert!(!c.has_lease());
+    }
+    #[test]
+    fn failed_output_shutdown_never_produces_a_stopped_receipt() {
+        let (_dir, mut c) = control();
+        let id = client();
+        let mut state = Snapshot::default();
+        c.begin_job(
+            id.clone(),
+            "start",
+            vec![Command::Discover],
+            &state,
+            &json!({}),
+        )
+        .unwrap();
+        state.safety_revision = 1;
+        state.source_connected = true;
+        state.output = OutputState::On;
+        c.advance(&state);
+        assert_eq!(c.result(&id).unwrap()["status"], "error");
+        assert_eq!(c.result(&id).unwrap()["error_code"], "protection");
+    }
+    #[test]
     fn acquire_is_idle_only_exclusive_and_read_queries_do_not_claim() {
         let (_d, mut c) = control();
         let id = client();
@@ -754,7 +890,7 @@ mod tests {
             snapshot: json!({"phase":"Source limit stop","error":""}),
         });
         c.advance(&state);
-        assert_eq!(c.result(&id).unwrap()["error_code"], "protection_stop");
+        assert_eq!(c.result(&id).unwrap()["error_code"], "protection");
     }
     #[test]
     fn expired_and_wrong_lease_requests_never_dispatch() {

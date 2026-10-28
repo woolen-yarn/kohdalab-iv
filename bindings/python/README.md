@@ -20,8 +20,8 @@ uv pip install ./bindings/python
 Install directly from the matching GitHub release:
 
 ```text
-python -m pip install "kohdalab-iv-native @ git+https://github.com/woolen-yarn/kohdalab-iv.git@preview-v1.3.0-alpha.13#subdirectory=bindings/python"
-uv add "kohdalab-iv-native @ git+https://github.com/woolen-yarn/kohdalab-iv.git@preview-v1.3.0-alpha.13#subdirectory=bindings/python"
+python -m pip install "kohdalab-iv-native @ git+https://github.com/woolen-yarn/kohdalab-iv.git@preview-v1.3.0-alpha.14#subdirectory=bindings/python"
+uv add "kohdalab-iv-native @ git+https://github.com/woolen-yarn/kohdalab-iv.git@preview-v1.3.0-alpha.14#subdirectory=bindings/python"
 ```
 
 The discovery enhancements below are included in v1.3.0-alpha.6 and newer.
@@ -199,8 +199,8 @@ uv pip install ./bindings/python
 対応する GitHub リリースから直接インストールする場合は次を使います。
 
 ```text
-python -m pip install "kohdalab-iv-native @ git+https://github.com/woolen-yarn/kohdalab-iv.git@preview-v1.3.0-alpha.7#subdirectory=bindings/python"
-uv add "kohdalab-iv-native @ git+https://github.com/woolen-yarn/kohdalab-iv.git@preview-v1.3.0-alpha.7#subdirectory=bindings/python"
+python -m pip install "kohdalab-iv-native @ git+https://github.com/woolen-yarn/kohdalab-iv.git@preview-v1.3.0-alpha.14#subdirectory=bindings/python"
+uv add "kohdalab-iv-native @ git+https://github.com/woolen-yarn/kohdalab-iv.git@preview-v1.3.0-alpha.14#subdirectory=bindings/python"
 ```
 
 下記の検出機能拡張は v1.3.0-alpha.6 以降に含まれます。リリースタグまたは同梱の
@@ -334,7 +334,7 @@ available after acquiring control. `GuiIV.launch(profile=...)` starts the
 installed GUI with its API enabled and attaches only to the descriptor matching
 that new process.
 
-IV deliberately differs from TRKR when control is lost: IV's lease timeout,
+By default, IV deliberately differs from TRKR when control is lost: IV's lease timeout,
 `close()`, and `release()` request Stop and verified Output OFF before releasing
 the lease. This preserves IV's source-output safety policy. A Notebook should
 use `with GuiIV()` or explicitly call `close()`; a discarded client stops sending
@@ -342,3 +342,57 @@ heartbeats, so the GUI's timeout policy still takes effect.
 
 See the [GUI API reference](../../docs/reference/gui-api.md) for receipt fields,
 profile loading, safety policy, error codes and executable simulation checks.
+
+
+## GUI stop conditions / GUIの停止条件
+
+`GuiIV(...)` and `GuiIV.launch(...)` accept the same three independent boolean options as TRKR. IV keeps its source safety defaults: **all three are True**. TRKR defaults to False for all three, preserving continuation. Never change these defaults implicitly when attaching to an existing GUI: the client sends its selected policy when it acquires exclusive control. A nondefault policy is rejected before any job starts if an older GUI cannot confirm it.
+
+`GuiIV(...)`と`GuiIV.launch(...)`はTRKRと同じ3つの停止条件を個別に受け付けます。**IVはすべてTrue、TRKRはすべてFalseが既定**です。IVの電源出力の保護とTRKRの継続動作を維持します。取得した制御権に条件を紐付け、旧GUIが既定以外の条件に対応していなければ測定開始前に拒否します。
+
+| Option / 設定 | Trigger / 発動条件 |
+| --- | --- |
+| `stop_on_disconnect` | Heartbeat expires in the GUI (about 10 s), or a mutating convenience operation loses its acknowledgement / GUI側のheartbeat失効（約10秒）や操作の応答消失 |
+| `stop_on_error` | Python exception leaves the `with` block; Python-side interruption of convenience operations / `with`ブロックからPython例外が抜ける、または便利メソッドのPython側中断 |
+| `stop_on_timeout` | `wait()` / `run()` / Gate helper wait reaches its deadline / 測定・Gate操作の待機時間切れ |
+
+```python
+from kohdalab_iv_native import GuiIV, GuiTimeoutError
+
+with GuiIV(stop_on_disconnect=True, stop_on_error=True,
+           stop_on_timeout=False) as iv:
+    iv.set_output(directory="D:/IV/data", filename="field_0.5T")
+    job = iv.start()
+    try:
+        result = iv.wait(job["id"], timeout=600)
+    except GuiTimeoutError:
+        result = iv.stop_and_wait(job["id"], timeout=40)
+```
+
+`start()` → `wait(id)` is the shared receipt-based flow. The existing IV `run()` convenience method still returns a Snapshot for compatibility. `stop(id)` acknowledges the request and returns the current receipt; it does not confirm shutdown. `stop_and_wait(id, timeout=40, poll_interval=0.1)` returns a completed/stopped receipt after worker cleanup and, for a job it stopped, verifies **all connected IV outputs OFF**, including Gate. An already terminal job is returned only after read-only Output OFF confirmation, without sending another Stop or changing its outputs. If another operation or retained Gate bias is ON, confirmation times out rather than silently turning it off. A failed cleanup remains an error, even if a Stop acknowledgement arrived. Ordinary manual Stop retains its existing Gate-bias behavior.
+
+共通の処理結果を使う流れは`start()`→`wait(id)`です。IVの既存`run()`は互換性のためSnapshotを返します。`stop(id)`は受付と現在の処理結果を返すだけで、停止確認ではありません。`stop_and_wait()`は終了処理を待ち、今回停止した処理については**Gateを含む接続済み全出力のOFFを確認**します。終了済みの処理でも読取によるOFF確認を行い、Stopの再送・出力の変更はしません。保持されたGateバイアスや別処理の出力がONなら、勝手にOFFにせず確認タイムアウトを返します。停止確認に失敗した場合は、Stop受付済みでもエラーです。通常のGUI StopでGateバイアスを保持する動作は変えません。
+
+IV `close()` / `release()` and a **normal** `with` exit always verify Output OFF, independently of these flags. To let an active job continue after a Python exception, explicitly disable **both** `stop_on_error` and `stop_on_disconnect`; exception exit then detaches through the GUI and retains its edit lock until the active job completes. If either condition is enabled, cleanup takes priority. Python exit never closes the GUI. Device protection and save-error cleanup are never disabled by these options. No policy automatically retries a mutation, reacquires revoked ownership, or restarts a measurement. The GUI lease timer requires a responsive GUI; it is not a hardware interlock.
+
+IVの`close()`・`release()`・**正常な**`with`終了では、フラグと独立してOutput OFFを確認します。Python例外時にも測定を継続させる場合は、`stop_on_error`と`stop_on_disconnect`を**両方False**にします。その場合はGUIに切離しを通知し、処理完了までGUIの編集ロックを保ちます。いずれかがTrueなら終了処理を優先します。Pythonを終了してもGUIは閉じません。装置保護・保存異常時の終了処理は無効化できません。操作の自動再試行・制御権の再取得・測定再開は行いません。
+
+All GUI exceptions inherit `GuiError`, the shared alias of the existing `GuiIVError` (`RuntimeError`). They expose `.code` and `.receipt`. `GuiTimeoutError` also inherits `TimeoutError`: `.receipt` is the last observed state, and `.stop_error` preserves any failed automatic Stop/OFF request. Timeout/transport loss never proves that the physical outputs are OFF. Inspect the GUI and instruments if confirmation fails.
+
+すべてのGUI例外は`GuiError`（既存`GuiIVError`の共通別名、`RuntimeError`派生）から派生し、`.code`と`.receipt`を持ちます。`GuiTimeoutError`は`TimeoutError`でもあり、最後の状態と自動Stop/OFF要求の失敗原因`.stop_error`を保持します。タイムアウト・通信断だけでは装置出力のOFFは確認できません。
+
+| Exception / 例外 | Shared code / 共通コード |
+| --- | --- |
+| `GuiTransportError` | `transport`, `protocol` |
+| `GuiOwnershipError` | `ownership_lost` |
+| `GuiDeviceError` | `device_error` |
+| `GuiProtectionError` | `protection` |
+| `GuiSaveError` | `save_failed` |
+| `GuiInitializationError` | `initialization_failed` |
+| `GuiRunStopped` | `stopped` |
+| `GuiTimeoutError` | `timeout` |
+| `GuiError` / `GuiIVError` | Unknown/unclassified codes, including `job_failed` / その他・未分類 |
+
+Legacy IV codes remain readable aliases. Error messages and original recording evidence are retained; exception classes are selected from codes, not Python text matching. Existing engine diagnostic categories remain diagnostic, not a decision to bypass protection. CSV columns and saved JSON configuration schemas are unchanged.
+
+旧IVコードも別名として読み取れます。例外型はコードから選択し、Pythonで文面推測はしません。既存エンジンの診断分類は保護を迂回する判定には使いません。CSV列・保存済みJSONのschemaは変更しません。
