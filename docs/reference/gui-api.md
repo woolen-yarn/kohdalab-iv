@@ -4,7 +4,7 @@ The IV GUI owns every instrument connection and the existing Rust measurement
 engine. The Python client never opens a second hardware connection when using
 `GuiIV`. The headless `NativeIV` client remains available separately.
 
-This development API is protocol **2**. Read `capabilities()` for the application
+This preview API is protocol **2**. Read `capabilities()` for the application
 version, supported actions and safety policy. The common operation names follow
 KohdaLab TRKR: `status`, `config`, `plan`, `output`, `acquire`, `heartbeat`,
 `release`, `configure`, `load_config`, `set_plan`, `set_output`, `connect`,

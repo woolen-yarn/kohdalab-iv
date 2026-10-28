@@ -3,6 +3,14 @@
 > **Language navigation / 言語案内:** The English historical record appears first, followed by a complete Japanese counterpart. Versions, dates, API names, commands, compatibility wording, and historical claims are preserved in both languages.
 > 英語の履歴記録を先に置き、その後に完全な日本語対訳を掲載します。バージョン、日付、API 名、コマンド、互換性の表現、履歴上の主張は両言語で保持します。
 
+## 1.3.0-alpha.13 — 2026-10-28
+
+- Add Dual V-I sweeps for two voltage sources with exact integer ratios, independent source safety paths, and an explicit differential `V1 - V2` analysis value.
+- Add a left-panel inventory for multiple saved Sources and Meters. Inactive devices remain visible but dimmed; active roles are assigned in Settings.
+- Preserve the existing 18-column analysis CSV and raw CSV contracts. Store dual ratios and per-source setpoints/readbacks in run JSON without claiming unavailable terminal-voltage measurements.
+- Align GUI API protocol 2 with TRKR-style ownership, UUID job receipts, asynchronous job results, configuration/connection operations and machine-readable error codes while preserving IV Stop/Output OFF behavior.
+- This preview has automated and simulation coverage; no new physical hardware qualification is claimed.
+
 ## 1.3.0-alpha.12 — 2026-10-24
 
 - Show latched, pulsing Source/Meter live-monitor warnings and limit-stop popups with frozen run thresholds, trigger/status evidence, verified OFF status and safe recovery guidance. Preserve alerts on OFF failures and clear them on the next run attempt, including invalid attempts.
@@ -273,6 +281,14 @@
 ---
 
 # 変更履歴（日本語）
+
+## 1.3.0-alpha.13 — 2026-10-28
+
+- 2台の電圧Sourceを整数比で正確に配分するDual V-I測定を追加し、各Sourceの独立した安全停止と、差動値 `V1 - V2` を明示します。
+- 左パネルに複数の保存済みSource/Meterを管理するインベントリを追加しました。未使用機器は暗く表示し、使用する役割はSettingsで指定します。
+- 既存の18列解析CSVとraw CSVの契約を維持します。Dualの比率と各Sourceの設定値／読み戻し値はrun JSONへ保存し、取得できない端子電圧を実測値として記録しません。
+- TRKR形式の所有権、UUIDジョブreceipt、非同期結果、設定／接続操作、機械判定可能なエラーコードにGUI API protocol 2を揃え、IVのStop／Output OFFの動作を維持します。
+- このpreviewは自動・シミュレーション検証を含みますが、新しい実機認定は主張しません。
 
 ## 1.3.0-alpha.12 — 2026-10-24
 
