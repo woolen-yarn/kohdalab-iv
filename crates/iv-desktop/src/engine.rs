@@ -3,7 +3,9 @@ mod gate;
 mod safety;
 mod workflow;
 use crate::compatibility::{CSV_SCHEMA, RUN_METADATA_SCHEMA_VERSION};
-use crate::protocol::{Command, ProtectionAlert, ProtectionKind, Snapshot};
+use crate::protocol::{
+    Command, GuiJobCompletion, ProtectionAlert, ProtectionKind, Snapshot, unwrap_gui_job,
+};
 use crate::raw_csv::{self, RawWriter};
 use crate::state::{Activity, ErrorKind, Failure, OutputState, Phase};
 use iv_core::{CsvWriter, Mode, Record, RunConfig, plan, simulate_record};
@@ -23,7 +25,7 @@ struct Control {
     off: AtomicBool,
     /// Set by the input reader when a gate update arrives during an IV run.
     /// The engine consumes it after the run has made every output safe.
-    gate_request_rejected: AtomicBool,
+    gate_request_rejected: Mutex<Option<Option<String>>>,
     /// True for the complete synchronous sweep execution window.  This is
     /// deliberately separate from `stop`: a queued gate set must never clear
     /// a requested stop while a sweep owns the outputs.
@@ -96,7 +98,7 @@ pub fn serve() -> Result<(), String> {
     let control = Arc::new(Control {
         stop: AtomicBool::new(false),
         off: AtomicBool::new(false),
-        gate_request_rejected: AtomicBool::new(false),
+        gate_request_rejected: Mutex::new(None),
         running: AtomicBool::new(false),
         closed: AtomicBool::new(false),
         heartbeat: Mutex::new(Instant::now()),
@@ -117,6 +119,12 @@ pub fn serve() -> Result<(), String> {
             let Ok(command) = serde_json::from_slice::<Command>(&line) else {
                 break;
             };
+            // Job envelopes are removed before any immediate-safety or run
+            // ownership logic.  Invalid envelopes never enter the normal
+            // queue, where they could otherwise delay a safety command.
+            let Ok((gui_job, command)) = unwrap_gui_job(command) else {
+                continue;
+            };
             if let Ok(mut heartbeat) = reader_control.heartbeat.lock() {
                 *heartbeat = Instant::now();
             }
@@ -124,19 +132,19 @@ pub fn serve() -> Result<(), String> {
                 Command::Heartbeat => {}
                 Command::Stop => {
                     reader_control.stop.store(true, Ordering::Release);
-                    if tx.try_send(Command::Stop).is_err() {
+                    if tx.try_send((None, Command::Stop)).is_err() {
                         break;
                     }
                 }
                 Command::GateOutputOff => {
                     reader_control.off.store(true, Ordering::Release);
                     reader_control.stop.store(true, Ordering::Release);
-                    let _ = tx.try_send(Command::GateOutputOff);
+                    let _ = tx.try_send((None, Command::GateOutputOff));
                 }
                 Command::OutputOff => {
                     reader_control.off.store(true, Ordering::Release);
                     reader_control.stop.store(true, Ordering::Release);
-                    let _ = tx.try_send(Command::OutputOff);
+                    let _ = tx.try_send((None, Command::OutputOff));
                 }
                 Command::Shutdown => break,
                 other => {
@@ -147,9 +155,15 @@ pub fn serve() -> Result<(), String> {
                         // time it could execute the sample conditions would
                         // be different.  The engine reports this after it has
                         // completed its fail-safe cleanup.
-                        reader_control
-                            .gate_request_rejected
-                            .store(true, Ordering::Release);
+                        if let Ok(mut rejected) = reader_control.gate_request_rejected.lock() {
+                            if rejected.is_some() {
+                                // A second out-of-contract request cannot grow
+                                // memory during a long sweep. Lost producer
+                                // ownership triggers the existing safe shutdown.
+                                break;
+                            }
+                            *rejected = Some(gui_job);
+                        }
                         continue;
                     }
                     if matches!(other, Command::Run { .. }) {
@@ -162,7 +176,7 @@ pub fn serve() -> Result<(), String> {
                         reader_control.stop.store(false, Ordering::Release);
                         reader_control.off.store(false, Ordering::Release);
                     }
-                    if tx.try_send(other).is_err() {
+                    if tx.try_send((gui_job, other)).is_err() {
                         break;
                     }
                 }
@@ -246,7 +260,7 @@ pub fn serve() -> Result<(), String> {
         } else {
             Duration::from_millis(100)
         };
-        let command = match rx.recv_timeout(wait) {
+        let (gui_job_id, command) = match rx.recv_timeout(wait) {
             Ok(command) => command,
             Err(mpsc::RecvTimeoutError::Timeout) => {
                 if state.gate_connected
@@ -551,13 +565,27 @@ pub fn serve() -> Result<(), String> {
             .into();
             state.message = "Review the error and reconnect if needed.".into();
         }
-        if control.gate_request_rejected.swap(false, Ordering::AcqRel) {
+        let rejected_gate_job = control
+            .gate_request_rejected
+            .lock()
+            .ok()
+            .and_then(|mut rejected| rejected.take());
+        if rejected_gate_job.is_some() {
             // This is a command-admission error, not a late configuration
             // change.  The request was discarded while the run owned both
             // the IV outputs and the gate remained at its verified level.
             state.phase = Phase::Failed;
             state.error = "Gate voltage changes are rejected while an IV run is active. Wait for the run to finish, then set the gate voltage.".into();
             state.message = "Gate voltage was not changed during the IV run.".into();
+        }
+        if let Some(id) = gui_job_id {
+            complete_gui_job(&mut state, id);
+        }
+        // A tagged gate update rejected while a run held the outputs has no
+        // queued command to complete.  Record its final admission error only
+        // after the run's cleanup and error handling have finished.
+        if let Some(Some(id)) = rejected_gate_job {
+            complete_gui_job(&mut state, id);
         }
         publish(&latest, &state);
     }
@@ -824,6 +852,37 @@ fn publish(shared: &StateFeed, state: &Snapshot) {
         pending.snapshot = Some(state.clone());
         shared.changed.notify_one();
     }
+}
+
+/// API job bookkeeping is session state, not measurement provenance. Keep
+/// previous jobs out of both normal and Dual measurement manifests.
+fn recording_snapshot(state: &Snapshot) -> serde_json::Value {
+    let mut value = serde_json::json!(state);
+    if let Some(object) = value.as_object_mut() {
+        object.remove("gui_job");
+        object.remove("gui_jobs");
+    }
+    value
+}
+
+fn complete_gui_job(state: &mut Snapshot, id: String) {
+    let mut completed = state.clone();
+    completed.gui_job = None;
+    completed.gui_jobs.clear();
+    completed.resources.clear();
+    completed.warnings.clear();
+    // Snapshot only contains serializable protocol data.  If that invariant
+    // ever changes, retain an explicit error object rather than recursively
+    // serializing the completion wrapper itself.
+    let snapshot = serde_json::to_value(completed).unwrap_or_else(|error| {
+        serde_json::json!({"phase":"Failed","error":format!("Cannot serialize GUI job result: {error}")})
+    });
+    let completion = GuiJobCompletion { id, snapshot };
+    if state.gui_jobs.len() == 4 {
+        state.gui_jobs.remove(0);
+    }
+    state.gui_jobs.push(completion.clone());
+    state.gui_job = Some(completion);
 }
 
 fn publish_progress(shared: &StateFeed, state: &Snapshot, last: &mut Instant) {
@@ -2334,7 +2393,7 @@ fn execute(
             "quantity":"output_off", "result":"ok", "details":verification,
         }))?;
     }
-    let mut initial_metadata = serde_json::json!({"schema_version":RUN_METADATA_SCHEMA_VERSION,"csv_schema":CSV_SCHEMA,"csv_fields":iv_core::CSV_FIELDS,"csv_numeric_format":"shortest_roundtrip_scientific","application_version":env!("CARGO_PKG_VERSION"),"experiment":config.experiment,"config":config,"requested_config":requested_config,"outcome":state,"in_progress":true,
+    let mut initial_metadata = serde_json::json!({"schema_version":RUN_METADATA_SCHEMA_VERSION,"csv_schema":CSV_SCHEMA,"csv_fields":iv_core::CSV_FIELDS,"csv_numeric_format":"shortest_roundtrip_scientific","application_version":env!("CARGO_PKG_VERSION"),"experiment":config.experiment,"config":config,"requested_config":requested_config,"outcome":recording_snapshot(state),"in_progress":true,
         "run_id":run_id,"source_range_setting":planned.source_range,"hardware_compliance_setting":planned.hardware_compliance,"display_settings_changes":[],"simulation":state.simulation,"csv":path.display().to_string(),"raw_csv":{"path":raw_path.display().to_string(),"filename":raw_filename,"schema":"raw_csv_v1","provenance_policy":provenance_policy}});
     if let Some(commit) = option_env!("KOHDALAB_GIT_COMMIT") {
         initial_metadata["git_commit"] = serde_json::Value::String(commit.into());
@@ -3098,7 +3157,7 @@ fn execute(
     if hash_error.is_some() {
         shutdown_gate_for_recording_failure(pair.as_deref_mut(), state);
     }
-    let mut metadata = serde_json::json!({"schema_version":RUN_METADATA_SCHEMA_VERSION,"csv_schema":CSV_SCHEMA,"csv_fields":iv_core::CSV_FIELDS,"csv_numeric_format":"shortest_roundtrip_scientific","application_version":env!("CARGO_PKG_VERSION"),"experiment":config.experiment,"run_id":run_id,"config":config,"requested_config":requested_config,"outcome":state,"in_progress":false,
+    let mut metadata = serde_json::json!({"schema_version":RUN_METADATA_SCHEMA_VERSION,"csv_schema":CSV_SCHEMA,"csv_fields":iv_core::CSV_FIELDS,"csv_numeric_format":"shortest_roundtrip_scientific","application_version":env!("CARGO_PKG_VERSION"),"experiment":config.experiment,"run_id":run_id,"config":config,"requested_config":requested_config,"outcome":recording_snapshot(state),"in_progress":false,
         "source_range_setting":planned.source_range,"hardware_compliance_setting":planned.hardware_compliance,"source_protection_stop":source_stop,"display_settings_changes":display_settings_changes,"instrument_status_events":instrument_status_events,"simulation":state.simulation,"csv":path.display().to_string(),"instruments":instruments,"raw_csv":{"path":raw_path.display().to_string(),"filename":raw_filename,"schema":"raw_csv_v1","provenance_policy":provenance_policy},"file_hashes":hashes,"file_hash_error":hash_error});
     if let Some(commit) = option_env!("KOHDALAB_GIT_COMMIT") {
         metadata["git_commit"] = serde_json::Value::String(commit.into());
@@ -3234,7 +3293,7 @@ mod tests {
         Control {
             stop: AtomicBool::new(false),
             off: AtomicBool::new(false),
-            gate_request_rejected: AtomicBool::new(false),
+            gate_request_rejected: Mutex::new(None),
             running: AtomicBool::new(false),
             closed: AtomicBool::new(false),
             heartbeat: Mutex::new(Instant::now()),
@@ -3348,6 +3407,42 @@ mod tests {
         write_events(&mut output, &mut scratch, &rx, None).unwrap();
         assert_eq!(scratch.capacity(), capacity);
         assert_eq!(output, expected.as_bytes());
+    }
+
+    #[test]
+    fn gui_job_completion_contains_a_final_non_recursive_snapshot() {
+        let mut state = Snapshot {
+            phase: Phase::Completed,
+            points: 3,
+            ..Default::default()
+        };
+        complete_gui_job(&mut state, "job-42".into());
+        let completion = state.gui_job.as_ref().unwrap();
+        assert_eq!(completion.id, "job-42");
+        assert_eq!(completion.snapshot["phase"], "Completed");
+        assert_eq!(completion.snapshot["points"], 3);
+        assert!(completion.snapshot["gui_job"].is_null());
+
+        // Idle/live state publications retain the last tagged completion until
+        // another tagged command replaces it.
+        let retained = state.gui_job.clone();
+        state.message = "Live monitor updated.".into();
+        assert_eq!(state.gui_job, retained);
+        for index in 0..8 {
+            complete_gui_job(&mut state, format!("job-{index}"));
+        }
+        assert_eq!(state.gui_jobs.len(), 4);
+        assert_eq!(state.gui_jobs[0].id, "job-4");
+        let persisted = recording_snapshot(&state);
+        assert!(persisted.get("gui_job").is_none());
+        assert!(persisted.get("gui_jobs").is_none());
+        assert_eq!(persisted["points"], 3);
+        assert!(
+            state
+                .gui_jobs
+                .iter()
+                .all(|job| job.snapshot["gui_jobs"].as_array().unwrap().is_empty())
+        );
     }
 
     #[test]
@@ -3497,7 +3592,7 @@ mod tests {
         let control = Control {
             stop: AtomicBool::new(false),
             off: AtomicBool::new(false),
-            gate_request_rejected: AtomicBool::new(false),
+            gate_request_rejected: Mutex::new(None),
             running: AtomicBool::new(false),
             closed: AtomicBool::new(false),
             heartbeat: Mutex::new(Instant::now() - Duration::from_secs(3)),

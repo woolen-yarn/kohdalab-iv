@@ -1,4 +1,4 @@
-use crate::protocol::{Command, Event, Snapshot};
+use crate::protocol::{Command, Event, Snapshot, gui_job, validate_gui_job};
 use crate::state::{OutputState, Phase};
 use std::io::{BufRead, BufReader, Read, Write};
 use std::process::{Child, Command as Process, Stdio};
@@ -50,6 +50,7 @@ impl Client {
         });
         let state = Arc::new(Mutex::new(Snapshot::default()));
         let reader_state = state.clone();
+        let reader_alive = writer_alive.clone();
         let state_revision = Arc::new(AtomicU64::new(0));
         let reader_revision = state_revision.clone();
         let (send_point, points) = mpsc::sync_channel(2048);
@@ -99,6 +100,10 @@ impl Client {
                 state.meter_connected = false;
                 reader_revision.fetch_add(1, Ordering::Release);
             }
+            // A closed engine output stream means no further final job state
+            // can arrive, even if the stdin writer thread has not observed
+            // its broken pipe yet.
+            reader_alive.store(false, Ordering::Release);
             wake();
         });
         Ok(Self {
@@ -116,8 +121,21 @@ impl Client {
         submit_command(&self.commands, &self.safety, &self.writer_alive, command)
     }
 
+    /// Submit a normal engine operation whose completed state can be matched
+    /// to `id` through `Snapshot::gui_job`.
+    pub fn send_job(&self, id: String, command: Command) -> Result<(), String> {
+        self.send(gui_job(id, command)?)
+    }
+
     pub fn snapshot(&self) -> Snapshot {
         self.state.lock().map(|s| s.clone()).unwrap_or_default()
+    }
+
+    /// False once either the command writer or engine-state reader has lost
+    /// its pipe.  GUI API job tracking uses this to distinguish an engine
+    /// exit from a completed tagged operation.
+    pub fn is_alive(&self) -> bool {
+        self.writer_alive.load(Ordering::Acquire)
     }
 
     /// Returns a cloned state only after the engine has published a newer one.
@@ -143,6 +161,9 @@ fn submit_command(
     writer_alive: &AtomicBool,
     command: Command,
 ) -> Result<(), String> {
+    if let Command::GuiJob { id, command } = &command {
+        validate_gui_job(id, command)?;
+    }
     if let Some(level) = safety_level(&command) {
         if !writer_alive.load(Ordering::Acquire) {
             return Err("Measurement engine command pipe is disconnected.".into());
@@ -150,11 +171,7 @@ fn submit_command(
         safety.fetch_max(level, Ordering::AcqRel);
         return Ok(());
     }
-    if matches!(
-        command,
-        Command::Run { .. } | Command::SetGateVoltage { .. }
-    ) && safety.load(Ordering::Acquire) != SAFETY_NONE
-    {
+    if needs_clear_safety(&command) && safety.load(Ordering::Acquire) != SAFETY_NONE {
         return Err(
             "A safety command is pending. Wait for Stop or Output Off before starting a run."
                 .into(),
@@ -166,6 +183,17 @@ fn submit_command(
             "Measurement engine command pipe is disconnected.".into()
         }
     })
+}
+
+fn needs_clear_safety(command: &Command) -> bool {
+    let command = match command {
+        Command::GuiJob { command, .. } => command.as_ref(),
+        command => command,
+    };
+    matches!(
+        command,
+        Command::Run { .. } | Command::SetGateVoltage { .. }
+    )
 }
 
 fn safety_level(command: &Command) -> Option<u8> {
@@ -329,6 +357,23 @@ mod tests {
                 },
             )
             .is_err()
+        );
+        assert!(
+            submit_command(
+                &sender,
+                &safety,
+                &alive,
+                gui_job(
+                    "run-1".into(),
+                    Command::Run {
+                        config: iv_core::RunConfig::default(),
+                        path: "result.csv".into(),
+                    },
+                )
+                .unwrap(),
+            )
+            .is_err(),
+            "tagged runs must observe the same pending-safety admission rule"
         );
     }
 

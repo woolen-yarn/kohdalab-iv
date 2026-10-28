@@ -61,8 +61,9 @@ def main():
             assert iv.snapshot['simulation'] is True
             try:
                 other = GuiIV(endpoint=endpoints[0])
+                other.acquire()
             except RuntimeError as e:
-                assert 'Another Python client' in str(e)
+                assert 'another Python client' in str(e)
             else:
                 raise AssertionError('second lease accepted')
             assert iv.snapshot['gate_connected']
@@ -81,9 +82,12 @@ def main():
             try:
                 iv.set_gate_voltage(0.04, compliance=0.001, ramp_step=0.01)
             except RuntimeError as error:
-                assert 'during a measurement' in str(error)
+                assert getattr(error, 'code', None) == 'busy'
             else:
                 raise AssertionError('gate change admitted during IV')
+            # Gate OFF remains an immediate safety operation even while the
+            # normal API/measurement queue is busy.
+            iv.gate_output_off(timeout=10)
             iv.stop()
             pending.join(timeout=15)
             assert not pending.is_alive() and errors, errors

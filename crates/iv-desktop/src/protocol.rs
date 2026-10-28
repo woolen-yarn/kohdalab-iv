@@ -7,6 +7,13 @@ use serde::{Deserialize, Serialize};
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(tag = "command", rename_all = "snake_case")]
 pub enum Command {
+    /// Correlates one finite, non-safety command with the state published
+    /// after that command has completed.
+    GuiJob {
+        id: String,
+        #[serde(rename = "payload")]
+        command: Box<Command>,
+    },
     Heartbeat,
     Discover,
     SetLiveMode {
@@ -65,6 +72,58 @@ pub enum Command {
     Shutdown,
 }
 
+/// Wrap a command whose final engine state should be correlated with `id`.
+///
+/// Safety and lease commands deliberately cannot be jobs: they must remain
+/// immediate, even if the normal command queue is full.
+pub fn gui_job(id: String, command: Command) -> Result<Command, String> {
+    validate_gui_job(&id, &command).map_err(|_| {
+        "GUI jobs support only finite measurement and connection commands.".to_string()
+    })?;
+    Ok(Command::GuiJob {
+        id,
+        command: Box::new(command),
+    })
+}
+
+/// Removes a single, valid GUI-job envelope before the engine's normal
+/// admission and safety handling.  Invalid envelopes are rejected rather
+/// than allowing a safety command to be delayed behind the normal queue.
+pub fn unwrap_gui_job(command: Command) -> Result<(Option<String>, Command), String> {
+    let Command::GuiJob { id, command } = command else {
+        return Ok((None, command));
+    };
+    validate_gui_job(&id, &command)?;
+    Ok((Some(id), *command))
+}
+
+pub fn validate_gui_job(id: &str, command: &Command) -> Result<(), String> {
+    if id.trim().is_empty() || !is_gui_job_command(command) {
+        return Err("Invalid GUI job envelope.".into());
+    }
+    Ok(())
+}
+
+fn is_gui_job_command(command: &Command) -> bool {
+    matches!(
+        command,
+        Command::Discover
+            | Command::SetLiveMode { .. }
+            | Command::Connect { .. }
+            | Command::ConnectSource { .. }
+            | Command::ConnectSource2 { .. }
+            | Command::ConnectGate { .. }
+            | Command::ConnectMeter { .. }
+            | Command::DisconnectSource
+            | Command::DisconnectSource2
+            | Command::DisconnectGate
+            | Command::DisconnectMeter
+            | Command::Disconnect
+            | Command::Run { .. }
+            | Command::SetGateVoltage { .. }
+    )
+}
+
 /// Latched safety event from the run's frozen configuration, not GUI edits.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -83,6 +142,14 @@ pub struct ProtectionAlert {
     #[serde(default)]
     pub source_index: Option<u8>,
 }
+
+/// The final state belonging to the last tagged GUI operation.  The embedded
+/// snapshot deliberately has no `gui_job` field so JSON cannot recurse.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct GuiJobCompletion {
+    pub id: String,
+    pub snapshot: serde_json::Value,
+}
 impl ProtectionAlert {
     pub(crate) fn measurement(config: &RunConfig, observed: f64) -> Self {
         Self {
@@ -98,6 +165,11 @@ impl ProtectionAlert {
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct Snapshot {
+    #[serde(default)]
+    pub gui_job: Option<GuiJobCompletion>,
+    /// Small bounded completion history survives coalesced state updates.
+    #[serde(default)]
+    pub gui_jobs: Vec<GuiJobCompletion>,
     /// Acknowledged explicit safety commands, including cancellation before Run starts.
     #[serde(default)]
     pub safety_revision: u64,
@@ -172,6 +244,8 @@ pub struct Snapshot {
 impl Default for Snapshot {
     fn default() -> Self {
         Self {
+            gui_job: None,
+            gui_jobs: Vec::new(),
             safety_revision: 0,
             source2_connected: false,
             source2_simulation: false,
@@ -233,4 +307,35 @@ fn default_source_model() -> String {
 }
 fn default_meter_model() -> String {
     "AGILENT_34411A".into()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn gui_job_envelope_accepts_only_normal_finite_commands() {
+        let command = gui_job("job-1".into(), Command::Discover).unwrap();
+        let (id, inner) = unwrap_gui_job(command).unwrap();
+        assert_eq!(id.as_deref(), Some("job-1"));
+        assert!(matches!(inner, Command::Discover));
+
+        for command in [
+            Command::Heartbeat,
+            Command::Stop,
+            Command::GateOutputOff,
+            Command::OutputOff,
+            Command::Shutdown,
+        ] {
+            assert!(gui_job("job-1".into(), command).is_err());
+        }
+        let nested = Command::GuiJob {
+            id: "outer".into(),
+            command: Box::new(Command::GuiJob {
+                id: "inner".into(),
+                command: Box::new(Command::Discover),
+            }),
+        };
+        assert!(unwrap_gui_job(nested).is_err());
+    }
 }

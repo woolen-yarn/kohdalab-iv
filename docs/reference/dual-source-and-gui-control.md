@@ -67,6 +67,9 @@ The existing Save action copies the JSON together with the measurement CSV.
 
 ## Python controls the running GUI
 
+See the [GUI API reference](gui-api.md) for profile launch, ownership, common TRKR
+API names, asynchronous jobs, error codes and compatibility.
+
 Install the thin Python client from `bindings/python`. Open the updated GUI,
 select/connect instruments, choose the sweep and save settings normally.
 `GuiIV` attaches to that GUI; `NativeIV` remains available for headless use and
@@ -88,8 +91,8 @@ with GuiIV() as iv:
 
 External parameters stay in Python and the requested filename. No external
 parameter fields or gate controls are added to the GUI. The GUI continues to
-show its usual live readings, plot, progress and saved data. Its Start/Stop and
-safety controls remain usable. Gate voltage cannot change during an IV run;
+show its usual live readings, plot, progress and saved data. During Python control, ordinary inputs are locked; GUI Stop and Take control
+remain available. Gate voltage cannot change during an IV run;
 a rejected command is not replayed after the run finishes. Successful runs and
 ordinary manual IV Stop retain gate bias for the next condition. A stopped
 `GuiIV.run()` aborts automation and requests all outputs OFF. `gate_output_off()`

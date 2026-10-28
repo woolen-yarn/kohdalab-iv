@@ -114,11 +114,12 @@ impl IvApp {
         success: Arc<AtomicBool>,
         boot: Instant,
         hardware: Option<(String, String)>,
-    ) -> Self {
+        startup_profile: Option<PathBuf>,
+    ) -> Result<Self, String> {
         style(&cc.egui_ctx);
         let ctx = cc.egui_ctx.clone();
         let client = Client::start(move || ctx.request_repaint());
-        let (mut settings, settings_notice) = match std::fs::read(settings_path()) {
+        let (mut settings, mut settings_notice) = match std::fs::read(settings_path()) {
             Ok(bytes) => match settings::load_settings(&bytes) {
                 Ok(settings) => (settings, String::new()),
                 Err(error) => (Settings::default(), error),
@@ -169,6 +170,12 @@ impl IvApp {
             // Legacy simulation settings have only scalar device fields.
             settings.store_active_entries();
         }
+        let mut config_path = settings_path().display().to_string();
+        if let Some(path) = startup_profile {
+            settings =
+                load_gui_profile(&std::fs::read(&path).map_err(|e| format!("GUI profile: {e}"))?)?;
+            config_path = path.display().to_string();
+        }
         // Keep an existing source-protection request paired with its mode.
         // Fresh defaults deliberately remain `None` until the user edits
         // a protection field in Settings, retaining the legacy hardware-follows-meter-stop policy.
@@ -186,11 +193,19 @@ impl IvApp {
         let control = match crate::gui_control::GuiControl::start() {
             Ok(control) => Some(control),
             Err(error) => {
-                eprintln!("GUI external control unavailable: {error}");
+                if std::env::args().any(|arg| arg == "--gui-api") {
+                    return Err(format!("GUI API unavailable: {error}"));
+                }
+                let message = format!("GUI external control unavailable: {error}");
+                eprintln!("{message}");
+                if !settings_notice.is_empty() {
+                    settings_notice.push_str(" · ");
+                }
+                settings_notice.push_str(&message);
                 None
             }
         };
-        Self {
+        Ok(Self {
             client,
             control,
             settings,
@@ -214,7 +229,7 @@ impl IvApp {
             table_visible: true,
             timing_open: false,
             timing_before: None,
-            config_path: settings_path().display().to_string(),
+            config_path,
             notice: settings_notice,
             start_error: None,
             protection_dialog: None,
@@ -239,7 +254,7 @@ impl IvApp {
             pending_run: false,
             pending_base: 0,
             pending_safety: 0,
-        }
+        })
     }
 
     fn send(&mut self, command: Command) -> bool {
@@ -559,6 +574,9 @@ impl IvApp {
                             .layout(egui::Layout::top_down(egui::Align::Min)),
                         |ui| {
                             ui.set_clip_rect(content);
+                            if self.python_locked() {
+                                ui.disable();
+                            }
                             self.profile(ui);
                             ui.add_space(4.0);
                             egui::ScrollArea::vertical()
@@ -1688,9 +1706,10 @@ impl IvApp {
     fn measurement_controls(&mut self, ui: &mut egui::Ui) {
         section(ui, "Measurement", |ui| {
             ui.columns(2, |columns| {
-                columns[0].add_enabled_ui(!self.busy(), |ui| self.sweep(ui));
+                columns[0]
+                    .add_enabled_ui(!self.busy() && !self.python_locked(), |ui| self.sweep(ui));
                 section(&mut columns[1], "Output", |ui| {
-                    ui.add_enabled_ui(!self.busy(), |ui| {
+                    ui.add_enabled_ui(!self.busy() && !self.python_locked(), |ui| {
                         let width = (ui.available_width() - 62.0).max(150.0);
                         egui::Grid::new("output_files")
                             .num_columns(2)
@@ -2016,7 +2035,10 @@ impl IvApp {
                     BUTTON
                 });
             if ui
-                .add_enabled(!self.busy() && !self.pending_run, start_button)
+                .add_enabled(
+                    !self.busy() && !self.pending_run && !self.python_locked(),
+                    start_button,
+                )
                 .on_disabled_hover_text("Wait for the current operation to finish, or use Stop.")
                 .clicked()
             {
@@ -2034,12 +2056,17 @@ impl IvApp {
                     "Stop requested. Waiting for the current I/O and output cleanup.".into(),
                 );
             }
-            if button(ui, "Save", width, !self.busy() && !self.pending_run)
-                .on_hover_text("Save a complete copy of the acquired CSV and run settings.")
-                .on_disabled_hover_text(
-                    "Stop the measurement and wait for cleanup before saving a copy.",
-                )
-                .clicked()
+            if button(
+                ui,
+                "Save",
+                width,
+                !self.busy() && !self.pending_run && !self.python_locked(),
+            )
+            .on_hover_text("Save a complete copy of the acquired CSV and run settings.")
+            .on_disabled_hover_text(
+                "Stop the measurement and wait for cleanup before saving a copy.",
+            )
+            .clicked()
             {
                 self.save_measurement();
             }
@@ -2697,6 +2724,7 @@ impl eframe::App for IvApp {
         }
         self.sync();
         self.external_control();
+        self.python_banner(ctx);
         ctx.request_repaint_after(Duration::from_millis(100));
         if ctx.input(|i| i.viewport().close_requested()) && self.active() {
             ctx.send_viewport_cmd(egui::ViewportCommand::CancelClose);
@@ -3020,9 +3048,63 @@ fn device_summary(model: &str) -> &str {
     }
 }
 
+/// Validate an explicit launch profile before creating any GUI/engine owner.
+pub fn validate_startup_profile(path: &Path) -> Result<(), String> {
+    settings::load_settings(
+        &std::fs::read(path).map_err(|e| format!("Could not read GUI profile: {e}"))?,
+    )
+    .map(|_| ())
+}
+
+/// Explicit profile launch and API loading follow the existing GUI's legacy
+/// Simulation flag normalization, without opening any device.
+fn load_gui_profile(bytes: &[u8]) -> Result<Settings, String> {
+    let mut settings = settings::load_settings(bytes)?;
+    if settings.simulation {
+        settings.source_model = "SIMULATED_SOURCE".into();
+        settings.meter_model = "SIMULATED_METER".into();
+        if settings.config.balanced_source.is_some() {
+            settings.source2_model = "SIMULATED_SOURCE".into();
+        }
+        settings.store_active_entries();
+    }
+    // Match the active role binding before validating the RunConfig. This
+    // prevents a profile from being validated for one model and executed by
+    // another when several requests arrive in the same GUI frame.
+    settings.config.source_model = if settings.source_model == "SIMULATED_SOURCE" {
+        "YOKOGAWA_GS210".into()
+    } else {
+        settings.source_model.clone()
+    };
+    settings.config.meter_model = if settings.meter_model == "SIMULATED_METER" {
+        "AGILENT_34411A".into()
+    } else {
+        settings.meter_model.clone()
+    };
+    if let Some(dual) = &mut settings.config.balanced_source {
+        dual.source_model = if settings.source2_model == "SIMULATED_SOURCE" {
+            "YOKOGAWA_GS210".into()
+        } else {
+            settings.source2_model.clone()
+        };
+    }
+    Ok(settings)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn api_profile_uses_the_selected_models_before_plan_validation() {
+        let mut profile = Settings::default();
+        profile.sources[0].model = "YOKOGAWA_7651".into();
+        let loaded = load_gui_profile(&serde_json::to_vec(&profile).unwrap()).unwrap();
+        assert_eq!(loaded.config.source_model, "YOKOGAWA_7651");
+        profile.simulation = true;
+        let loaded = load_gui_profile(&serde_json::to_vec(&profile).unwrap()).unwrap();
+        assert_eq!(loaded.source_model, "SIMULATED_SOURCE");
+        assert_eq!(loaded.config.source_model, "YOKOGAWA_GS210");
+    }
 
     #[test]
     fn saved_data_inspector_has_exact_native_csv_fields_and_values() {

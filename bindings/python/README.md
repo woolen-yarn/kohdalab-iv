@@ -300,8 +300,13 @@ Python 測定エンジンや VISA 依存関係をインストールしません�
 
 ## Control the GUI already on screen
 
-`GuiIV` attaches to the running GUI instead of starting another engine. Select
-and connect the IV instruments in the GUI, then use its existing sweep settings:
+`GuiIV` attaches to the running GUI instead of starting another engine. Reading
+`status()`, `config()`, `plan()` and `output()` does not take control. A
+measurement-changing call, or entering the context manager, acquires an
+exclusive Python lease while the GUI is idle. The GUI shows that ownership and
+can take control back; a revoked client cannot silently reacquire it.
+
+Select and connect the IV instruments in the GUI, then use its existing sweep settings:
 
 ```python
 from kohdalab_iv_native import GuiIV
@@ -318,3 +323,22 @@ Gate source methods are also available on `GuiIV`; a normal run keeps the gate
 bias while context exit turns outputs off. No external-parameter GUI is added.
 See [dual-source and GUI control](../../docs/reference/dual-source-and-gui-control.md)
 for wiring semantics, integer ratios, safety behavior and a gate-bias loop.
+
+For automated experiments, the canonical API follows the same basic vocabulary
+as KohdaLab TRKR: `acquire`, `release`, `start`, `result`, `wait`, and `stop`.
+`start()`, `connect()`, and `disconnect()` accept an optional UUID `request_id`
+and return identified job receipts; repeat identical calls with the same UUID are idempotent. Reusing a UUID with a different method or payload is rejected.
+`configure`, `load_config`,
+`set_plan`, `set_output`, `connect`, `disconnect`, and gate commands are also
+available after acquiring control. `GuiIV.launch(profile=...)` starts the
+installed GUI with its API enabled and attaches only to the descriptor matching
+that new process.
+
+IV deliberately differs from TRKR when control is lost: IV's lease timeout,
+`close()`, and `release()` request Stop and verified Output OFF before releasing
+the lease. This preserves IV's source-output safety policy. A Notebook should
+use `with GuiIV()` or explicitly call `close()`; a discarded client stops sending
+heartbeats, so the GUI's timeout policy still takes effect.
+
+See the [GUI API reference](../../docs/reference/gui-api.md) for receipt fields,
+profile loading, safety policy, error codes and executable simulation checks.

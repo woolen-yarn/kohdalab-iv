@@ -833,7 +833,7 @@ pub(super) fn execute(
     }
     let metadata = serde_json::json!({"schema_version":RUN_METADATA_SCHEMA_VERSION,"application_version":env!("CARGO_PKG_VERSION"),"csv_schema":CSV_SCHEMA,"csv_fields":iv_core::CSV_FIELDS,
         "csv_numeric_format":"shortest_roundtrip_scientific","csv":path.display().to_string(),"run_id":run_id,"in_progress":false,"requested_config":requested,"config":config,
-        "balanced_drive":settings,"instruments":instruments,"outcome":runner.state,"simulation":runner.state.simulation,"experiment":config.experiment,
+        "balanced_drive":settings,"instruments":instruments,"outcome":recording_snapshot(runner.state),"simulation":runner.state.simulation,"experiment":config.experiment,
         "raw_csv":{"schema":"raw_csv_v1","filename":raw_path.file_name().map(|n|n.to_string_lossy())},"file_hashes":hashes.ok(),"file_hash_error":recording_error});
     let complete_metadata = DualRunMetadata {
         summary: &metadata,

@@ -81,6 +81,15 @@ fn run() -> Result<(), String> {
         println!("KohdaLab IV {}", env!("CARGO_PKG_VERSION"));
         return Ok(());
     }
+    let startup_profile = argument(&args, "--config")
+        .map(|path| {
+            let path = std::path::PathBuf::from(path)
+                .canonicalize()
+                .map_err(|e| format!("GUI profile: {e}"))?;
+            ui::validate_startup_profile(&path)?;
+            Ok::<_, String>(path)
+        })
+        .transpose()?;
     if cfg!(windows) {
         let home = std::env::var_os("USERPROFILE").ok_or("Windows user profile was not found")?;
         let working = std::path::PathBuf::from(home).join(".kohdalab");
@@ -126,14 +135,18 @@ fn run() -> Result<(), String> {
         concat!("KohdaLab IV v", env!("CARGO_PKG_VERSION")),
         options,
         Box::new(move |cc| {
-            Ok(Box::new(ui::IvApp::new(
-                cc,
-                smoke,
-                screenshot,
-                gui_success,
-                boot,
-                hardware,
-            )))
+            Ok(Box::new(
+                ui::IvApp::new(
+                    cc,
+                    smoke,
+                    screenshot,
+                    gui_success,
+                    boot,
+                    hardware,
+                    startup_profile,
+                )
+                .map_err(std::io::Error::other)?,
+            ))
         }),
     )
     .map_err(|e| e.to_string())?;
