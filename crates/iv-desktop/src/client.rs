@@ -7,10 +7,14 @@ use std::sync::{Arc, Mutex, mpsc};
 use std::time::{Duration, Instant};
 
 const SAFETY_NONE: u8 = 0;
+// Safety intents are a bitmask so individual Source DC OFF requests cannot
+// overwrite a concurrent Gate OFF request in the client-side priority path.
 const SAFETY_STOP: u8 = 1;
 const SAFETY_GATE_OFF: u8 = 2;
-const SAFETY_OUTPUT_OFF: u8 = 3;
-const SAFETY_SHUTDOWN: u8 = 4;
+const SAFETY_SOURCE_OFF: u8 = 4;
+const SAFETY_SOURCE2_OFF: u8 = 8;
+const SAFETY_OUTPUT_OFF: u8 = 16;
+const SAFETY_SHUTDOWN: u8 = 32;
 
 pub struct Client {
     child: Child,
@@ -168,7 +172,7 @@ fn submit_command(
         if !writer_alive.load(Ordering::Acquire) {
             return Err("Measurement engine command pipe is disconnected.".into());
         }
-        safety.fetch_max(level, Ordering::AcqRel);
+        safety.fetch_or(level, Ordering::AcqRel);
         return Ok(());
     }
     if needs_clear_safety(&command) && safety.load(Ordering::Acquire) != SAFETY_NONE {
@@ -192,7 +196,7 @@ fn needs_clear_safety(command: &Command) -> bool {
     };
     matches!(
         command,
-        Command::Run { .. } | Command::SetGateVoltage { .. }
+        Command::Run { .. } | Command::SetGateVoltage { .. } | Command::SetSourceDc { .. }
     )
 }
 
@@ -200,19 +204,29 @@ fn safety_level(command: &Command) -> Option<u8> {
     match command {
         Command::Stop => Some(SAFETY_STOP),
         Command::GateOutputOff => Some(SAFETY_GATE_OFF),
+        Command::SourceDcOff { secondary: false } => Some(SAFETY_SOURCE_OFF),
+        Command::SourceDcOff { secondary: true } => Some(SAFETY_SOURCE2_OFF),
         Command::OutputOff => Some(SAFETY_OUTPUT_OFF),
         Command::Shutdown => Some(SAFETY_SHUTDOWN),
         _ => None,
     }
 }
 
-fn safety_command(level: u8) -> Command {
-    match level {
-        SAFETY_STOP => Command::Stop,
-        SAFETY_GATE_OFF => Command::GateOutputOff,
-        SAFETY_OUTPUT_OFF => Command::OutputOff,
-        SAFETY_SHUTDOWN => Command::Shutdown,
-        _ => Command::Heartbeat,
+fn safety_command(flags: u8) -> (u8, Command) {
+    // OutputOff and Shutdown are global fail-closed fallbacks.  Otherwise
+    // dispatch each source-specific OFF before a plain Stop.
+    if flags & SAFETY_SHUTDOWN != 0 {
+        (SAFETY_SHUTDOWN, Command::Shutdown)
+    } else if flags & SAFETY_OUTPUT_OFF != 0 {
+        (SAFETY_OUTPUT_OFF, Command::OutputOff)
+    } else if flags & SAFETY_GATE_OFF != 0 {
+        (SAFETY_GATE_OFF, Command::GateOutputOff)
+    } else if flags & SAFETY_SOURCE_OFF != 0 {
+        (SAFETY_SOURCE_OFF, Command::SourceDcOff { secondary: false })
+    } else if flags & SAFETY_SOURCE2_OFF != 0 {
+        (SAFETY_SOURCE2_OFF, Command::SourceDcOff { secondary: true })
+    } else {
+        (SAFETY_STOP, Command::Stop)
     }
 }
 
@@ -256,12 +270,12 @@ fn writer_loop<W: Write>(
             if selected == SAFETY_NONE {
                 continue;
             }
-            if write_command(&mut output, &safety_command(selected)).is_err() {
+            let (bit, command) = safety_command(selected);
+            if write_command(&mut output, &command).is_err() {
                 break;
             }
-            let _ =
-                safety.compare_exchange(selected, SAFETY_NONE, Ordering::AcqRel, Ordering::Acquire);
-            if selected == SAFETY_SHUTDOWN {
+            safety.fetch_and(!bit, Ordering::AcqRel);
+            if bit == SAFETY_SHUTDOWN {
                 break;
             }
             heartbeat = Instant::now();
@@ -416,5 +430,42 @@ mod tests {
         let stop = wire.find("\"output_off\"").unwrap();
         let shutdown = wire.find("\"shutdown\"").unwrap();
         assert!(stop < shutdown, "wire order was {wire:?}");
+    }
+
+    #[test]
+    fn source_dc_off_is_a_priority_intent_and_does_not_replace_gate_off() {
+        let (sender, receiver) = mpsc::sync_channel(16);
+        let safety = Arc::new(AtomicU8::new(SAFETY_NONE));
+        let alive = Arc::new(AtomicBool::new(true));
+        submit_command(&sender, &safety, &alive, Command::GateOutputOff).unwrap();
+        submit_command(
+            &sender,
+            &safety,
+            &alive,
+            Command::SourceDcOff { secondary: true },
+        )
+        .unwrap();
+        let writer = TestWriter::default();
+        let bytes = writer.0.clone();
+        let handle = std::thread::spawn({
+            let safety = safety.clone();
+            let alive = alive.clone();
+            move || writer_loop(writer, receiver, safety, alive)
+        });
+        let deadline = Instant::now() + Duration::from_secs(1);
+        while Instant::now() < deadline {
+            let captured = bytes.lock().unwrap().clone();
+            let wire = String::from_utf8_lossy(&captured);
+            if wire.contains("\"gate_output_off\"") && wire.contains("\"source_dc_off\"") {
+                break;
+            }
+            std::thread::sleep(Duration::from_millis(5));
+        }
+        submit_command(&sender, &safety, &alive, Command::Shutdown).unwrap();
+        let _ = handle.join().unwrap();
+        let wire = String::from_utf8(bytes.lock().unwrap().clone()).unwrap();
+        assert!(wire.contains("\"gate_output_off\""), "{wire}");
+        assert!(wire.contains("\"source_dc_off\""), "{wire}");
+        assert!(wire.contains("\"secondary\":true"), "{wire}");
     }
 }

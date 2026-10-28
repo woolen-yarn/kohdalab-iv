@@ -220,6 +220,11 @@ impl IvApp {
                 {
                     return Err("Disconnect Source 2 before leaving Dual mode.".into());
                 }
+                if candidate.config.balanced_source.is_some()
+                    && self.dc_gate_matches(candidate.source2_id)
+                {
+                    return Err("Source 2 is holding fixed bias. Disconnect it or select another source before Dual V-I.".into());
+                }
                 candidate.store_active_protection();
                 candidate
             };
@@ -258,7 +263,7 @@ impl IvApp {
             if method == "load_config" {
                 self.config_path = body["path"].as_str().unwrap().into();
             }
-            if mode_changed && self.state.connected {
+            if mode_changed && self.state.connected && self.state.source_dc.is_none() {
                 return control.begin_job(
                     uuid::Uuid::new_v4().to_string(),
                     "set_plan",

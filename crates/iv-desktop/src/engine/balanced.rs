@@ -851,7 +851,8 @@ pub(super) fn execute(
             .error
             .push_str(&format!(" Metadata save failed: {error}"));
     }
-    publish(latest, runner.state);
+    // Terminal publication is owned by the outer engine after it releases
+    // the output-operation reservation; progress above remains streamed.
     Ok(())
 }
 

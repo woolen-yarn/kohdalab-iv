@@ -6,6 +6,15 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 
+/// A profile may not replace the binding of any connected instrument,
+/// including a fixed-bias source that is outside the IV sweep roles.
+pub(super) fn profile_load_allowed(state: &crate::protocol::Snapshot) -> bool {
+    !state.source_connected
+        && !state.source2_connected
+        && !state.meter_connected
+        && !state.gate_connected
+}
+
 /// A saved instrument connection.  The desktop engine still has one source,
 /// one optional second source and one meter role; the inventory lets users
 /// keep several prepared connections and bind those roles in Settings.
@@ -17,6 +26,29 @@ pub(super) struct InstrumentEntry {
     pub(super) id: u64,
     pub(super) model: String,
     pub(super) resource: String,
+    pub(super) dc: DcSettings,
+}
+
+/// Saved setpoints only: loading settings never connects or enables output.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub(super) struct DcSettings {
+    pub(super) mode: iv_core::Mode,
+    pub(super) value: f64,
+    pub(super) compliance: f64,
+    pub(super) ramp_step: f64,
+    pub(super) units: [usize; 3],
+}
+impl Default for DcSettings {
+    fn default() -> Self {
+        Self {
+            mode: iv_core::Mode::Iv,
+            value: 0.0,
+            compliance: 0.001,
+            ramp_step: 0.001,
+            units: [1, 1, 1],
+        }
+    }
 }
 
 impl InstrumentEntry {
@@ -25,6 +57,7 @@ impl InstrumentEntry {
             id,
             model: model.into(),
             resource: resource.into(),
+            dc: DcSettings::default(),
         }
     }
 
@@ -63,6 +96,8 @@ pub(super) struct Settings {
     pub(super) source2_id: u64,
     #[serde(default)]
     pub(super) meter_id: u64,
+    /// Inventory card associated with the independent voltage-bias connection.
+    pub(super) dc_gate_id: u64,
     #[serde(default = "default_inventory_id")]
     pub(super) next_inventory_id: u64,
     pub(super) output_dir: String,
@@ -102,6 +137,7 @@ impl Default for Settings {
             source1_id: 1,
             source2_id: 2,
             meter_id: 3,
+            dc_gate_id: 0,
             next_inventory_id: 4,
             output_dir: user_dir().join("results").display().to_string(),
             filename: "iv_run".into(),
@@ -544,5 +580,41 @@ mod tests {
         assert_eq!(settings.sources[2], inactive);
         assert!(settings.remove_source(settings.sources[2].id));
         assert_eq!(settings.sources.len(), 2);
+    }
+}
+
+#[cfg(test)]
+mod dc_persistence_tests {
+    use super::*;
+    #[test]
+    fn a_connected_bias_always_blocks_profile_replacement() {
+        for output in [
+            crate::state::OutputState::On,
+            crate::state::OutputState::Off,
+            crate::state::OutputState::Unknown,
+        ] {
+            let state = crate::protocol::Snapshot {
+                gate_connected: true,
+                gate_output: output,
+                ..Default::default()
+            };
+            assert!(!profile_load_allowed(&state));
+        }
+        assert!(profile_load_allowed(&crate::protocol::Snapshot::default()));
+    }
+    #[test]
+    fn old_device_entries_get_off_by_default_dc_settings_and_saved_values_roundtrip() {
+        let old = br#"{"sources":[{"id":1,"model":"YOKOGAWA_GS210","resource":"GPIB0::3::INSTR"},{"id":2,"model":"YOKOGAWA_7651","resource":"GPIB0::5::INSTR"}]}"#;
+        let mut settings = load_settings(old).unwrap();
+        assert_eq!(settings.sources[0].dc, DcSettings::default());
+        settings.sources[1].dc.value = -0.25;
+        settings.dc_gate_id = settings.sources[1].id;
+        settings.store_active_entries();
+        let json = serde_json::to_value(&settings).unwrap();
+        assert!(json["sources"][1]["dc"].get("enabled").is_none());
+        assert!(json["sources"][1]["dc"].get("output").is_none());
+        let loaded = load_settings(&serde_json::to_vec(&settings).unwrap()).unwrap();
+        assert_eq!(loaded.sources[1].dc.value, -0.25);
+        assert_eq!(loaded.dc_gate_id, settings.sources[1].id);
     }
 }

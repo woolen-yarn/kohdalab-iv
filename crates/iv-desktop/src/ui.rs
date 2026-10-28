@@ -5,6 +5,7 @@
 use crate::state::{OutputState, Phase};
 
 mod control;
+mod dc;
 mod formatting;
 mod history;
 mod settings;
@@ -104,6 +105,9 @@ pub struct IvApp {
     pending_run: bool,
     pending_base: u64,
     pending_safety: u64,
+    dc_open: std::collections::HashSet<u64>,
+    pending_dc: Option<(String, u64)>,
+    dc_smoke_stage: u8,
 }
 
 impl IvApp {
@@ -116,6 +120,11 @@ impl IvApp {
         hardware: Option<(String, String)>,
         startup_profile: Option<PathBuf>,
     ) -> Result<Self, String> {
+        if std::env::args().any(|arg| arg == "--gui-dc-smoke")
+            && (hardware.is_some() || startup_profile.is_some())
+        {
+            return Err("DC GUI smoke requires its isolated simulation profile; hardware/config overrides are not allowed.".into());
+        }
         style(&cc.egui_ctx);
         let ctx = cc.egui_ctx.clone();
         let client = Client::start(move || ctx.request_repaint());
@@ -170,6 +179,14 @@ impl IvApp {
             // Legacy simulation settings have only scalar device fields.
             settings.store_active_entries();
         }
+        let dc_smoke = smoke && std::env::args().any(|arg| arg == "--gui-dc-smoke");
+        if dc_smoke {
+            settings.dc_gate_id = settings.sources[1].id;
+            settings.sources[0].dc.value = 0.001;
+            settings.sources[1].model = "SIMULATED_SOURCE".into();
+            settings.sources[1].resource = "SIM_GATE".into();
+            settings.sources[1].dc.value = 0.01;
+        }
         let mut config_path = settings_path().display().to_string();
         if let Some(path) = startup_profile {
             settings =
@@ -204,6 +221,13 @@ impl IvApp {
                 settings_notice.push_str(&message);
                 None
             }
+        };
+        let dc_open = if dc_smoke {
+            [settings.source1_id, settings.dc_gate_id]
+                .into_iter()
+                .collect()
+        } else {
+            Default::default()
         };
         Ok(Self {
             client,
@@ -254,6 +278,9 @@ impl IvApp {
             pending_run: false,
             pending_base: 0,
             pending_safety: 0,
+            dc_open,
+            pending_dc: None,
+            dc_smoke_stage: 0,
         })
     }
 
@@ -272,22 +299,24 @@ impl IvApp {
     }
 
     fn busy(&self) -> bool {
-        matches!(
-            self.state.phase,
-            Phase::Connecting
-                | Phase::Scanning
-                | Phase::SwitchingMode
-                | Phase::Preparing
-                | Phase::Running
-                | Phase::CleaningUp
-        )
+        self.pending_dc.is_some()
+            || matches!(
+                self.state.phase,
+                Phase::Connecting
+                    | Phase::Scanning
+                    | Phase::SwitchingMode
+                    | Phase::Preparing
+                    | Phase::Running
+                    | Phase::CleaningUp
+            )
     }
 
     fn active(&self) -> bool {
-        matches!(
-            self.state.phase,
-            Phase::Preparing | Phase::Running | Phase::CleaningUp
-        )
+        self.pending_dc.is_some()
+            || matches!(
+                self.state.phase,
+                Phase::Preparing | Phase::Running | Phase::CleaningUp
+            )
     }
 
     fn sync(&mut self) {
@@ -320,6 +349,7 @@ impl IvApp {
                 return;
             };
             state_changed = true;
+            dc::settle_job(&mut self.pending_dc, &mut self.start_error, &next);
             if next.balanced_active != self.state.balanced_active {
                 self.live_samples.clear();
                 self.source2_samples.clear();
@@ -412,7 +442,11 @@ impl IvApp {
             }
             if !next.error.is_empty()
                 && next.error != self.state.error
-                && (self.pending_run || self.active())
+                && (self.pending_run
+                    || self.active()
+                    || self.state.source_dc.is_some()
+                    || self.state.source2_dc.is_some()
+                    || self.state.gate_output == OutputState::On)
             {
                 self.start_error = Some(format!(
                     "{}\n\nCheck the log and instrument connections. Verify output is off before trying again.",
@@ -590,8 +624,6 @@ impl IvApp {
                                         ui.add_space(4.0);
                                         self.secondary_source(ui);
                                     }
-                                    ui.add_space(4.0);
-                                    self.instrument(ui, false);
                                     let inactive_sources = self
                                         .settings
                                         .sources
@@ -603,9 +635,19 @@ impl IvApp {
                                         })
                                         .map(|entry| entry.id)
                                         .collect::<Vec<_>>();
+                                    for &id in &inactive_sources {
+                                        if self.dc_gate_matches(id) {
+                                            ui.add_space(4.0);
+                                            self.inactive_instrument(ui, true, id);
+                                        }
+                                    }
+                                    ui.add_space(4.0);
+                                    self.instrument(ui, false);
                                     for id in inactive_sources {
-                                        ui.add_space(4.0);
-                                        self.inactive_instrument(ui, true, id);
+                                        if !self.dc_gate_matches(id) {
+                                            ui.add_space(4.0);
+                                            self.inactive_instrument(ui, true, id);
+                                        }
                                     }
                                     let inactive_meters = self
                                         .settings
@@ -669,10 +711,9 @@ impl IvApp {
                         ui,
                         "Load",
                         row_width,
-                        !self.state.source_connected
-                            && !self.state.source2_connected
-                            && !self.state.meter_connected,
+                        settings::profile_load_allowed(&self.state),
                     )
+                    .on_disabled_hover_text("Disconnect all instruments, including the fixed-bias source, before loading another profile.")
                     .clicked()
                     {
                         let loaded = std::fs::read(&self.config_path)
@@ -724,7 +765,8 @@ impl IvApp {
                         row_width,
                         self.state.source_connected
                             || self.state.source2_connected
-                            || self.state.meter_connected,
+                            || self.state.meter_connected
+                            || self.state.gate_connected,
                     )
                     .clicked()
                     {
@@ -737,9 +779,15 @@ impl IvApp {
 
     fn live_monitor(&self, ui: &mut egui::Ui, source: bool) {
         let mode = self
-            .live_reading
+            .state
+            .source_dc
             .as_ref()
-            .map_or(self.settings.config.mode, |r| r.mode);
+            .map(|dc| dc.mode)
+            .unwrap_or_else(|| {
+                self.live_reading
+                    .as_ref()
+                    .map_or(self.settings.config.mode, |r| r.mode)
+            });
         let source_channel = if mode == Mode::Iv { 1 } else { 0 };
         let channel = if source {
             source_channel
@@ -784,7 +832,9 @@ impl IvApp {
                 "Measured by the meter."
             });
             ui.label(
-                RichText::new(if running && stale {
+                RichText::new(if source && self.state.source_dc.is_some() {
+                    "DC SET"
+                } else if running && stale {
                     "STALE"
                 } else if running {
                     "LIVE"
@@ -876,25 +926,35 @@ impl IvApp {
             })
         });
         let scale = AxisScale::for_magnitude(extent);
-        let text = self
-            .live_reading
-            .as_ref()
-            .map(|record| {
-                let source = record.source_readback.unwrap_or(record.source_set) * source1_factor;
-                let source_channel = if record.mode == Mode::Iv { 1 } else { 0 };
-                let (value, resolution) = if channel == source_channel {
-                    (
-                        source,
-                        record
-                            .source_resolution
-                            .map(|resolution| resolution * source1_factor),
-                    )
-                } else {
-                    (record.meter_value, record.meter_resolution)
-                };
-                display_reading_at_scale(value, resolution, unit, scale)
-            })
-            .unwrap_or_else(|| format!("— {unit}"));
+        let dc_text = if source {
+            self.state
+                .source_dc
+                .as_ref()
+                .map(|dc| fmt_quantity(dc.value, unit))
+        } else {
+            None
+        };
+        let text = dc_text.unwrap_or_else(|| {
+            self.live_reading
+                .as_ref()
+                .map(|record| {
+                    let source =
+                        record.source_readback.unwrap_or(record.source_set) * source1_factor;
+                    let source_channel = if record.mode == Mode::Iv { 1 } else { 0 };
+                    let (value, resolution) = if channel == source_channel {
+                        (
+                            source,
+                            record
+                                .source_resolution
+                                .map(|resolution| resolution * source1_factor),
+                        )
+                    } else {
+                        (record.meter_value, record.meter_resolution)
+                    };
+                    display_reading_at_scale(value, resolution, unit, scale)
+                })
+                .unwrap_or_else(|| format!("— {unit}"))
+        });
         let unknown = text.ends_with(" (resolution unknown)");
         ui.label(
             RichText::new(text.trim_end_matches(" (resolution unknown)"))
@@ -1053,73 +1113,72 @@ impl IvApp {
                 egui::FontId::proportional(10.0),
                 if connected { TEAL } else { MUTED },
             );
-            let summary = device_summary(&self.settings.source2_model);
-            egui::CollapsingHeader::new(format!("Device · {summary}"))
-                .id_salt("source2_device")
-                .show_background(true)
-                .show(ui, |ui| {
-                    ui.add_enabled_ui(idle && !connected, |ui| {
-                        egui::ComboBox::from_id_salt("source2_model")
-                            .width(ui.available_width())
-                            .selected_text(&self.settings.source2_model)
+            let summary = device_summary(&self.settings.source2_model).to_owned();
+            let id = self.settings.source2_id;
+            if self.source_card_header(ui, id, &summary) {
+                ui.add_enabled_ui(idle && !connected, |ui| {
+                    egui::ComboBox::from_id_salt("source2_model")
+                        .width(ui.available_width())
+                        .selected_text(&self.settings.source2_model)
+                        .show_ui(ui, |ui| {
+                            ui.set_min_width(230.0);
+                            for descriptor in instrument_catalog(InstrumentRole::Source) {
+                                if model_supported(descriptor.id) {
+                                    ui.selectable_value(
+                                        &mut self.settings.source2_model,
+                                        descriptor.id.into(),
+                                        descriptor.id,
+                                    );
+                                }
+                            }
+                        });
+                    ui.horizontal(|ui| {
+                        let summary = resource_summary(&self.settings.source2);
+                        let width = (ui.available_width() - 30.0).max(65.0);
+                        compact_field(
+                            ui,
+                            "source2_resource",
+                            &mut self.settings.source2,
+                            width,
+                            summary,
+                        );
+                        egui::ComboBox::from_id_salt("source2_resources")
+                            .width(20.0)
+                            .selected_text("")
                             .show_ui(ui, |ui| {
-                                ui.set_min_width(230.0);
-                                for descriptor in instrument_catalog(InstrumentRole::Source) {
-                                    if model_supported(descriptor.id) {
-                                        ui.selectable_value(
-                                            &mut self.settings.source2_model,
-                                            descriptor.id.into(),
-                                            descriptor.id,
-                                        );
-                                    }
+                                ui.set_min_width(470.0);
+                                for resource in &self.state.resources {
+                                    ui.selectable_value(
+                                        &mut self.settings.source2,
+                                        resource.resource.clone(),
+                                        &resource.label,
+                                    );
                                 }
                             });
-                        ui.horizontal(|ui| {
-                            let summary = resource_summary(&self.settings.source2);
-                            let width = (ui.available_width() - 30.0).max(65.0);
-                            compact_field(
-                                ui,
-                                "source2_resource",
-                                &mut self.settings.source2,
-                                width,
-                                summary,
-                            );
-                            egui::ComboBox::from_id_salt("source2_resources")
-                                .width(20.0)
-                                .selected_text("")
-                                .show_ui(ui, |ui| {
-                                    ui.set_min_width(470.0);
-                                    for resource in &self.state.resources {
-                                        ui.selectable_value(
-                                            &mut self.settings.source2,
-                                            resource.resource.clone(),
-                                            &resource.label,
-                                        );
-                                    }
-                                });
-                        });
-                    });
-                    ui.horizontal(|ui| {
-                        if button(ui, "Refresh", 70.0, idle).clicked() {
-                            self.send(Command::Discover);
-                        }
-                        if button(
-                            ui,
-                            "Connect",
-                            70.0,
-                            idle && !connected
-                                && (self.settings.source2_model == "SIMULATED_SOURCE"
-                                    || !self.settings.source2.is_empty()),
-                        )
-                        .clicked()
-                        {
-                            self.connect_secondary();
-                        }
-                        if button(ui, "Disconnect", 80.0, idle && connected).clicked() {
-                            self.send(Command::DisconnectSource2);
-                        }
                     });
                 });
+                ui.horizontal(|ui| {
+                    if button(ui, "Refresh", 70.0, idle).clicked() {
+                        self.send(Command::Discover);
+                    }
+                    if button(
+                        ui,
+                        "Connect",
+                        70.0,
+                        idle && !connected
+                            && (self.settings.source2_model == "SIMULATED_SOURCE"
+                                || !self.settings.source2.is_empty()),
+                    )
+                    .clicked()
+                    {
+                        self.connect_secondary();
+                    }
+                    if button(ui, "Disconnect", 80.0, idle && connected).clicked() {
+                        self.send(Command::DisconnectSource2);
+                    }
+                });
+            }
+            self.dc_controls(ui, id);
             ui.add_space(4.0);
             ui.separator();
             ui.horizontal(|ui| {
@@ -1223,6 +1282,10 @@ impl IvApp {
     /// visible and editable, but deliberately have no Connect control.  This
     /// prevents a configuration card from energising an unselected source.
     fn inactive_instrument(&mut self, ui: &mut egui::Ui, source: bool, id: u64) {
+        if source {
+            self.dc_stored_source_card(ui, id);
+            return;
+        }
         let entries = if source {
             &self.settings.sources
         } else {
@@ -1406,15 +1469,24 @@ impl IvApp {
                     resource
                 }
             );
-            egui::CollapsingHeader::new(format!("Device  ·  {summary}"))
-                .id_salt(("instrument_device_settings", source))
-                .default_open(false)
-                .show_background(true)
-                .show_unindented(ui, |ui| {
-                    self.instrument_connection_controls(ui, source, connected)
-                })
-                .header_response
-                .on_hover_text(hint);
+            if source {
+                let id = self.settings.source1_id;
+                let summary = summary.to_owned();
+                if self.source_card_header(ui, id, &summary) {
+                    self.instrument_connection_controls(ui, true, connected);
+                }
+                self.dc_controls(ui, id);
+            } else {
+                egui::CollapsingHeader::new(format!("Device  ·  {summary}"))
+                    .id_salt(("instrument_device_settings", source))
+                    .default_open(false)
+                    .show_background(true)
+                    .show_unindented(ui, |ui| {
+                        self.instrument_connection_controls(ui, source, connected)
+                    })
+                    .header_response
+                    .on_hover_text(hint);
+            }
             self.live_monitor(ui, source);
         });
     }
@@ -1593,6 +1665,10 @@ impl IvApp {
                     "Disconnect Source 2 before leaving Dual mode. Wait for the current operation to finish.",
                 );
                 ui.end_row();
+                if choice == 2 && !was_dual && self.dc_gate_matches(self.settings.source2_id) {
+                    self.start_error = Some("Source 2 is holding a fixed bias. Disconnect it or assign a different Source 2 before selecting Dual V-I.".into());
+                    choice = if old_mode == Mode::Iv { 0 } else { 1 };
+                }
                 if choice
                     != if was_dual {
                         2
@@ -1619,7 +1695,7 @@ impl IvApp {
                     self.custom_text.clear();
                     self.live_samples.clear();
                     self.live_reading = None;
-                    if self.state.source_connected {
+                    if self.state.source_connected && self.state.source_dc.is_none() {
                         self.send(Command::SetLiveMode {
                             mode: self.settings.config.mode,
                         });
@@ -1766,7 +1842,8 @@ impl IvApp {
         let editable = !self.busy()
             && !self.state.source_connected
             && !self.state.source2_connected
-            && !self.state.meter_connected;
+            && !self.state.meter_connected
+            && !self.state.gate_connected;
         ui.horizontal(|ui| {
             if button(ui, "+ Source", 82.0, editable)
                 .on_disabled_hover_text("Disconnect the active instruments before adding a device.")
@@ -1797,7 +1874,8 @@ impl IvApp {
             let locked = self.busy()
                 || self.state.source_connected
                 || self.state.source2_connected
-                || self.state.meter_connected;
+                || self.state.meter_connected
+                || self.state.gate_connected;
             let source_choices = self
                 .settings
                 .sources
@@ -2246,7 +2324,7 @@ impl IvApp {
         };
         let response = egui::Modal::new(egui::Id::new("start_error")).show(ctx, |ui| {
             ui.set_width(420.0);
-            ui.heading("Measurement needs attention");
+            ui.heading("Operation needs attention");
             ui.add_space(8.0);
             egui::ScrollArea::vertical()
                 .max_height((ctx.content_rect().height() - 200.0).max(160.0))
@@ -2255,10 +2333,10 @@ impl IvApp {
                 });
             ui.add_space(8.0);
             ui.label(
-                RichText::new(if self.state.output == OutputState::Off {
-                    "Review the settings before starting a new run."
+                RichText::new(if crate::gui_control::outputs_off(&self.state) {
+                    "Review the settings before trying again."
                 } else {
-                    "Verify source output is OFF before continuing."
+                    "Verify all connected source outputs are OFF before continuing."
                 })
                 .small()
                 .color(MUTED),
@@ -2776,8 +2854,14 @@ impl eframe::App for IvApp {
             }
         }
         let control_smoke = self.smoke && std::env::args().any(|arg| arg == "--gui-control-smoke");
+        let dc_smoke = self.smoke && std::env::args().any(|arg| arg == "--gui-dc-smoke");
+        if dc_smoke {
+            self.dc_smoke_step();
+        }
+
         if self.smoke
             && !control_smoke
+            && !dc_smoke
             && self.state.connected
             && (self.settings.config.balanced_source.is_none() || self.state.source2_connected)
             && self.state.run_id == 0
@@ -2786,7 +2870,13 @@ impl eframe::App for IvApp {
             self.start_run();
         }
         let limit_smoke = self.smoke && std::env::args().any(|arg| arg == "--gui-limit-smoke");
-        let smoke_outcome = if control_smoke {
+        let smoke_outcome = if dc_smoke {
+            self.dc_smoke_stage == 4
+                && self.state.phase == Phase::Completed
+                && self.state.source_dc.is_none()
+                && self.state.gate_output == OutputState::On
+                && self.state.points == self.state.total
+        } else if control_smoke {
             self.state.run_id >= 2
                 && self.state.points == self.state.total
                 && self.state.gate_connected

@@ -542,6 +542,83 @@ fn native_direct_usb_uses_the_same_safe_contract_for_gs210_and_34411a() {
 }
 
 #[test]
+fn native_mock_source_dc_verifies_on_then_explicit_off() {
+    let bridge = Bridge::new(METERS[1].1, "", "0.0001");
+    let mut engine = Engine::start(&bridge.dir);
+    engine.connect("YOKOGAWA_GS210", METERS[1].0);
+    engine.send(json!({
+        "command":"set_source_dc", "mode":"dc_iv", "value":0.0,
+        "compliance":0.2, "ramp_step":0.0001
+    }));
+    let state = engine.wait(|s| {
+        (s["source_dc"]["value"] == 0.0 && s["output"] == "On")
+            || !s["error"].as_str().unwrap_or_default().is_empty()
+    });
+    assert_eq!(
+        state["error"],
+        "",
+        "{state} commands: {:?}",
+        bridge.commands()
+    );
+    engine.send(json!({"command":"source_dc_off"}));
+    let state = engine.wait(|s| s["output"] == "Off" && s["source_dc"].is_null());
+    assert_eq!(state["error"], "", "{state}");
+    let commands = bridge.commands();
+    assert!(
+        commands
+            .iter()
+            .any(|line| line == &format!("WRITE 3 {}", hex(":OUTP ON\n"))),
+        "{commands:?}"
+    );
+    assert!(
+        commands
+            .iter()
+            .any(|line| line == &format!("WRITE 3 {}", hex(":OUTP OFF\n"))),
+        "{commands:?}"
+    );
+}
+
+#[test]
+fn native_slow_dc_off_blocks_later_run_before_any_output_resume() {
+    let bridge = Bridge::new(METERS[1].1, "slow_status", "0.0001");
+    let mut engine = Engine::start(&bridge.dir);
+    engine.connect("YOKOGAWA_GS210", METERS[1].0);
+    let output = path("dc-off-race");
+    let run = config("YOKOGAWA_GS210", METERS[1].0, iv_core::Mode::Iv, 0.0, 1);
+    engine.send(json!({
+        "command":"set_source_dc", "mode":"dc_iv", "value":0.0,
+        "compliance":0.2, "ramp_step":0.0001
+    }));
+    engine.send(json!({"command":"source_dc_off"}));
+    engine.send(json!({"command":"run","config":run,"path":output}));
+    let state = engine.wait(|s| {
+        s["error"]
+            .as_str()
+            .is_some_and(|error| error.contains("already active or queued"))
+    });
+    assert_eq!(state["output"], "Off", "{state}");
+    assert!(state["source_dc"].is_null());
+    assert!(
+        !output.exists(),
+        "a rejected Run must not create CSV output"
+    );
+    let commands = bridge.commands();
+    assert!(
+        !commands
+            .iter()
+            .any(|line| line == &format!("WRITE 3 {}", hex(":OUTP ON\n"))),
+        "the cancelled DC setup must not re-enable output: {commands:?}"
+    );
+    assert!(
+        commands
+            .iter()
+            .any(|line| line == &format!("WRITE 3 {}", hex(":OUTP OFF\n"))),
+        "OFF must be dispatched even while DC setup is slow: {commands:?}"
+    );
+    cleanup(&output);
+}
+
+#[test]
 fn failed_readings_retain_raw_evidence_after_immediate_output_off() {
     for settle in [0.0, 0.20] {
         for reading in ["broken reading", "NaN", "9.9e37"] {

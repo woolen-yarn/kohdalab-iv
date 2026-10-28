@@ -90,6 +90,8 @@ USB/USBTMC/GPIB、公式 VISA、アダプター要件、モデルごとの制約
 3. 負荷を接続する前に、ソース／メーターの識別、接続経路、レンジ、保護設定を確認します。
 4. スイープと出力先を選んで Start を押します。監視とモード選択だけではソース出力は有効になりません。
 
+Manual fixed output: [DC source controls](docs/reference/manual-dc-output.md).
+
 Python/Jupyter access: [client guide](bindings/python/README.md). Detailed measurement semantics: [application guide](docs/guides/application-guide.md).
 
 Python・Jupyter からの利用は[クライアントガイド](bindings/python/README.md)、詳細な測定仕様は[アプリケーションガイド](docs/guides/application-guide.md)を参照してください。
