@@ -410,11 +410,17 @@ impl GuiControl {
             let snapshot = completion.snapshot.clone();
             let phase = snapshot["phase"].as_str().unwrap_or("");
             let error = snapshot["error"].as_str().unwrap_or("");
+            // Gate/connection jobs may retain the last measurement phase.
+            // A successful Gate update after Stop is not a stopped new job.
+            // Concurrent safety cancellation is handled by safety_revision above.
+            let measurement = self
+                .jobs
+                .iter()
+                .any(|job| job["id"] == active.id && job["kind"] == "start");
             if !error.is_empty()
-                || matches!(
-                    phase,
-                    "Failed" | "Compliance stop" | "Source limit stop" | "Stopped"
-                )
+                || phase == "Failed"
+                || (measurement
+                    && matches!(phase, "Compliance stop" | "Source limit stop" | "Stopped"))
             {
                 let code = if matches!(phase, "Compliance stop" | "Source limit stop") {
                     "protection_stop"
@@ -871,5 +877,37 @@ mod tests {
         assert!(!c.has_lease());
         // Real GUI admission additionally rejects any acquire when engine is dead.
         assert!(!c.is_retiring());
+    }
+    #[test]
+    fn successful_gate_job_does_not_inherit_the_previous_sweep_stop() {
+        for previous_phase in ["Stopped", "Source limit stop", "Compliance stop"] {
+            let (_d, mut control) = control();
+            let id = client();
+            let mut state = Snapshot::default();
+            control
+                .begin_job(
+                    id.clone(),
+                    "set_gate_voltage",
+                    vec![Command::SetGateVoltage {
+                        voltage: 0.01,
+                        compliance: 0.001,
+                        ramp_step: 0.001,
+                    }],
+                    &state,
+                    &json!({}),
+                )
+                .unwrap();
+            let (tag, _) = control.advance(&state).unwrap();
+            state.gui_job = Some(GuiJobCompletion {
+                id: tag,
+                snapshot: json!({"phase":previous_phase,"error":"","gate_output":"On","gate_voltage":0.01}),
+            });
+            control.advance(&state);
+            assert_eq!(control.result(&id).unwrap()["status"], "completed");
+            assert_eq!(
+                control.result(&id).unwrap()["snapshot"]["gate_output"],
+                "On"
+            );
+        }
     }
 }

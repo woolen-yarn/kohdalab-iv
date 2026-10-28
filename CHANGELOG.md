@@ -10,6 +10,7 @@
 - Preserve the existing 18-column analysis CSV and raw CSV contracts. Store dual ratios and per-source setpoints/readbacks in run JSON without claiming unavailable terminal-voltage measurements.
 - Align GUI API protocol 2 with TRKR-style ownership, UUID job receipts, asynchronous job results, configuration/connection operations and machine-readable error codes while preserving IV Stop/Output OFF behavior.
 - Do not skip a due Dual live protection conversion when slow source-status queries consume a positive settle interval. Keep the zero-wait path unchanged and stop before saving a limited point.
+- Associate finite Gate/connection job outcomes with that operation rather than a previous measurement's Stopped phase. Actual safety cancellation and measurement protection stops remain unsuccessful.
 - This preview has automated and simulation coverage; no new physical hardware qualification is claimed.
 
 ## 1.3.0-alpha.12 — 2026-10-24
@@ -292,6 +293,8 @@
 - このpreviewは自動・シミュレーション検証を含みますが、新しい実機認定は主張しません。
 
 - Dualの正の待機時間をSource状態確認で使い切っても、取得時期に達した保護用ライブ変換を省略しません。wait=0の経路は維持し、制限到達点を保存する前に停止します。
+
+- Gate／接続操作の成否に直前の測定のStopped状態を使わず、その操作の完了を判定します。実際の安全停止・測定保護停止は成功扱いにしません。
 
 ## 1.3.0-alpha.12 — 2026-10-24
 
