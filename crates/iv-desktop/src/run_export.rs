@@ -445,6 +445,41 @@ mod tests {
     }
 
     #[test]
+    fn dual_source_details_stay_in_json_when_saving_a_copy() {
+        let directory = temp_dir("dual-details");
+        let source = directory.join("source.csv");
+        let csv = b"voltage_V,current_A\n1e-3,1e-6\n";
+        fs::write(&source, csv).unwrap();
+        fs::write(
+            source.with_extension("raw.csv"),
+            b"run_id,event_type\nrun,reading\n",
+        )
+        .unwrap();
+        let points = serde_json::json!([{"point_index":1,
+            "source1":{"setpoint_V":0.0005,"level_readback_V":0.0005,"output_voltage_V":null},
+            "source2":{"setpoint_V":-0.0005,"level_readback_V":-0.0005,"output_voltage_V":null}}]);
+        let metadata = serde_json::json!({"schema_version":crate::compatibility::RUN_METADATA_SCHEMA_VERSION,
+            "in_progress":false,"csv":source.display().to_string(),"config":{},"requested_config":{},
+            "outcome":{"path":source.display().to_string(),"phase":"Completed"},
+            "balanced_drive":{"ratio":[1,1]},"dual_source_points":points,
+            "raw_csv":{"path":source.with_extension("raw.csv").display().to_string(),"schema":"raw_csv_v1"}});
+        fs::write(
+            source.with_extension("run.json"),
+            serde_json::to_vec(&metadata).unwrap(),
+        )
+        .unwrap();
+        let destination = directory.join("copy.csv");
+        save_run_copy(&source, &destination).unwrap();
+        assert_eq!(fs::read(&destination).unwrap(), csv);
+        let copied: serde_json::Value =
+            serde_json::from_slice(&fs::read(destination.with_extension("run.json")).unwrap())
+                .unwrap();
+        assert_eq!(copied["balanced_drive"]["ratio"], serde_json::json!([1, 1]));
+        assert_eq!(copied["dual_source_points"], points);
+        fs::remove_dir_all(directory).unwrap();
+    }
+
+    #[test]
     fn raw_csv_export_recomputes_destination_hashes() {
         let directory = temp_dir("hashes");
         let source = directory.join("source.csv");

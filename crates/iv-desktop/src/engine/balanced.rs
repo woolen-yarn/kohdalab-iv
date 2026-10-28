@@ -3,6 +3,64 @@
 use super::*;
 use iv_core::{BalancedPlan, SweepPoint, balanced_plan};
 
+/// Stream point details from the durable audit instead of retaining a second
+/// million-point buffer in memory. No additional companion files are needed.
+#[derive(serde::Serialize)]
+struct DualRunMetadata<'a> {
+    #[serde(flatten)]
+    summary: &'a serde_json::Value,
+    dual_source_points: SourcePoints<'a>,
+}
+struct SourcePoints<'a> {
+    path: &'a Path,
+    expected_points: usize,
+}
+impl serde::Serialize for SourcePoints<'_> {
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        use serde::ser::{Error, SerializeSeq};
+        let mut reader = csv::Reader::from_path(self.path).map_err(S::Error::custom)?;
+        if reader
+            .headers()
+            .map_err(S::Error::custom)?
+            .iter()
+            .ne(raw_csv::FIELDS.iter().copied())
+        {
+            return Err(S::Error::custom(
+                "Invalid raw CSV header while saving Dual point metadata",
+            ));
+        }
+        let mut sequence = serializer.serialize_seq(None)?;
+        let mut row = csv::StringRecord::new();
+        let mut count = 0usize;
+        while reader.read_record(&mut row).map_err(S::Error::custom)? {
+            if row.get(4) != Some("dual_source_point") {
+                continue;
+            }
+            let details: serde_json::Value =
+                serde_json::from_str(row.get(17).unwrap_or("")).map_err(S::Error::custom)?;
+            let point = details
+                .get("source_values")
+                .ok_or_else(|| S::Error::custom("Missing Dual source values"))?;
+            count += 1;
+            if point.get("point_index").and_then(serde_json::Value::as_u64) != Some(count as u64)
+                || row.get(2).and_then(|v| v.parse::<usize>().ok()) != Some(count)
+                || count > self.expected_points
+            {
+                return Err(S::Error::custom(
+                    "Dual source point indexes do not match saved CSV points",
+                ));
+            }
+            sequence.serialize_element(point)?;
+        }
+        if count != self.expected_points {
+            return Err(S::Error::custom(
+                "Dual source point count does not match saved CSV points",
+            ));
+        }
+        sequence.end()
+    }
+}
+
 struct Run<'a> {
     pair: Option<&'a mut DevicePair>,
     state: &'a mut Snapshot,
@@ -14,6 +72,7 @@ struct Run<'a> {
     last_live: Instant,
     levels: [f64; 2],
     meter_precision: MeterResolutionCache,
+    point_readbacks: Option<[f64; 2]>,
 }
 impl Run<'_> {
     fn off(&mut self) -> Result<(), String> {
@@ -406,6 +465,7 @@ impl Run<'_> {
         config: &RunConfig,
         point: &SweepPoint,
     ) -> Result<Option<Record>, String> {
+        self.point_readbacks = None;
         let mut record = simulate_record(config, point, self.begin.elapsed().as_secs_f64());
         record.source_resource = format!(
             "{} | {}",
@@ -526,6 +586,7 @@ impl Run<'_> {
                     "Balanced source level readback does not match the validated targets".into(),
                 );
             }
+            self.point_readbacks = Some([level1, level2]);
             record.source_readback = Some(level1 - level2);
             record.source_resolution = Some(self.planned.differential_resolution);
             self.state.source2_level = Some(level2);
@@ -609,7 +670,7 @@ pub(super) fn execute(
         planned.plan2.source_range,
     );
     state.path = path.display().to_string();
-    write_json_new(&manifest,&serde_json::json!({"schema_version":RUN_METADATA_SCHEMA_VERSION,"csv_schema":CSV_SCHEMA,"in_progress":true,"requested_config":requested,"config":config,"balanced_drive":settings,"instruments":instruments,"run_id":run_id})).map_err(|e|e.to_string())?;
+    write_json_new(&manifest,&serde_json::json!({"schema_version":RUN_METADATA_SCHEMA_VERSION,"csv_schema":CSV_SCHEMA,"csv":path.display().to_string(),"in_progress":true,"requested_config":requested,"config":config,"balanced_drive":settings,"instruments":instruments,"run_id":run_id})).map_err(|e|e.to_string())?;
     publish(latest, state);
     let begin = Instant::now();
     let mut fit = ResistanceFit::default();
@@ -625,6 +686,7 @@ pub(super) fn execute(
         last_live: Instant::now(),
         levels: [0.0; 2],
         meter_precision: MeterResolutionCache::default(),
+        point_readbacks: None,
     };
     let work = (|| -> Result<(), String> {
         runner.setup(&config)?;
@@ -675,6 +737,21 @@ pub(super) fn execute(
             record.run_id = run_id.clone();
             writer.append(&record)?;
             runner.state.points += 1;
+            // Keep the analysis CSV fixed. Detailed source values are a
+            // structured audit event, streamed into the companion run JSON.
+            let source_values = serde_json::json!({
+                "point_index":point.point_index,"timestamp":record.timestamp,
+                "differential_setpoint_V":record.source_set,
+                "source1":{"setpoint_V":planned.plan1.points[point.point_index-1].target,
+                    "level_readback_V":runner.point_readbacks.map(|values|values[0]),"output_voltage_V":null},
+                "source2":{"setpoint_V":planned.plan2.points[point.point_index-1].target,
+                    "level_readback_V":runner.point_readbacks.map(|values|values[1]),"output_voltage_V":null},
+                "differential_level_readback_V":runner.point_readbacks.map(|values|values[0]-values[1]),
+                "common_mode_level_readback_V":runner.point_readbacks.map(|values|(values[0]+values[1])/2.0),
+                "readback_kind":"programmed_level_not_independent_terminal_voltage",
+                "simulation":runner.state.simulation,"software_limit_hit":record.compliance,
+            });
+            runner.audit.append(&serde_json::json!({"event":"dual_source_point","point_index":point.point_index,"source_values":source_values}))?;
             if !record.compliance {
                 runner.state.resistance = fit.add(
                     record.source_readback.unwrap_or(record.source_set),
@@ -755,10 +832,17 @@ pub(super) fn execute(
             .push_str(&format!(" Recording incomplete: {error}"));
     }
     let metadata = serde_json::json!({"schema_version":RUN_METADATA_SCHEMA_VERSION,"application_version":env!("CARGO_PKG_VERSION"),"csv_schema":CSV_SCHEMA,"csv_fields":iv_core::CSV_FIELDS,
-        "csv_numeric_format":"shortest_roundtrip_scientific","run_id":run_id,"in_progress":false,"requested_config":requested,"config":config,
+        "csv_numeric_format":"shortest_roundtrip_scientific","csv":path.display().to_string(),"run_id":run_id,"in_progress":false,"requested_config":requested,"config":config,
         "balanced_drive":settings,"instruments":instruments,"outcome":runner.state,"simulation":runner.state.simulation,"experiment":config.experiment,
         "raw_csv":{"schema":"raw_csv_v1","filename":raw_path.file_name().map(|n|n.to_string_lossy())},"file_hashes":hashes.ok(),"file_hash_error":recording_error});
-    if let Err(error) = replace_json(&manifest, &metadata) {
+    let complete_metadata = DualRunMetadata {
+        summary: &metadata,
+        dual_source_points: SourcePoints {
+            path: &raw_path,
+            expected_points: runner.state.points,
+        },
+    };
+    if let Err(error) = replace_json(&manifest, &complete_metadata) {
         if let Err(off_error) = shutdown_gate(runner.pair.as_deref_mut(), runner.state) {
             runner
                 .state
@@ -773,4 +857,69 @@ pub(super) fn execute(
     }
     publish(latest, runner.state);
     Ok(())
+}
+
+#[cfg(test)]
+mod metadata_tests {
+    use super::*;
+
+    #[test]
+    fn incomplete_or_disordered_audit_cannot_finalize_metadata() {
+        for indexes in [vec![], vec![1], vec![2, 1], vec![1, 1], vec![1, 2, 3]] {
+            let directory = tempfile::tempdir().unwrap();
+            let raw = directory.path().join("run.raw.csv");
+            let manifest = directory.path().join("run.run.json");
+            let initial = serde_json::json!({"in_progress":true});
+            write_json_new(&manifest, &initial).unwrap();
+            let mut audit = RawWriter::create(&raw, "test").unwrap();
+            for index in indexes {
+                audit
+                    .append(
+                        &serde_json::json!({"event":"dual_source_point", "point_index":index,
+                    "source_values":{"point_index":index}}),
+                    )
+                    .unwrap();
+            }
+            audit.finish().unwrap();
+            let summary = serde_json::json!({"in_progress":false});
+            let metadata = DualRunMetadata {
+                summary: &summary,
+                dual_source_points: SourcePoints {
+                    path: &raw,
+                    expected_points: 2,
+                },
+            };
+            assert!(replace_json(&manifest, &metadata).is_err());
+            assert_eq!(
+                serde_json::from_slice::<serde_json::Value>(&std::fs::read(&manifest).unwrap())
+                    .unwrap(),
+                initial
+            );
+        }
+    }
+
+    #[test]
+    fn complete_audit_serializes_in_point_order() {
+        let directory = tempfile::tempdir().unwrap();
+        let raw = directory.path().join("run.raw.csv");
+        let mut audit = RawWriter::create(&raw, "test").unwrap();
+        for index in 1..=2 {
+            audit
+                .append(
+                    &serde_json::json!({"event":"dual_source_point", "point_index":index,
+                "source_values":{"point_index":index}}),
+                )
+                .unwrap();
+        }
+        audit.finish().unwrap();
+        let points = serde_json::to_value(SourcePoints {
+            path: &raw,
+            expected_points: 2,
+        })
+        .unwrap();
+        assert_eq!(
+            points,
+            serde_json::json!([{"point_index":1},{"point_index":2}])
+        );
+    }
 }

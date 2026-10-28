@@ -1480,16 +1480,20 @@ fn positive_reading(text: &str) -> Option<f64> {
         .filter(|v| v.is_finite() && *v > 0.0 && *v < 1e30)
 }
 
-fn write_json_new(path: &Path, value: &serde_json::Value) -> std::io::Result<()> {
+fn write_json_new(path: &Path, value: &impl serde::Serialize) -> std::io::Result<()> {
     let mut file = std::fs::OpenOptions::new()
         .write(true)
         .create_new(true)
         .open(path)?;
-    serde_json::to_writer_pretty(&mut file, value).map_err(std::io::Error::other)?;
+    {
+        let mut buffered = std::io::BufWriter::with_capacity(65536, &mut file);
+        serde_json::to_writer_pretty(&mut buffered, value).map_err(std::io::Error::other)?;
+        buffered.flush()?;
+    }
     file.sync_all()
 }
 
-fn replace_json(path: &Path, value: &serde_json::Value) -> std::io::Result<()> {
+fn replace_json(path: &Path, value: &impl serde::Serialize) -> std::io::Result<()> {
     let temporary = path.with_extension("json.tmp");
     write_json_new(&temporary, value)?;
     std::fs::rename(temporary, path)

@@ -39,12 +39,30 @@ failure, or external meter limit stops the run and requests OFF on both IV
 sources. An active API-controlled gate also turns off on failure or protection
 stop. OFF is reported as verified only when verification succeeds.
 
-The analysis CSV retains its 18 columns. Its voltage is the differential source
-setting/readback, with `differential_source_readback` or
-`differential_source_setpoint` provenance. These are programmed level readbacks,
-not independent measurements of the voltage across a four-terminal sample.
-Per-source targets, ranges, compliance settings, physical readbacks and split
-ratio are retained in the run metadata/raw audit.
+The analysis CSV retains exactly the existing 18 columns, their order, SI
+units (V/A), scientific numeric format and the existing `source_readback` /
+`source_setpoint` origin labels. In Dual mode its single `voltage_V` column is
+V1 − V2; no per-source columns or ratio columns are added. The raw audit CSV
+also retains its existing 18-column `raw_csv_v1` contract. Additional physical
+exchanges and structured source events use its existing `details_json` field.
+
+The companion `.run.json` keeps Dual details separately:
+
+- `balanced_drive.ratio`: the integer weights `[a, b]`.
+- `dual_source_points`: one entry per saved analysis-CSV point, joined by
+  `point_index`, with timestamp, per-source `setpoint_V` and `level_readback_V`,
+  differential level readback and programmed common-mode level readback.
+- Each source's `output_voltage_V` is `null` unless independently measured;
+  the current drivers do not invent terminal-voltage measurements from source
+  setting queries. Unavailable readbacks (including simulation or a limit stop)
+  are also `null`.
+- Source identities, ranges and hardware compliance remain in the metadata.
+
+Point details are streamed from the durable raw audit into the run JSON on
+finalization. They are not accumulated as another in-memory sweep-sized array.
+Point counts and indexes must match the saved CSV before finalization; missing or
+disordered audit evidence leaves the manifest incomplete and fails the run.
+The existing Save action copies the JSON together with the measurement CSV.
 
 ## Python controls the running GUI
 

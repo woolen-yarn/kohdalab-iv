@@ -192,3 +192,13 @@ assumed present. Do not infer source terminal voltage from a four-terminal Meter
 Source保護とMeter停止は別設定です。GS210がH/L制限を返した点は通常CSV・fitに含めず、
 取得済みの生応答と条件レジスタをraw CSV、停止の詳細をrun JSONに残します。
 /MONなしのSource設定値readbackを、制限時の実電流と解釈しないでください。
+
+### Dual-source runs
+
+Dual runs keep the same 18 analysis columns, column order, SI units, scientific
+notation and origin labels. `voltage_V` represents V1 − V2. Integer weights are
+in `.run.json` under `balanced_drive.ratio`; per-source setpoints and queried
+programmed levels are in `dual_source_points`, joined to CSV rows by
+`point_index`. Independent terminal voltages are unknown (`output_voltage_V:
+null`), not inferred from setting readbacks. The raw CSV header also stays
+unchanged; extra source evidence fits in existing audit rows / `details_json`.

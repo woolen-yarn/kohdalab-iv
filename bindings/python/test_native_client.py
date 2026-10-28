@@ -95,6 +95,15 @@ class ClientTests(unittest.TestCase):
                 self.assertEqual(state['phase'], 'Completed')
                 self.assertEqual(state['output'], 'Off')
                 self.assertEqual(state['gate_output'], 'On')
+                metadata = json.loads(path.with_suffix('.run.json').read_text())
+                self.assertEqual(metadata['balanced_drive']['ratio'], [1, 1])
+                self.assertEqual(len(metadata['dual_source_points']), state['points'])
+                first = metadata['dual_source_points'][0]
+                self.assertEqual(first['source1']['setpoint_V'], -0.0005)
+                self.assertEqual(first['source2']['setpoint_V'], 0.0005)
+                for role in ('source1', 'source2'):
+                    self.assertIsNone(first[role]['level_readback_V'])
+                    self.assertIsNone(first[role]['output_voltage_V'])
                 off = iv.gate_output_off()
                 self.assertEqual(off['gate_output'], 'Off')
 

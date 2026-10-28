@@ -1378,17 +1378,9 @@ impl Record {
     pub fn electrical_values(&self) -> (f64, f64, &'static str, &'static str) {
         let source = self.source_readback.unwrap_or(self.source_set);
         let origin = if self.source_readback.is_some() {
-            if self.quality_flags.contains("balanced_differential") {
-                "differential_source_readback"
-            } else {
-                "source_readback"
-            }
+            "source_readback"
         } else {
-            if self.quality_flags.contains("balanced_differential") {
-                "differential_source_setpoint"
-            } else {
-                "source_setpoint"
-            }
+            "source_setpoint"
         };
         if self.mode == Mode::Iv {
             (source, self.meter_value, origin, "meter")

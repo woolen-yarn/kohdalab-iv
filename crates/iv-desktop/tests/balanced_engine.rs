@@ -225,10 +225,69 @@ fn balanced_sweep_keeps_gate_bias_and_records_both_source_values() {
             .is_empty()
     );
     let mut csv = csv::Reader::from_path(&path).unwrap();
+    assert_eq!(
+        csv.headers().unwrap().iter().collect::<Vec<_>>(),
+        [
+            "run_id",
+            "point_index",
+            "timestamp",
+            "elapsed_s",
+            "sweep_index",
+            "direction",
+            "target_value",
+            "target_unit",
+            "voltage_V",
+            "current_A",
+            "voltage_origin",
+            "current_origin",
+            "readings_requested",
+            "readings_completed",
+            "meter_stddev",
+            "meter_unit",
+            "software_limit_hit",
+            "quality_flags",
+        ]
+    );
+    assert_eq!(metadata["csv"], path.display().to_string());
+    assert_eq!(metadata["balanced_drive"]["ratio"], json!([1, 1]));
+    let source_points = metadata["dual_source_points"].as_array().unwrap();
+    assert_eq!(source_points.len(), 3);
+    assert_eq!(source_points[0]["point_index"], 1);
+    assert_eq!(source_points[0]["source1"]["setpoint_V"], -0.0005);
+    assert_eq!(source_points[0]["source2"]["setpoint_V"], 0.0005);
+    assert_eq!(source_points[0]["source1"]["level_readback_V"], -0.0005);
+    assert_eq!(source_points[0]["source2"]["level_readback_V"], 0.0005);
+    assert_eq!(source_points[0]["differential_level_readback_V"], -0.001);
+    assert!(source_points[0]["source1"]["output_voltage_V"].is_null());
+    assert!(source_points[0]["source2"]["output_voltage_V"].is_null());
+    let mut raw_reader = csv::Reader::from_path(path.with_extension("raw.csv")).unwrap();
+    assert_eq!(
+        raw_reader.headers().unwrap().iter().collect::<Vec<_>>(),
+        [
+            "run_id",
+            "event_index",
+            "point_index",
+            "reading_index",
+            "event_type",
+            "device_role",
+            "quantity",
+            "command",
+            "raw_response",
+            "value",
+            "unit",
+            "host_started_at_utc",
+            "host_completed_at_utc",
+            "started_elapsed_s",
+            "completed_elapsed_s",
+            "result",
+            "error",
+            "details_json",
+        ]
+    );
     let rows: Vec<_> = csv.records().map(Result::unwrap).collect();
     assert_eq!(rows[0].get(8), Some("-1e-3"));
     assert_eq!(rows[2].get(8), Some("1e-3"));
-    assert_eq!(rows[2].get(10), Some("differential_source_readback"));
+    assert_eq!(rows[2].get(10), Some("source_readback"));
     let raw = std::fs::read_to_string(path.with_extension("raw.csv")).unwrap();
     assert!(raw.contains("balanced_source_readback"));
     assert!(raw.contains("source2"));
