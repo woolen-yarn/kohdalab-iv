@@ -2117,14 +2117,10 @@ impl SweepMonitor<'_> {
             return Ok(!self.control.cancelled());
         }
         let end = Instant::now() + Duration::from_secs_f64(seconds);
-        // Avoid starting a conversion at the end of a short ramp/settling wait.
-        // Budget conservatively for 50 Hz mains, autozero and transport overhead.
-        let budget = if pair.is_some() {
-            Duration::from_secs_f64((self.config.nplc * 2.0 / 50.0 + 0.03).max(0.05))
-        } else {
-            Duration::from_millis(1)
-        };
-        while Instant::now() < end {
+        // A due live protection conversion must not be skipped because
+        // source-status I/O or scheduling consumed a positive settle interval.
+        // Zero-duration waits keep their fast path above.
+        loop {
             if self.control.cancelled() {
                 return Ok(false);
             }
@@ -2146,9 +2142,7 @@ impl SweepMonitor<'_> {
                     return Ok(false);
                 }
             }
-            if self.last.elapsed() >= Duration::from_millis(50)
-                && end.saturating_duration_since(Instant::now()) >= budget
-            {
+            if self.last.elapsed() >= Duration::from_millis(50) {
                 self.last = Instant::now();
                 let Some(writer) = audit.as_deref_mut() else {
                     return Err("Active live acquisition requires a recording audit".into());
@@ -2232,13 +2226,15 @@ impl SweepMonitor<'_> {
                     return Ok(false);
                 }
                 self.publish(reading, state);
-            } else {
-                std::thread::sleep(
-                    Duration::from_millis(10).min(end.saturating_duration_since(Instant::now())),
-                );
             }
+            // Do not loop forever when each conversion exceeds the interval.
+            if Instant::now() >= end {
+                return Ok(!self.control.cancelled());
+            }
+            std::thread::sleep(
+                Duration::from_millis(10).min(end.saturating_duration_since(Instant::now())),
+            );
         }
-        Ok(!self.control.cancelled())
     }
 }
 

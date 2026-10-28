@@ -164,6 +164,14 @@ impl Bridge {
             vres = hex("SENS:VOLT:DC:RES?\n")
         );
         let script = with_source_protection(script, "operation", &dir);
+        let script = if fault == "slow_status" {
+            script.replace(
+                "QUERY:3a535441543a434f4e443f0a)",
+                "QUERY:3a535441543a434f4e443f0a)\n   sleep 0.12",
+            )
+        } else {
+            script
+        };
         for name in ["kohdalab-gpib-helper", "kohdalab-usbtmc-helper"] {
             let path = dir.join(name);
             std::fs::write(&path, &script).unwrap();
@@ -301,10 +309,19 @@ fn cleanup(path: &Path) {
 fn assert_immediate_off(commands: &[String]) {
     let read = format!("QUERY 7 {}", hex("READ?\n"));
     let off = format!("WRITE 3 {}", hex(":OUTP OFF\n"));
-    let at = commands
+    let on = format!("WRITE 3 {}", hex(":OUTP ON\n"));
+    let enabled = commands
         .iter()
-        .rposition(|line| line == &read)
-        .expect("triggering READ?");
+        .position(|line| line == &on)
+        .expect("source ON");
+    // The fixtures return an over-limit value on the first energized read.
+    // Later idle reads after cleanup are not new triggering conversions.
+    let at = enabled
+        + 1
+        + commands[enabled + 1..]
+            .iter()
+            .position(|line| line == &read)
+            .expect("first energized READ?");
     assert_eq!(
         commands.get(at + 1),
         Some(&off),
@@ -323,10 +340,19 @@ fn assert_immediate_off(commands: &[String]) {
 fn assert_legacy_immediate_off(commands: &[String]) {
     let read = format!("QUERY 7 {}", hex("READ?\n"));
     let off = format!("WRITE 3 {}", hex("O0;E\n"));
-    let at = commands
+    let on = format!("WRITE 3 {}", hex("O1;E\n"));
+    let enabled = commands
         .iter()
-        .rposition(|line| line == &read)
-        .expect("triggering READ?");
+        .position(|line| line == &on)
+        .expect("source ON");
+    // The fixtures return an over-limit value on the first energized read.
+    // Later idle reads after cleanup are not new triggering conversions.
+    let at = enabled
+        + 1
+        + commands[enabled + 1..]
+            .iter()
+            .position(|line| line == &read)
+            .expect("first energized READ?");
     assert_eq!(
         commands.get(at + 1),
         Some(&off),
@@ -343,18 +369,56 @@ fn assert_legacy_immediate_off(commands: &[String]) {
 }
 
 #[test]
+fn immediate_off_assertions_ignore_idle_reads_but_reject_delayed_shutdown() {
+    for (on, off, assert_off) in [
+        (
+            ":OUTP ON\n",
+            ":OUTP OFF\n",
+            assert_immediate_off as fn(&[String]),
+        ),
+        (
+            "O1;E\n",
+            "O0;E\n",
+            assert_legacy_immediate_off as fn(&[String]),
+        ),
+    ] {
+        let on = format!("WRITE 3 {}", hex(on));
+        let off = format!("WRITE 3 {}", hex(off));
+        let read = format!("QUERY 7 {}", hex("READ?\n"));
+        assert_off(&[
+            read.clone(),
+            on.clone(),
+            read.clone(),
+            off.clone(),
+            read.clone(),
+        ]);
+        let delayed = [
+            on,
+            read.clone(),
+            "QUERY 3 unrelated".into(),
+            off.clone(),
+            read,
+            off,
+        ];
+        assert!(std::panic::catch_unwind(|| assert_off(&delayed)).is_err());
+    }
+}
+
+#[test]
 fn live_overlimit_stops_before_csv_and_before_followup_io() {
-    let bridge = Bridge::new(METERS[1].1, "", "0.1");
-    let mut engine = Engine::start(&bridge.dir);
-    engine.connect("YOKOGAWA_GS210", METERS[1].0);
-    let output = path("live");
-    engine.send(json!({"command":"run","config":config("YOKOGAWA_GS210", METERS[1].0, iv_core::Mode::Iv, 0.20, 1),"path":output}));
-    let state = engine.wait(|s| s["phase"] == "Compliance stop");
-    assert_eq!(state["output"], "Off");
-    assert_eq!(state["points"], 0);
-    assert_eq!(std::fs::read_to_string(&output).unwrap().lines().count(), 1);
-    assert_immediate_off(&bridge.commands());
-    cleanup(&output);
+    for fault in ["", "slow_status"] {
+        let bridge = Bridge::new(METERS[1].1, fault, "0.1");
+        let mut engine = Engine::start(&bridge.dir);
+        engine.connect("YOKOGAWA_GS210", METERS[1].0);
+        let output = path("live");
+        engine.send(json!({"command":"run","config":config("YOKOGAWA_GS210", METERS[1].0, iv_core::Mode::Iv, 0.20, 1),"path":output}));
+        let state = engine.wait(|s| s["phase"] == "Compliance stop");
+        assert_eq!(state["output"], "Off");
+        assert_eq!(state["points"], 0);
+        assert_eq!(std::fs::read_to_string(&output).unwrap().lines().count(), 1);
+        assert_immediate_off(&bridge.commands());
+        cleanup(&output);
+    }
 }
 
 #[test]
