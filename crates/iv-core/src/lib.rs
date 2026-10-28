@@ -130,6 +130,11 @@ pub struct RunConfig {
     /// None preserves old configs: use the meter software stop value.
     #[serde(default)]
     pub source_compliance: Option<f64>,
+    /// Optional second voltage source for a balanced differential IV sweep.
+    /// The differential target remains `start..stop`; the two source targets
+    /// are `ratio * D` and `-(1 - ratio) * D`.  Older configurations omit this field.
+    #[serde(default)]
+    pub balanced_source: Option<BalancedSourceConfig>,
     pub settle_s: f64,
     pub start_settle_s: f64,
     pub nplc: f64,
@@ -163,6 +168,7 @@ impl Default for RunConfig {
             source_limit: 0.001,
             compliance: 0.001,
             source_compliance: None,
+            balanced_source: None,
             settle_s: 0.2,
             start_settle_s: 0.5,
             nplc: 1.0,
@@ -170,6 +176,41 @@ impl Default for RunConfig {
             ramp_step: 0.0001,
             ramp_wait_s: 0.02,
         }
+    }
+}
+
+/// Configuration for the second source in a balanced differential IV sweep.
+/// The gate remains external to this run and is deliberately not represented
+/// as a source target here.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct BalancedSourceConfig {
+    #[serde(default = "default_source_model")]
+    pub source_model: String,
+    /// Integer voltage weights [a, b]. Both sources
+    /// have opposite polarities: V1 = a/(a+b) * D; V2 = -b/(a+b) * D.
+    #[serde(default = "default_balance_ratio")]
+    pub ratio: [u32; 2],
+    /// Hardware current compliance for the second voltage source, in A.
+    pub source_compliance: f64,
+}
+
+fn default_balance_ratio() -> [u32; 2] {
+    [1, 1]
+}
+
+impl Default for BalancedSourceConfig {
+    fn default() -> Self {
+        Self {
+            source_model: default_source_model(),
+            source_compliance: 0.001,
+            ratio: default_balance_ratio(),
+        }
+    }
+}
+
+impl BalancedSourceConfig {
+    pub fn source1_fraction(&self) -> f64 {
+        self.ratio[0] as f64 / (self.ratio[0] as f64 + self.ratio[1] as f64)
     }
 }
 
@@ -190,6 +231,61 @@ pub struct Plan {
     pub source_range: f64,
     /// GS210-compatible hardware compliance. The requested value remains a software limit.
     pub hardware_compliance: f64,
+}
+
+/// Fully validated source-specific plans for a balanced differential IV run.
+/// `points` retain the requested differential targets; `config1` and
+/// `config2` contain the corresponding individual source targets.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct BalancedPlan {
+    pub config1: RunConfig,
+    pub config2: RunConfig,
+    pub plan1: Plan,
+    pub plan2: Plan,
+    pub points: Vec<SweepPoint>,
+    pub ratio: [u32; 2],
+    pub differential_resolution: f64,
+}
+
+impl BalancedPlan {
+    /// Exact decimal ramp, excluding the final target (already in plan1/plan2).
+    pub fn ramp_targets(
+        &self,
+        from: f64,
+        to: f64,
+        step: f64,
+    ) -> Result<impl Iterator<Item = Result<[f64; 2], String>>, String> {
+        let mut level = decimal(from, "ramp start")?;
+        let target = decimal(to, "ramp target")?;
+        let step = decimal(step, "ramp step")?;
+        if step <= Decimal::ZERO {
+            return Err("Ramp step must be positive".into());
+        }
+        if (target - level).abs() / step > Decimal::from(MAX_POINTS as u32) {
+            return Err("Dual ramp exceeds one million steps".into());
+        }
+        let part1 = Decimal::from(self.ratio[0]);
+        let part2 = Decimal::from(self.ratio[1]);
+        let total = part1 + part2;
+        Ok(std::iter::from_fn(move || {
+            if (target - level).abs() <= step {
+                return None;
+            }
+            level += if target > level { step } else { -step };
+            Some((|| {
+                Ok([
+                    decimal_to_f64(
+                        scaled_decimal(level, part1, total, "first ramp target")?,
+                        "first ramp target",
+                    )?,
+                    decimal_to_f64(
+                        scaled_decimal(-level, part2, total, "second ramp target")?,
+                        "second ramp target",
+                    )?,
+                ])
+            })())
+        }))
+    }
 }
 
 #[derive(Debug, Deserialize)]
@@ -484,6 +580,118 @@ fn quantized_hardware_compliance(
     Ok((ratio * resolution).min(maximum))
 }
 
+fn gcd_i128(mut left: i128, mut right: i128) -> i128 {
+    left = left.abs();
+    right = right.abs();
+    while right != 0 {
+        let remainder = left % right;
+        left = right;
+        right = remainder;
+    }
+    left
+}
+
+fn ceil_to_increment(value: Decimal, increment: Decimal, label: &str) -> Result<Decimal, String> {
+    if value <= Decimal::ZERO || increment <= Decimal::ZERO {
+        return Err(format!("{label} must be positive."));
+    }
+    value
+        .checked_div(increment)
+        .and_then(|ratio| ratio.ceil().checked_mul(increment))
+        .ok_or_else(|| format!("{label} is too large for the combined source resolution."))
+}
+
+fn decimal_to_f64(value: Decimal, label: &str) -> Result<f64, String> {
+    value
+        .to_string()
+        .parse::<f64>()
+        .map_err(|_| format!("{label} is outside f64 range."))
+}
+
+fn scaled_decimal(
+    value: Decimal,
+    part: Decimal,
+    total: Decimal,
+    label: &str,
+) -> Result<Decimal, String> {
+    let product = value
+        .checked_mul(part)
+        .ok_or_else(|| format!("{label} is too large"))?;
+    let divided = product
+        .checked_div(total)
+        .ok_or_else(|| format!("{label} is too large"))?;
+    if divided.checked_mul(total) != Some(product) {
+        return Err(format!(
+            "{label} cannot be represented exactly with this voltage ratio. Choose a target on the combined source grid."
+        ));
+    }
+    Ok(divided)
+}
+fn scaled_value(value: f64, part: Decimal, total: Decimal, label: &str) -> Result<f64, String> {
+    decimal_to_f64(
+        scaled_decimal(decimal(value, label)?, part, total, label)?,
+        label,
+    )
+}
+
+/// Exact common lattice for two decimal DACs and a rational voltage split.
+/// Reduce the fractions before taking their rational LCM; approximating
+/// resolution / ratio would introduce rounding when e.g. ratio = 0.3.
+fn split_increment(first: Decimal, second: Decimal, ratio: [u32; 2]) -> Result<Decimal, String> {
+    let scale = first.scale().max(second.scale());
+    let denominator = 10_i128
+        .checked_pow(scale)
+        .ok_or("source resolution scale is too large")?;
+    let ratio_denominator = i128::from(ratio[0]) + i128::from(ratio[1]);
+    let numerator = i128::from(ratio[0]);
+    let fraction = |resolution: Decimal, part: i128| -> Result<(i128, i128), String> {
+        let n = resolution
+            .mantissa()
+            .checked_mul(
+                10_i128
+                    .checked_pow(scale - resolution.scale())
+                    .ok_or("source scale overflow")?,
+            )
+            .and_then(|v| v.checked_mul(ratio_denominator))
+            .ok_or("combined source resolution overflow")?;
+        let d = denominator
+            .checked_mul(part)
+            .ok_or("voltage ratio precision is too large")?;
+        let divisor = gcd_i128(n, d);
+        Ok((n / divisor, d / divisor))
+    };
+    let (a, b) = fraction(first, numerator)?;
+    let (c, d) = fraction(second, ratio_denominator - numerator)?;
+    let n = a
+        .checked_div(gcd_i128(a, c))
+        .and_then(|v| v.checked_mul(c))
+        .ok_or("combined source resolution overflow")?;
+    let d = gcd_i128(b, d);
+    let n = Decimal::try_from_i128_with_scale(n, 0)
+        .map_err(|_| "combined source resolution overflow")?;
+    let d = Decimal::try_from_i128_with_scale(d, 0)
+        .map_err(|_| "combined source resolution overflow")?;
+    let increment = n
+        .checked_div(d)
+        .ok_or("combined source resolution is not representable")?;
+    if increment.checked_mul(d) != Some(n) {
+        return Err(
+            "Voltage ratio cannot be represented exactly by both source resolutions".into(),
+        );
+    }
+    Ok(increment.normalize())
+}
+
+fn require_exact_protection(spec: &SourceSpec, model: &str, requested: f64) -> Result<(), String> {
+    let actual = quantized_hardware_compliance(spec, model, Mode::Iv, requested)?;
+    if actual > requested + f64::EPSILON {
+        return Err(format!(
+            "Source compliance {requested:e} A cannot be represented exactly by {model}; use {actual:e} A or a lower supported value."
+        ));
+    }
+    Ok(())
+}
+
 /// Backward-compatible per-point accumulation count. Never multiply the old
 /// average and repeat fields: both describe the same operation now. The legacy
 /// alias is used only when repeat is 1; repeat = 0 remains an invalid count.
@@ -500,7 +708,7 @@ pub fn readings_per_point(config: &RunConfig) -> u32 {
 /// magnitude rounds up to the next hardware increment; ramping uses one
 /// percent of the nominal source range or the sweep step, whichever is larger,
 /// capped to the range. No instrument I/O occurs here.
-pub fn prepare_config(config: &RunConfig) -> Result<RunConfig, String> {
+fn prepare_config_single(config: &RunConfig) -> Result<RunConfig, String> {
     let mut prepared = config.clone();
     let readings = readings_per_point(config);
     if readings == 0 || readings > 10_000 {
@@ -573,8 +781,8 @@ pub fn prepare_config(config: &RunConfig) -> Result<RunConfig, String> {
 }
 
 /// Validate a profiled source + meter run and create its deterministic sweep sequence.
-pub fn plan(config: &RunConfig) -> Result<Plan, String> {
-    let prepared = prepare_config(config)?;
+fn plan_single(config: &RunConfig) -> Result<Plan, String> {
+    let prepared = prepare_config_single(config)?;
     let config = &prepared;
     for (value, name) in [
         (config.start, "start"),
@@ -810,6 +1018,317 @@ pub fn plan(config: &RunConfig) -> Result<Plan, String> {
     })
 }
 
+fn balanced_base_points(config: &RunConfig, increment: Decimal) -> Result<Vec<Decimal>, String> {
+    let unit = "V";
+    let points = match config.pattern {
+        Pattern::CustomList => {
+            if config.custom_points.is_empty() {
+                return Err("custom_list requires custom_points.".into());
+            }
+            if config.custom_points.len() > MAX_POINTS {
+                return Err(format!("custom_list exceeds {MAX_POINTS} points."));
+            }
+            config
+                .custom_points
+                .iter()
+                .enumerate()
+                .map(|(index, value)| {
+                    aligned_value(
+                        *value,
+                        decimal_to_f64(increment, "combined source resolution")?,
+                        &format!("custom_points[{index}]"),
+                        unit,
+                    )
+                })
+                .collect::<Result<Vec<_>, _>>()?
+        }
+        _ => {
+            let resolution = decimal_to_f64(increment, "combined source resolution")?;
+            let start = aligned_value(config.start, resolution, "Start", unit)?;
+            let stop = aligned_value(config.stop, resolution, "End", unit)?;
+            let step = aligned_value(config.step, resolution, "Step", unit)?;
+            if step.is_zero() {
+                return Err("step must be non-zero.".into());
+            }
+            match config.pattern {
+                Pattern::Linear => forward_points(start, stop, step)?,
+                Pattern::RoundTrip => {
+                    let mut points = forward_points(start, stop, step)?;
+                    append_joined(&mut points, forward_points(stop, start, step)?);
+                    points
+                }
+                Pattern::ZeroCentered => {
+                    if start.min(stop) > Decimal::ZERO || start.max(stop) < Decimal::ZERO {
+                        return Err("zero_centered: the interval between Start and End must include zero (an endpoint may be zero). Use linear or round_trip for an interval entirely above or below zero.".into());
+                    }
+                    let mut points = Vec::new();
+                    append_joined(&mut points, forward_points(Decimal::ZERO, stop, step)?);
+                    append_joined(&mut points, forward_points(stop, start, step)?);
+                    append_joined(&mut points, forward_points(start, Decimal::ZERO, step)?);
+                    points
+                }
+                Pattern::CustomList => unreachable!(),
+            }
+        }
+    };
+    if points.is_empty() || points.len() > MAX_POINTS {
+        return Err(format!("sweep must contain 1..={MAX_POINTS} points."));
+    }
+    Ok(points)
+}
+
+fn sweep_points(base_points: &[Decimal]) -> Result<Vec<SweepPoint>, String> {
+    let total = base_points.len();
+    let targets = base_points
+        .iter()
+        .map(|target| decimal_to_f64(*target, "target"))
+        .collect::<Result<Vec<_>, _>>()?;
+    let mut previous = base_points[0];
+    let mut direction = "forward";
+    Ok(base_points
+        .iter()
+        .copied()
+        .enumerate()
+        .map(|(index, target)| {
+            let delta = if index == 0 && total > 1 {
+                base_points[1] - target
+            } else {
+                target - previous
+            };
+            if delta > Decimal::ZERO {
+                direction = "forward";
+            }
+            if delta < Decimal::ZERO {
+                direction = "backward";
+            }
+            previous = target;
+            SweepPoint {
+                target: targets[index],
+                direction: direction.into(),
+                repeat_index: 1,
+                sweep_index: 1,
+                point_index: index + 1,
+                total_points: total,
+            }
+        })
+        .collect())
+}
+
+fn prepare_balanced_configs(
+    config: &RunConfig,
+) -> Result<(RunConfig, RunConfig, RunConfig, Decimal), String> {
+    let second = config
+        .balanced_source
+        .as_ref()
+        .ok_or("balanced source configuration is missing.")?;
+    if config.mode != Mode::Iv {
+        return Err("Balanced source operation supports V-I (voltage source) mode only.".into());
+    }
+    if second.ratio.iter().any(|part| *part == 0 || *part > 1000) {
+        return Err(
+            "Voltage ratio requires two integers from 1 to 1000, such as 1:1 or 2:1.".into(),
+        );
+    }
+    let part1 = Decimal::from(second.ratio[0]);
+    let part2 = Decimal::from(second.ratio[1]);
+    let total = part1 + part2;
+    let fraction1 = second.ratio[0] as f64 / (second.ratio[0] as f64 + second.ratio[1] as f64);
+    let fraction2 = second.ratio[1] as f64 / (second.ratio[0] as f64 + second.ratio[1] as f64);
+    finite_positive(second.source_compliance, "Second source compliance", None)?;
+    let primary_protection = config.source_compliance.unwrap_or(config.compliance);
+    finite_positive(primary_protection, "Source compliance", None)?;
+
+    // Select both ranges from the individual weighted differential targets before
+    // accepting any endpoint. This is what makes a differential target exact
+    // for *both* instruments rather than merely for source 1.
+    let maximum = if config.pattern == Pattern::CustomList {
+        for value in &config.custom_points {
+            decimal(*value, "custom target")?;
+        }
+        config
+            .custom_points
+            .iter()
+            .map(|value| value.abs())
+            .fold(0.0_f64, f64::max)
+    } else {
+        decimal(config.start, "start")?;
+        decimal(config.stop, "stop")?;
+        config.start.abs().max(config.stop.abs())
+    };
+    let first_spec = source_spec(&config.source_model)?;
+    let second_spec = source_spec(&second.source_model)?;
+    require_exact_protection(&first_spec, &config.source_model, primary_protection)?;
+    require_exact_protection(&second_spec, &second.source_model, second.source_compliance)?;
+    let (_, first_range_max, first_resolution) = select_range(
+        &first_spec,
+        &config.source_model,
+        Mode::Iv,
+        maximum * fraction1,
+        Some(primary_protection),
+    )?;
+    let (_, second_range_max, second_resolution) = select_range(
+        &second_spec,
+        &second.source_model,
+        Mode::Iv,
+        maximum * fraction2,
+        Some(second.source_compliance),
+    )?;
+    let common_increment = split_increment(
+        decimal(first_resolution, "first source resolution")?,
+        decimal(second_resolution, "second source resolution")?,
+        second.ratio,
+    )?;
+    let requested_step = decimal(config.step, "step")?;
+    if requested_step.is_zero() {
+        return Err("step must be non-zero.".into());
+    }
+    let step_magnitude = ceil_to_increment(requested_step.abs(), common_increment, "Step")?;
+    let step = if requested_step.is_sign_negative() {
+        -step_magnitude
+    } else {
+        step_magnitude
+    };
+
+    let mut first = config.clone();
+    let mut second_config = config.clone();
+    first.balanced_source = None;
+    second_config.balanced_source = None;
+    first.source_compliance = Some(primary_protection);
+    second_config.source_model = second.source_model.clone();
+    second_config.source_compliance = Some(second.source_compliance);
+    for (name, first_value, second_value) in [
+        ("start", config.start, -config.start),
+        ("stop", config.stop, -config.stop),
+    ] {
+        let first_half = scaled_value(first_value, part1, total, name)?;
+        let second_half = scaled_value(second_value, part2, total, name)?;
+        if name == "start" {
+            first.start = first_half;
+            second_config.start = second_half;
+        } else {
+            first.stop = first_half;
+            second_config.stop = second_half;
+        }
+    }
+    first.step = decimal_to_f64(
+        scaled_decimal(step, part1, total, "individual step")?,
+        "individual step",
+    )?;
+    second_config.step = decimal_to_f64(
+        scaled_decimal(step, part2, total, "individual step")?,
+        "individual step",
+    )?;
+    first.source_limit = config.source_limit * fraction1;
+    second_config.source_limit = config.source_limit * fraction2;
+    first.custom_points = config
+        .custom_points
+        .iter()
+        .map(|value| scaled_value(*value, part1, total, "custom target"))
+        .collect::<Result<Vec<_>, _>>()?;
+    second_config.custom_points = config
+        .custom_points
+        .iter()
+        .map(|value| scaled_value(-*value, part2, total, "custom target"))
+        .collect::<Result<Vec<_>, _>>()?;
+
+    let prepared_first = prepare_config_single(&first)?;
+    let prepared_second = prepare_config_single(&second_config)?;
+    let candidate_ramp = decimal(prepared_first.ramp_step, "first ramp step")?
+        .checked_mul(total)
+        .and_then(|v| v.checked_div(part1))
+        .ok_or("First source ramp overflow")?
+        .min(
+            decimal(prepared_second.ramp_step, "second ramp step")?
+                .checked_mul(total)
+                .and_then(|v| v.checked_div(part2))
+                .ok_or("Second source ramp overflow")?,
+        );
+    let ramp = ceil_to_increment(candidate_ramp, common_increment, "Ramp step")?;
+    let first_ramp = decimal_to_f64(
+        scaled_decimal(ramp, part1, total, "first ramp step")?,
+        "first ramp step",
+    )?;
+    let second_ramp = decimal_to_f64(
+        scaled_decimal(ramp, part2, total, "second ramp step")?,
+        "second ramp step",
+    )?;
+    if first_ramp > first_range_max + f64::EPSILON || second_ramp > second_range_max + f64::EPSILON
+    {
+        return Err("The combined source resolution cannot represent a safe ramp step for both selected ranges.".into());
+    }
+
+    let mut differential = config.clone();
+    differential.step = decimal_to_f64(step, "combined step")?;
+    differential.ramp_step = decimal_to_f64(ramp, "combined ramp step")?;
+    differential.repeat = prepared_first.repeat;
+    differential.average_count = prepared_first.average_count;
+
+    let mut first = prepared_first;
+    let mut second_config = prepared_second;
+    first.ramp_step = first_ramp;
+    second_config.ramp_step = second_ramp;
+    Ok((differential, first, second_config, common_increment))
+}
+
+/// Resolve a configuration for display without discarding its differential
+/// semantics. Existing single-source configurations are unchanged.
+pub fn prepare_config(config: &RunConfig) -> Result<RunConfig, String> {
+    if config.balanced_source.is_some() {
+        prepare_balanced_configs(config).map(|(differential, _, _, _)| differential)
+    } else {
+        prepare_config_single(config)
+    }
+}
+
+/// Build the two exact source plans for a balanced differential V-I sweep.
+pub fn balanced_plan(config: &RunConfig) -> Result<BalancedPlan, String> {
+    if config.balanced_source.is_none() {
+        return Err("balanced source configuration is not enabled.".into());
+    }
+    let (differential, config1, config2, common_increment) = prepare_balanced_configs(config)?;
+    let plan1 = plan_single(&config1)?;
+    let plan2 = plan_single(&config2)?;
+    let base_points = balanced_base_points(&differential, common_increment)?;
+    let maximum = base_points
+        .iter()
+        .map(|value| value.abs())
+        .max()
+        .unwrap_or(Decimal::ZERO);
+    let source_limit = decimal(differential.source_limit, "source_limit")?;
+    if maximum > source_limit {
+        return Err(format!(
+            "source target {} exceeds effective limit {}.",
+            maximum, differential.source_limit
+        ));
+    }
+    let points = sweep_points(&base_points)?;
+    if plan1.points.len() != points.len() || plan2.points.len() != points.len() {
+        return Err("Balanced source plans do not have matching point counts.".into());
+    }
+    Ok(BalancedPlan {
+        ratio: config.balanced_source.as_ref().unwrap().ratio,
+        differential_resolution: decimal_to_f64(common_increment, "differential resolution")?,
+        config1,
+        config2,
+        plan1,
+        plan2,
+        points,
+    })
+}
+
+/// Validate a profiled source + meter run and create its deterministic sweep sequence.
+pub fn plan(config: &RunConfig) -> Result<Plan, String> {
+    if config.balanced_source.is_some() {
+        let balanced = balanced_plan(config)?;
+        return Ok(Plan {
+            points: balanced.points,
+            source_range: balanced.plan1.source_range,
+            hardware_compliance: balanced.plan1.hardware_compliance,
+        });
+    }
+    plan_single(config)
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Record {
     /// UUID shared by the analysis CSV, raw CSV and run manifest.
@@ -1017,6 +1536,191 @@ mod tests {
         let decoded: RunConfig =
             serde_json::from_value(serde_json::to_value(&config).unwrap()).unwrap();
         assert_eq!(decoded.experiment, config.experiment);
+    }
+
+    #[test]
+    fn balanced_voltage_plans_keep_the_requested_differential_targets_for_all_sources() {
+        for first_model in ["YOKOGAWA_GS210", "YOKOGAWA_7651"] {
+            for second_model in ["YOKOGAWA_GS210", "YOKOGAWA_7651"] {
+                let first_compliance = if first_model == "YOKOGAWA_7651" {
+                    5e-3
+                } else {
+                    1e-3
+                };
+                let config = RunConfig {
+                    source_model: first_model.into(),
+                    pattern: Pattern::Linear,
+                    start: -200e-6,
+                    stop: 200e-6,
+                    // This is deliberately not on the 20 uV combined grid.
+                    step: 30e-6,
+                    ramp_step: 30e-6,
+                    source_limit: 500e-6,
+                    compliance: first_compliance,
+                    source_compliance: Some(first_compliance),
+                    balanced_source: Some(BalancedSourceConfig {
+                        source_model: second_model.into(),
+                        source_compliance: 5e-3,
+                        ..Default::default()
+                    }),
+                    ..RunConfig::default()
+                };
+                let prepared = prepare_config(&config).unwrap();
+                assert!(prepared.balanced_source.is_some());
+                let expected_step =
+                    if first_model == "YOKOGAWA_7651" && second_model == "YOKOGAWA_7651" {
+                        30e-6
+                    } else {
+                        40e-6
+                    };
+                assert_eq!(prepared.step, expected_step);
+                let balanced = balanced_plan(&config).unwrap();
+                let differential: Vec<_> =
+                    balanced.points.iter().map(|point| point.target).collect();
+                assert_eq!(differential.first(), Some(&-200e-6));
+                assert_eq!(differential.last(), Some(&200e-6));
+                assert!(
+                    differential
+                        .windows(2)
+                        .all(|pair| pair[1] - pair[0] <= expected_step + 1e-15)
+                );
+                for ((target, first), second) in differential
+                    .iter()
+                    .zip(balanced.plan1.points.iter())
+                    .zip(balanced.plan2.points.iter())
+                {
+                    assert_eq!(first.target, *target / 2.0);
+                    assert_eq!(second.target, -*target / 2.0);
+                }
+                assert!(balanced.config1.balanced_source.is_none());
+                assert!(balanced.config2.balanced_source.is_none());
+                assert_eq!(balanced.config1.source_compliance, Some(first_compliance));
+                assert_eq!(balanced.config2.source_compliance, Some(5e-3));
+                assert_eq!(balanced.config1.source_limit, 250e-6);
+                assert_eq!(balanced.config2.source_limit, 250e-6);
+            }
+        }
+    }
+
+    #[test]
+    fn balanced_integer_ratios_are_exact_and_preserve_differential_voltage() {
+        for weights in [[1, 1], [2, 1], [1, 2], [2, 2], [3, 7]] {
+            let config = RunConfig {
+                pattern: Pattern::Linear,
+                start: -0.003,
+                stop: 0.003,
+                step: 0.0015,
+                source_limit: 0.01,
+                source_compliance: Some(0.001),
+                balanced_source: Some(BalancedSourceConfig {
+                    ratio: weights,
+                    ..Default::default()
+                }),
+                ..Default::default()
+            };
+            let planned = balanced_plan(&config).unwrap();
+            let a = Decimal::from(weights[0]);
+            let b = Decimal::from(weights[1]);
+            for ((target, first), second) in planned
+                .points
+                .iter()
+                .zip(&planned.plan1.points)
+                .zip(&planned.plan2.points)
+            {
+                let differential = decimal(target.target, "target").unwrap();
+                let first = decimal(first.target, "first").unwrap();
+                let second = decimal(second.target, "second").unwrap();
+                assert_eq!(first - second, differential);
+                assert_eq!(first * b, -second * a);
+            }
+        }
+        let mut config = RunConfig {
+            balanced_source: Some(BalancedSourceConfig {
+                ratio: [2, 1],
+                ..Default::default()
+            }),
+            ..Default::default()
+        };
+        assert!(
+            balanced_plan(&config).is_err(),
+            "unrepresentable +/-1mV endpoints must not be silently rounded for2:1"
+        );
+        for invalid in [[0, 1], [1, 0], [1001, 1]] {
+            config.balanced_source.as_mut().unwrap().ratio = invalid;
+            assert!(
+                balanced_plan(&config)
+                    .unwrap_err()
+                    .contains("Voltage ratio")
+            );
+        }
+    }
+
+    #[test]
+    fn balanced_sources_reject_unrepresentable_endpoints_and_custom_targets() {
+        let balanced = BalancedSourceConfig::default();
+        let endpoints = RunConfig {
+            pattern: Pattern::Linear,
+            start: -15e-6,
+            stop: 20e-6,
+            step: 20e-6,
+            source_limit: 100e-6,
+            source_compliance: Some(1e-3),
+            balanced_source: Some(balanced.clone()),
+            ..RunConfig::default()
+        };
+        assert!(balanced_plan(&endpoints).unwrap_err().contains("Start"));
+        let custom = RunConfig {
+            pattern: Pattern::CustomList,
+            custom_points: vec![0.0, 15e-6],
+            step: 20e-6,
+            source_limit: 100e-6,
+            source_compliance: Some(1e-3),
+            balanced_source: Some(balanced),
+            ..RunConfig::default()
+        };
+        assert!(
+            balanced_plan(&custom)
+                .unwrap_err()
+                .contains("custom_points[1]")
+        );
+    }
+
+    #[test]
+    fn balanced_sources_validate_mode_limits_and_second_protection_before_planning() {
+        let mut config = RunConfig {
+            mode: Mode::Vi,
+            balanced_source: Some(BalancedSourceConfig::default()),
+            ..RunConfig::default()
+        };
+        assert!(balanced_plan(&config).unwrap_err().contains("V-I"));
+
+        config.mode = Mode::Iv;
+        config.balanced_source.as_mut().unwrap().source_compliance = 31.0;
+        assert!(
+            balanced_plan(&config)
+                .unwrap_err()
+                .contains("hardware maximum")
+        );
+
+        config.balanced_source.as_mut().unwrap().source_compliance = 1e-3;
+        config.source_compliance = Some(1.5e-3);
+        assert!(
+            balanced_plan(&config)
+                .unwrap_err()
+                .contains("cannot be represented exactly")
+        );
+
+        config.source_compliance = Some(1e-3);
+        config.start = -200e-6;
+        config.stop = 200e-6;
+        config.step = 20e-6;
+        config.source_limit = 100e-6;
+        config.source_compliance = Some(1e-3);
+        assert!(
+            balanced_plan(&config)
+                .unwrap_err()
+                .contains("effective limit")
+        );
     }
 
     #[test]

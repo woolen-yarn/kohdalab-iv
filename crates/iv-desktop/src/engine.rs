@@ -1,7 +1,11 @@
+mod balanced;
+mod gate;
 mod safety;
 mod workflow;
 use crate::compatibility::{CSV_SCHEMA, RUN_METADATA_SCHEMA_VERSION};
-use crate::protocol::{Command, ProtectionAlert, ProtectionKind, Snapshot};
+use crate::protocol::{
+    Command, GuiJobCompletion, ProtectionAlert, ProtectionKind, Snapshot, unwrap_gui_job,
+};
 use crate::raw_csv::{self, RawWriter};
 use crate::state::{Activity, ErrorKind, Failure, OutputState, Phase};
 use iv_core::{CsvWriter, Mode, Record, RunConfig, plan, simulate_record};
@@ -19,6 +23,13 @@ use workflow::{RampPolicy, completion_phase};
 struct Control {
     stop: AtomicBool,
     off: AtomicBool,
+    /// Set by the input reader when a gate update arrives during an IV run.
+    /// The engine consumes it after the run has made every output safe.
+    gate_request_rejected: Mutex<Option<Option<String>>>,
+    /// True for the complete synchronous sweep execution window.  This is
+    /// deliberately separate from `stop`: a queued gate set must never clear
+    /// a requested stop while a sweep owns the outputs.
+    running: AtomicBool,
     closed: AtomicBool,
     heartbeat: Mutex<Instant>,
 }
@@ -87,6 +98,8 @@ pub fn serve() -> Result<(), String> {
     let control = Arc::new(Control {
         stop: AtomicBool::new(false),
         off: AtomicBool::new(false),
+        gate_request_rejected: Mutex::new(None),
+        running: AtomicBool::new(false),
         closed: AtomicBool::new(false),
         heartbeat: Mutex::new(Instant::now()),
     });
@@ -106,6 +119,12 @@ pub fn serve() -> Result<(), String> {
             let Ok(command) = serde_json::from_slice::<Command>(&line) else {
                 break;
             };
+            // Job envelopes are removed before any immediate-safety or run
+            // ownership logic.  Invalid envelopes never enter the normal
+            // queue, where they could otherwise delay a safety command.
+            let Ok((gui_job, command)) = unwrap_gui_job(command) else {
+                continue;
+            };
             if let Ok(mut heartbeat) = reader_control.heartbeat.lock() {
                 *heartbeat = Instant::now();
             }
@@ -113,19 +132,51 @@ pub fn serve() -> Result<(), String> {
                 Command::Heartbeat => {}
                 Command::Stop => {
                     reader_control.stop.store(true, Ordering::Release);
+                    if tx.try_send((None, Command::Stop)).is_err() {
+                        break;
+                    }
+                }
+                Command::GateOutputOff => {
+                    reader_control.off.store(true, Ordering::Release);
+                    reader_control.stop.store(true, Ordering::Release);
+                    let _ = tx.try_send((None, Command::GateOutputOff));
                 }
                 Command::OutputOff => {
                     reader_control.off.store(true, Ordering::Release);
                     reader_control.stop.store(true, Ordering::Release);
-                    let _ = tx.try_send(Command::OutputOff);
+                    let _ = tx.try_send((None, Command::OutputOff));
                 }
                 Command::Shutdown => break,
                 other => {
+                    if matches!(other, Command::SetGateVoltage { .. })
+                        && reader_control.running.load(Ordering::Acquire)
+                    {
+                        // Do not queue a voltage change behind a run: by the
+                        // time it could execute the sample conditions would
+                        // be different.  The engine reports this after it has
+                        // completed its fail-safe cleanup.
+                        if let Ok(mut rejected) = reader_control.gate_request_rejected.lock() {
+                            if rejected.is_some() {
+                                // A second out-of-contract request cannot grow
+                                // memory during a long sweep. Lost producer
+                                // ownership triggers the existing safe shutdown.
+                                break;
+                            }
+                            *rejected = Some(gui_job);
+                        }
+                        continue;
+                    }
                     if matches!(other, Command::Run { .. }) {
+                        // Reserve ownership at admission, before the owner
+                        // thread dequeues Run, so Gate changes cannot slip
+                        // into the queue in that scheduling gap.
+                        reader_control.running.store(true, Ordering::Release);
+                    }
+                    if matches!(other, Command::Run { .. } | Command::SetGateVoltage { .. }) {
                         reader_control.stop.store(false, Ordering::Release);
                         reader_control.off.store(false, Ordering::Release);
                     }
-                    if tx.try_send(other).is_err() {
+                    if tx.try_send((gui_job, other)).is_err() {
                         break;
                     }
                 }
@@ -177,14 +228,20 @@ pub fn serve() -> Result<(), String> {
     let mut simulation_mode = Mode::Iv;
     publish(&latest, &state);
     while !control.closed.load(Ordering::Acquire) {
-        if (state.source_connected || state.meter_connected)
+        if (state.source_connected
+            || state.source2_connected
+            || state.gate_connected
+            || state.meter_connected)
             && control
                 .heartbeat
                 .lock()
                 .map_or(true, |t| t.elapsed() > Duration::from_secs(2))
         {
-            if state.source_connected {
+            if state.source_connected || state.source2_connected {
                 clean_output(pair.as_mut(), &mut state, None, &control);
+            }
+            if let Err(error) = shutdown_gate(pair.as_mut(), &mut state) {
+                state.error = error.into();
             }
             if let Some(mut device) = pair.take() {
                 let _ = device.close();
@@ -203,11 +260,49 @@ pub fn serve() -> Result<(), String> {
         } else {
             Duration::from_millis(100)
         };
-        let command = match rx.recv_timeout(wait) {
+        let (gui_job_id, command) = match rx.recv_timeout(wait) {
             Ok(command) => command,
             Err(mpsc::RecvTimeoutError::Timeout) => {
+                if state.gate_connected
+                    && state.gate_output == OutputState::On
+                    && let Err(error) = gate::check(pair.as_mut(), &mut state)
+                {
+                    clean_output(pair.as_mut(), &mut state, None, &control);
+                    state.phase = Phase::Failed;
+                    state.error = error.into();
+                    publish(&latest, &state);
+                    continue;
+                }
+
                 if monitor_ready && last_monitor.elapsed() >= monitor_interval {
                     last_monitor = Instant::now();
+                    state.balanced_active = false;
+                    if state.source2_connected {
+                        if state.source2_simulation {
+                            state.source2_level = Some(0.0);
+                        } else if let Some(device) = pair.as_mut() {
+                            match device.query(Role::Source2, ":SOUR:LEV?") {
+                                Ok(reply) => {
+                                    state.source2_level =
+                                        reply.trim().parse::<f64>().ok().filter(|v| v.is_finite());
+                                }
+                                Err(error) => {
+                                    clean_output(pair.as_mut(), &mut state, None, &control);
+                                    let gate_error = shutdown_gate(pair.as_mut(), &mut state).err();
+                                    state.phase = Phase::Failed;
+                                    state.error = match gate_error {
+                                        Some(gate_error) => format!(
+                                            "Source 2 idle read failed: {error} · {gate_error}"
+                                        ),
+                                        None => format!("Source 2 idle read failed: {error}"),
+                                    }
+                                    .into();
+                                    publish(&latest, &state);
+                                    continue;
+                                }
+                            }
+                        }
+                    }
                     let result = if state.simulation {
                         let config = RunConfig {
                             mode: simulation_mode,
@@ -264,6 +359,8 @@ pub fn serve() -> Result<(), String> {
                 | Command::Connect { .. }
                 | Command::ConnectSource { .. }
                 | Command::ConnectMeter { .. }
+                | Command::ConnectSource2 { .. }
+                | Command::ConnectGate { .. }
                 | Command::SetLiveMode { .. }
         );
         let result = match command {
@@ -320,6 +417,56 @@ pub fn serve() -> Result<(), String> {
                     &model,
                 )
             }
+            Command::ConnectSource2 {
+                simulation,
+                resource,
+                model,
+            } => {
+                begin_connect(&mut state, &latest);
+                connect_role(
+                    &mut pair,
+                    &mut state,
+                    Role::Source2,
+                    simulation,
+                    &resource,
+                    &model,
+                )
+            }
+            Command::ConnectGate {
+                simulation,
+                resource,
+                model,
+            } => {
+                begin_connect(&mut state, &latest);
+                connect_role(
+                    &mut pair,
+                    &mut state,
+                    Role::Gate,
+                    simulation,
+                    &resource,
+                    &model,
+                )
+            }
+            Command::SetGateVoltage {
+                voltage,
+                compliance,
+                ramp_step,
+            } => gate::set_voltage(
+                pair.as_mut(),
+                &mut state,
+                voltage,
+                compliance,
+                ramp_step,
+                &control,
+            ),
+            Command::GateOutputOff => {
+                state.safety_revision = state.safety_revision.wrapping_add(1);
+                gate::output_off(pair.as_mut(), &mut state)
+            }
+            Command::DisconnectSource2 => {
+                disconnect_role(&mut pair, &mut state, Role::Source2, &control)
+            }
+            Command::DisconnectGate => disconnect_role(&mut pair, &mut state, Role::Gate, &control),
             Command::ConnectMeter {
                 simulation,
                 resource,
@@ -343,7 +490,8 @@ pub fn serve() -> Result<(), String> {
             }
             Command::Run { config, path } => {
                 simulation_mode = config.mode;
-                execute(
+                control.running.store(true, Ordering::Release);
+                let result = execute(
                     &config,
                     Path::new(&path),
                     if state.simulation {
@@ -355,32 +503,97 @@ pub fn serve() -> Result<(), String> {
                     &mut state,
                     &latest,
                     &points_tx,
-                )
+                );
+                control.running.store(false, Ordering::Release);
+                result
+            }
+            Command::Stop => {
+                state.safety_revision = state.safety_revision.wrapping_add(1);
+                if state.source_connected || state.source2_connected {
+                    clean_output(pair.as_mut(), &mut state, None, &control);
+                }
+                if state.error.is_empty() {
+                    if !matches!(state.phase, Phase::ComplianceStop | Phase::SourceLimitStop) {
+                        state.phase = Phase::Stopped;
+                        state.message = "Stop acknowledged. Sweep outputs off.".into();
+                    }
+                    Ok(())
+                } else {
+                    shutdown_gate(pair.as_mut(), &mut state)
+                }
             }
             Command::OutputOff => {
-                clean_output(pair.as_mut(), &mut state, None, &control);
-                if state.output == OutputState::Off {
+                state.safety_revision = state.safety_revision.wrapping_add(1);
+                if state.source_connected || state.source2_connected {
+                    clean_output(pair.as_mut(), &mut state, None, &control);
+                }
+                let gate_result = shutdown_gate(pair.as_mut(), &mut state);
+                if state.output == OutputState::Off && gate_result.is_ok() {
                     state.phase = Phase::Ready;
                     state.message = "Output off verified.".into();
                 }
                 Ok(())
             }
-            Command::Disconnect => disconnect_role(&mut pair, &mut state, Role::Source, &control)
-                .and_then(|()| disconnect_role(&mut pair, &mut state, Role::Meter, &control)),
+            Command::Disconnect => {
+                let mut errors = Vec::new();
+                for role in [Role::Source, Role::Source2, Role::Gate, Role::Meter] {
+                    if let Err(error) = disconnect_role(&mut pair, &mut state, role, &control) {
+                        errors.push(error);
+                    }
+                }
+                if errors.is_empty() {
+                    Ok(())
+                } else {
+                    Err(errors.join(" · "))
+                }
+            }
             _ => Ok(()),
         };
         if result.is_ok() && resume_monitor && state.output == OutputState::Off {
             control.off.store(false, Ordering::Release);
         }
         if let Err(error) = result {
+            if state.source2_connected && state.output != OutputState::Off {
+                clean_output(pair.as_mut(), &mut state, None, &control);
+            }
+            let gate_error = shutdown_gate(pair.as_mut(), &mut state).err();
             state.phase = Phase::Failed;
-            state.error = error.into();
+            state.error = match gate_error {
+                Some(other) => format!("{error} · {other}"),
+                None => error,
+            }
+            .into();
             state.message = "Review the error and reconnect if needed.".into();
+        }
+        let rejected_gate_job = control
+            .gate_request_rejected
+            .lock()
+            .ok()
+            .and_then(|mut rejected| rejected.take());
+        if rejected_gate_job.is_some() {
+            // This is a command-admission error, not a late configuration
+            // change.  The request was discarded while the run owned both
+            // the IV outputs and the gate remained at its verified level.
+            state.phase = Phase::Failed;
+            state.error = "Gate voltage changes are rejected while an IV run is active. Wait for the run to finish, then set the gate voltage.".into();
+            state.message = "Gate voltage was not changed during the IV run.".into();
+        }
+        if let Some(id) = gui_job_id {
+            complete_gui_job(&mut state, id);
+        }
+        // A tagged gate update rejected while a run held the outputs has no
+        // queued command to complete.  Record its final admission error only
+        // after the run's cleanup and error handling have finished.
+        if let Some(Some(id)) = rejected_gate_job {
+            complete_gui_job(&mut state, id);
         }
         publish(&latest, &state);
     }
-    if state.source_connected {
+    if state.source_connected || state.source2_connected {
         clean_output(pair.as_mut(), &mut state, None, &control);
+    }
+    if let Err(error) = shutdown_gate(pair.as_mut(), &mut state) {
+        state.error = error.into();
     }
     if let Some(mut device) = pair {
         let _ = device.close();
@@ -399,6 +612,8 @@ pub fn serve() -> Result<(), String> {
 
 fn clear_connections(state: &mut Snapshot) {
     state.source_connected = false;
+    state.source2_connected = false;
+    state.gate_connected = false;
     state.meter_connected = false;
     state.connected = false;
 }
@@ -408,15 +623,41 @@ fn refresh_connections(state: &mut Snapshot) {
     state.simulation = state.source_simulation && state.meter_simulation;
 }
 
-fn model_label(role: Role, model: &str) -> String {
-    let role = if role == Role::Source {
-        "source"
-    } else {
-        "meter"
-    };
-    format!("{role}.{model}")
+fn role_label(role: Role) -> &'static str {
+    match role {
+        Role::Source => "source",
+        Role::Source2 => "source2",
+        Role::Gate => "gate",
+        Role::Meter => "meter",
+    }
 }
-
+fn model_label(role: Role, model: &str) -> String {
+    format!("{}.{model}", role_label(role))
+}
+fn role_state(state: &Snapshot, role: Role) -> (bool, bool, &str) {
+    match role {
+        Role::Source => (
+            state.source_connected,
+            state.source_simulation,
+            &state.source_resource,
+        ),
+        Role::Source2 => (
+            state.source2_connected,
+            state.source2_simulation,
+            &state.source2_resource,
+        ),
+        Role::Gate => (
+            state.gate_connected,
+            state.gate_simulation,
+            &state.gate_resource,
+        ),
+        Role::Meter => (
+            state.meter_connected,
+            state.meter_simulation,
+            &state.meter_resource,
+        ),
+    }
+}
 fn begin_connect(state: &mut Snapshot, latest: &StateFeed) {
     state.phase = Phase::Connecting;
     state.message = "Verifying instrument identity…".into();
@@ -433,22 +674,8 @@ fn connect_role(
     resource: &str,
     model: &str,
 ) -> Result<(), String> {
-    let source = role == Role::Source;
-    let connected = if source {
-        state.source_connected
-    } else {
-        state.meter_connected
-    };
-    let previous_simulation = if source {
-        state.source_simulation
-    } else {
-        state.meter_simulation
-    };
-    let previous_resource = if source {
-        &state.source_resource
-    } else {
-        &state.meter_resource
-    };
+    let source = role != Role::Meter;
+    let (connected, previous_simulation, previous_resource) = role_state(state, role);
     let previous_model = if previous_simulation {
         Some(if source {
             "SIMULATED_SOURCE"
@@ -456,13 +683,7 @@ fn connect_role(
             "SIMULATED_METER"
         })
     } else {
-        pair.as_ref().map(|device| {
-            if source {
-                device.source_model.as_str()
-            } else {
-                device.meter_model.as_str()
-            }
-        })
+        pair.as_ref().map(|device| device.model(role))
     };
     if connected {
         if simulation == previous_simulation
@@ -476,6 +697,19 @@ fn connect_role(
         return Err(
             "Disconnect this instrument before choosing a different device or resource.".into(),
         );
+    }
+    if simulation
+        && model
+            != if source {
+                "SIMULATED_SOURCE"
+            } else {
+                "SIMULATED_METER"
+            }
+    {
+        // Existing full-connect simulation passes physical model IDs; retain that API.
+        if iv_core::instrument_descriptor(model).is_none() {
+            return Err("Unsupported simulation model".into());
+        }
     }
     let identity = if simulation {
         if source {
@@ -491,35 +725,63 @@ fn connect_role(
             .as_mut()
             .ok_or("Instrument transport is unavailable.")?;
         device.connect_model(role, resource, model)?;
-        if source {
-            device.source_identity.clone()
-        } else {
-            device.meter_identity.clone()
+        match role {
+            Role::Source => device.source_identity.clone(),
+            Role::Source2 => device.source2_identity.clone(),
+            Role::Gate => device.gate_identity.clone(),
+            Role::Meter => device.meter_identity.clone(),
         }
     };
-    if source {
-        state.source_connected = true;
-        state.source_simulation = simulation;
-        state.source_identity = identity.clone();
-        state.source_resource = if simulation {
-            "SIMULATED_SOURCE".into()
+    let resource = if simulation {
+        if source {
+            "SIMULATED_SOURCE"
         } else {
-            resource.into()
-        };
-        state.output = if simulation {
-            OutputState::Off
-        } else {
-            OutputState::Unknown
-        };
+            "SIMULATED_METER"
+        }
     } else {
-        state.meter_connected = true;
-        state.meter_simulation = simulation;
-        state.meter_identity = identity.clone();
-        state.meter_resource = if simulation {
-            "SIMULATED_METER".into()
-        } else {
-            resource.into()
-        };
+        resource
+    }
+    .to_owned();
+    match role {
+        Role::Source => {
+            state.source_connected = true;
+            state.source_simulation = simulation;
+            state.source_identity = identity.clone();
+            state.source_resource = resource;
+            state.output = if simulation {
+                OutputState::Off
+            } else {
+                OutputState::Unknown
+            };
+        }
+        Role::Source2 => {
+            state.source2_connected = true;
+            state.source2_simulation = simulation;
+            state.source2_identity = identity.clone();
+            state.source2_resource = resource;
+            state.source2_output = if simulation {
+                OutputState::Off
+            } else {
+                OutputState::Unknown
+            };
+        }
+        Role::Gate => {
+            state.gate_connected = true;
+            state.gate_simulation = simulation;
+            state.gate_identity = identity.clone();
+            state.gate_resource = resource;
+            state.gate_output = if simulation {
+                OutputState::Off
+            } else {
+                OutputState::Unknown
+            };
+        }
+        Role::Meter => {
+            state.meter_connected = true;
+            state.meter_simulation = simulation;
+            state.meter_identity = identity.clone();
+            state.meter_resource = resource;
+        }
     }
     refresh_connections(state);
     state.phase = Phase::Ready;
@@ -533,21 +795,13 @@ fn disconnect_role(
     role: Role,
     control: &Control,
 ) -> Result<(), String> {
-    let source = role == Role::Source;
-    let connected = if source {
-        state.source_connected
-    } else {
-        state.meter_connected
-    };
+    let (connected, simulation, _) = role_state(state, role);
     if !connected {
         return Ok(());
     }
-    let simulation = if source {
-        state.source_simulation
-    } else {
-        state.meter_simulation
-    };
-    if source {
+    if role == Role::Gate {
+        gate::output_off(pair.as_mut(), state)?;
+    } else if role != Role::Meter {
         clean_output(pair.as_mut(), state, None, control);
         if state.output != OutputState::Off {
             return Err(state.error.to_string());
@@ -565,26 +819,32 @@ fn disconnect_role(
     {
         return detach;
     }
-    if source {
-        state.source_connected = false;
-    } else {
-        state.meter_connected = false;
+    match role {
+        Role::Source => state.source_connected = false,
+        Role::Source2 => state.source2_connected = false,
+        Role::Gate => state.gate_connected = false,
+        Role::Meter => state.meter_connected = false,
     }
     refresh_connections(state);
     if !state.source_connected
+        && !state.source2_connected
+        && !state.gate_connected
         && !state.meter_connected
         && let Some(mut device) = pair.take()
     {
         device.close()?;
     }
-    state.phase = if state.source_connected || state.meter_connected {
+    state.phase = if state.source_connected
+        || state.source2_connected
+        || state.gate_connected
+        || state.meter_connected
+    {
         Phase::Ready
     } else {
         Phase::Idle
     };
-    state.message = format!("Disconnected {}.", if source { "source" } else { "meter" });
-    detach?;
-    Ok(())
+    state.message = format!("Disconnected {}.", role_label(role));
+    detach
 }
 
 fn publish(shared: &StateFeed, state: &Snapshot) {
@@ -592,6 +852,37 @@ fn publish(shared: &StateFeed, state: &Snapshot) {
         pending.snapshot = Some(state.clone());
         shared.changed.notify_one();
     }
+}
+
+/// API job bookkeeping is session state, not measurement provenance. Keep
+/// previous jobs out of both normal and Dual measurement manifests.
+fn recording_snapshot(state: &Snapshot) -> serde_json::Value {
+    let mut value = serde_json::json!(state);
+    if let Some(object) = value.as_object_mut() {
+        object.remove("gui_job");
+        object.remove("gui_jobs");
+    }
+    value
+}
+
+fn complete_gui_job(state: &mut Snapshot, id: String) {
+    let mut completed = state.clone();
+    completed.gui_job = None;
+    completed.gui_jobs.clear();
+    completed.resources.clear();
+    completed.warnings.clear();
+    // Snapshot only contains serializable protocol data.  If that invariant
+    // ever changes, retain an explicit error object rather than recursively
+    // serializing the completion wrapper itself.
+    let snapshot = serde_json::to_value(completed).unwrap_or_else(|error| {
+        serde_json::json!({"phase":"Failed","error":format!("Cannot serialize GUI job result: {error}")})
+    });
+    let completion = GuiJobCompletion { id, snapshot };
+    if state.gui_jobs.len() == 4 {
+        state.gui_jobs.remove(0);
+    }
+    state.gui_jobs.push(completion.clone());
+    state.gui_job = Some(completion);
 }
 
 fn publish_progress(shared: &StateFeed, state: &Snapshot, last: &mut Instant) {
@@ -823,11 +1114,7 @@ fn query_with_audit(
     let (started_at_utc, started_elapsed_s) = HostTiming::start(begin);
     let recorded = pair.query_recorded(role, command);
     let timing = HostTiming::finish(begin, started_at_utc, started_elapsed_s);
-    let role_name = if role == Role::Source {
-        "source"
-    } else {
-        "meter"
-    };
+    let role_name = role_label(role);
     let audit_result = append_transport_exchanges(
         audit,
         role_name,
@@ -1021,11 +1308,7 @@ fn write_with_audit(
     let (started_at_utc, started_elapsed_s) = HostTiming::start(begin);
     let recorded = pair.write_recorded(role, command);
     let timing = HostTiming::finish(begin, started_at_utc, started_elapsed_s);
-    let role_name = if role == Role::Source {
-        "source"
-    } else {
-        "meter"
-    };
+    let role_name = role_label(role);
     let audit_result = append_transport_exchanges(
         audit,
         role_name,
@@ -1069,6 +1352,9 @@ fn set_live_mode(
     state: &mut Snapshot,
     mode: Mode,
 ) -> Result<(), String> {
+    if state.source2_connected && mode != Mode::Iv {
+        return Err("Balanced dual-source requires voltage-source mode. Disconnect Source 2 before using current-source mode.".into());
+    }
     if !state.error.is_empty() {
         return Err(state.error.to_string());
     }
@@ -1253,19 +1539,104 @@ fn positive_reading(text: &str) -> Option<f64> {
         .filter(|v| v.is_finite() && *v > 0.0 && *v < 1e30)
 }
 
-fn write_json_new(path: &Path, value: &serde_json::Value) -> std::io::Result<()> {
+fn write_json_new(path: &Path, value: &impl serde::Serialize) -> std::io::Result<()> {
     let mut file = std::fs::OpenOptions::new()
         .write(true)
         .create_new(true)
         .open(path)?;
-    serde_json::to_writer_pretty(&mut file, value).map_err(std::io::Error::other)?;
+    {
+        let mut buffered = std::io::BufWriter::with_capacity(65536, &mut file);
+        serde_json::to_writer_pretty(&mut buffered, value).map_err(std::io::Error::other)?;
+        buffered.flush()?;
+    }
     file.sync_all()
 }
 
-fn replace_json(path: &Path, value: &serde_json::Value) -> std::io::Result<()> {
+fn replace_json(path: &Path, value: &impl serde::Serialize) -> std::io::Result<()> {
     let temporary = path.with_extension("json.tmp");
     write_json_new(&temporary, value)?;
     std::fs::rename(temporary, path)
+}
+
+/// The aggregate OFF state is only verified after every connected sweep source.
+/// The Gate is intentionally excluded here: ordinary IV completion preserves bias.
+fn shutdown_gate(pair: Option<&mut DevicePair>, state: &mut Snapshot) -> Result<(), String> {
+    if !state.gate_connected {
+        return Ok(());
+    }
+    gate::output_off(pair, state)
+}
+
+/// A completed or user-stopped sweep deliberately preserves an external gate
+/// bias.  Recording integrity failures are different: the run no longer has
+/// trustworthy evidence, so an enabled gate must fail closed as well.
+fn shutdown_gate_for_recording_failure(pair: Option<&mut DevicePair>, state: &mut Snapshot) {
+    if !state.gate_connected || state.gate_output != OutputState::On {
+        return;
+    }
+    if let Err(error) = shutdown_gate(pair, state) {
+        let previous = if state.error.is_empty() {
+            String::new()
+        } else {
+            format!("{} · ", state.error)
+        };
+        state.error = Failure::new(
+            ErrorKind::OutputSafety,
+            format!("{previous}Gate shutdown after recording failure failed: {error}"),
+        );
+        state.phase = Phase::Failed;
+    }
+}
+
+fn shutdown_sweep_sources(
+    pair: Option<&mut DevicePair>,
+    state: &mut Snapshot,
+) -> Result<(), String> {
+    state.output = OutputState::Unknown;
+    if state.source2_connected {
+        state.source2_output = OutputState::Unknown;
+    }
+    let mut verified = [!state.source_connected, !state.source2_connected];
+    if state.source_simulation && state.source_connected {
+        verified[0] = true;
+    }
+    if state.source2_simulation && state.source2_connected {
+        verified[1] = true;
+        state.source2_output = OutputState::Off;
+    }
+    let mut errors = Vec::new();
+    if let Some(pair) = pair {
+        for (role, result) in pair.force_sources_output_off() {
+            let index = if role == Role::Source { 0 } else { 1 };
+            match result {
+                Ok(report) if report.output_off_verified => {
+                    verified[index] = true;
+                    if index == 1 {
+                        state.source2_output = OutputState::Off;
+                    }
+                    if let Some(warning) = report.zeroing_warning {
+                        state.warnings.push(format!(
+                            "{} output OFF verified; {warning}",
+                            role_label(role)
+                        ));
+                    }
+                }
+                Ok(_) => errors.push(format!("{} output OFF not verified", role_label(role))),
+                Err(error) => errors.push(format!("{}: {error}", role_label(role))),
+            }
+        }
+    }
+    if verified.into_iter().all(|v| v) {
+        state.output = OutputState::Off;
+        state.source2_level = Some(0.0);
+    } else if errors.is_empty() {
+        errors.push("Not all sweep sources could be verified OFF. Check both instruments.".into());
+    }
+    if errors.is_empty() {
+        Ok(())
+    } else {
+        Err(errors.join(" · "))
+    }
 }
 
 fn clean_output(
@@ -1276,6 +1647,12 @@ fn clean_output(
 ) {
     state.phase = Phase::CleaningUp;
     state.output = OutputState::Unknown;
+    if state.source2_connected {
+        if let Err(error) = shutdown_sweep_sources(pair, state) {
+            state.error = error.into();
+        }
+        return;
+    }
     if state.source_simulation && state.source_connected {
         state.output = OutputState::Off;
         return;
@@ -1350,6 +1727,9 @@ fn protection_output_off(
 ) -> Result<(), String> {
     state.activity = Activity::VerifyingOutputOff;
     state.output = OutputState::Unknown;
+    if state.source2_connected {
+        return shutdown_sweep_sources(pair, state);
+    }
     if state.source_simulation {
         state.output = OutputState::Off;
         return Ok(());
@@ -1571,6 +1951,10 @@ impl SweepMonitor<'_> {
     ) -> Result<Record, String> {
         let mut record = self.record(level);
         if let Some(device) = pair {
+            // The gate is allowed to remain biased during an IV sweep, but it
+            // must be polled on the same cadence as the sweep source.  A gate
+            // limiter/status failure fails closed before any further meter I/O.
+            gate::check(Some(device), state)?;
             if self.control.closed.load(Ordering::Acquire)
                 || self.control.off.load(Ordering::Acquire)
                 || self
@@ -1711,6 +2095,7 @@ impl SweepMonitor<'_> {
         }
         // Every new source level is checked, including zero-duration ramp waits.
         if let Some(device) = pair.as_deref_mut() {
+            gate::check(Some(device), state)?;
             let writer = audit
                 .as_deref_mut()
                 .ok_or("Source protection monitoring requires a recording audit")?;
@@ -1732,20 +2117,17 @@ impl SweepMonitor<'_> {
             return Ok(!self.control.cancelled());
         }
         let end = Instant::now() + Duration::from_secs_f64(seconds);
-        // Avoid starting a conversion at the end of a short ramp/settling wait.
-        // Budget conservatively for 50 Hz mains, autozero and transport overhead.
-        let budget = if pair.is_some() {
-            Duration::from_secs_f64((self.config.nplc * 2.0 / 50.0 + 0.03).max(0.05))
-        } else {
-            Duration::from_millis(1)
-        };
-        while Instant::now() < end {
+        // A due live protection conversion must not be skipped because
+        // source-status I/O or scheduling consumed a positive settle interval.
+        // Zero-duration waits keep their fast path above.
+        loop {
             if self.control.cancelled() {
                 return Ok(false);
             }
             if self.last_source_check.elapsed() >= Duration::from_millis(50)
                 && let (Some(device), Some(audit)) = (pair.as_deref_mut(), audit.as_deref_mut())
             {
+                gate::check(Some(device), state)?;
                 self.source_stop = check_source_protection(
                     device,
                     state,
@@ -1760,9 +2142,7 @@ impl SweepMonitor<'_> {
                     return Ok(false);
                 }
             }
-            if self.last.elapsed() >= Duration::from_millis(50)
-                && end.saturating_duration_since(Instant::now()) >= budget
-            {
+            if self.last.elapsed() >= Duration::from_millis(50) {
                 self.last = Instant::now();
                 let Some(writer) = audit.as_deref_mut() else {
                     return Err("Active live acquisition requires a recording audit".into());
@@ -1846,13 +2226,15 @@ impl SweepMonitor<'_> {
                     return Ok(false);
                 }
                 self.publish(reading, state);
-            } else {
-                std::thread::sleep(
-                    Duration::from_millis(10).min(end.saturating_duration_since(Instant::now())),
-                );
             }
+            // Do not loop forever when each conversion exceeds the interval.
+            if Instant::now() >= end {
+                return Ok(!self.control.cancelled());
+            }
+            std::thread::sleep(
+                Duration::from_millis(10).min(end.saturating_duration_since(Instant::now())),
+            );
         }
-        Ok(!self.control.cancelled())
     }
 }
 
@@ -1868,6 +2250,25 @@ fn execute(
     // A new attempt must not attribute an early validation/preflight failure
     // to a previous run's protection event.
     state.protection_alert = None;
+    // A gate belongs to the same safety domain as the IV sweep.  A simulated
+    // gate alongside real sweep instruments (or the reverse) cannot be
+    // monitored or shut down as one experiment, so reject it before any I/O.
+    if state.gate_connected && state.gate_simulation != state.simulation {
+        return Err(
+            "Gate and IV sweep must both use real instruments or both use simulation. Disconnect and reconnect the gate with the same mode before Start."
+                .into(),
+        );
+    }
+    if config.balanced_source.is_some() {
+        return balanced::execute(config, path, pair, control, state, latest, events);
+    }
+    state.balanced_active = false;
+    if state.source2_connected {
+        return Err(
+            "Source 2 is connected. Use a balanced differential sweep or disconnect Source 2 before starting a single-source run."
+                .into(),
+        );
+    }
     if !state.connected {
         return Err("Connect the source and meter before Start.".into());
     }
@@ -1988,7 +2389,7 @@ fn execute(
             "quantity":"output_off", "result":"ok", "details":verification,
         }))?;
     }
-    let mut initial_metadata = serde_json::json!({"schema_version":RUN_METADATA_SCHEMA_VERSION,"csv_schema":CSV_SCHEMA,"csv_fields":iv_core::CSV_FIELDS,"csv_numeric_format":"shortest_roundtrip_scientific","application_version":env!("CARGO_PKG_VERSION"),"experiment":config.experiment,"config":config,"requested_config":requested_config,"outcome":state,"in_progress":true,
+    let mut initial_metadata = serde_json::json!({"schema_version":RUN_METADATA_SCHEMA_VERSION,"csv_schema":CSV_SCHEMA,"csv_fields":iv_core::CSV_FIELDS,"csv_numeric_format":"shortest_roundtrip_scientific","application_version":env!("CARGO_PKG_VERSION"),"experiment":config.experiment,"config":config,"requested_config":requested_config,"outcome":recording_snapshot(state),"in_progress":true,
         "run_id":run_id,"source_range_setting":planned.source_range,"hardware_compliance_setting":planned.hardware_compliance,"display_settings_changes":[],"simulation":state.simulation,"csv":path.display().to_string(),"raw_csv":{"path":raw_path.display().to_string(),"filename":raw_filename,"schema":"raw_csv_v1","provenance_policy":provenance_policy}});
     if let Some(commit) = option_env!("KOHDALAB_GIT_COMMIT") {
         initial_metadata["git_commit"] = serde_json::Value::String(commit.into());
@@ -2201,6 +2602,7 @@ fn execute(
                         stopped = true;
                         break;
                     }
+                    gate::check(Some(device), state)?;
                     live.source_stop = check_source_protection(
                         device,
                         state,
@@ -2328,6 +2730,7 @@ fn execute(
                         }
                         break;
                     }
+                    gate::check(Some(device), state)?;
                     live.source_stop = check_source_protection(
                         device,
                         state,
@@ -2588,6 +2991,7 @@ fn execute(
             unit: if config.mode == Mode::Iv { "A" } else { "V" }.into(),
             observed: None,
             indicator: stop.condition.indicator().into(),
+            source_index: Some(1),
         });
         instrument_status_events
             .push(serde_json::json!({"event":"source_protection_stop","details":stop}));
@@ -2606,7 +3010,7 @@ fn execute(
     .into();
     publish(latest, state);
     clean_output(
-        pair,
+        pair.as_deref_mut(),
         state,
         if work.is_ok() && !compliance_hit && source_stop.is_none() {
             Some((config, level))
@@ -2615,6 +3019,17 @@ fn execute(
         },
         control,
     );
+    // Ordinary successful IV completion preserves a verified external gate
+    // bias.  Every sweep failure or protection stop instead shuts the gate
+    // down as part of the same fail-closed transition.
+    if (work.is_err() || compliance_hit || source_stop.is_some())
+        && let Err(error) = shutdown_gate(pair.as_deref_mut(), state)
+    {
+        state.error = Failure::new(
+            ErrorKind::OutputSafety,
+            format!("Gate shutdown after IV safety stop failed: {error}"),
+        );
+    }
     let verification_audit = audit.append(&serde_json::json!({
         "event":"final_output_off_verification", "device_role":"source",
         "result": if state.output == OutputState::Off { "ok" } else { "error" },
@@ -2635,6 +3050,7 @@ fn execute(
             kind,
             format!("{previous}Cannot record final output verification: {error}"),
         );
+        shutdown_gate_for_recording_failure(pair.as_deref_mut(), state);
     }
     state.elapsed = begin.elapsed().as_secs_f64();
     state.phase = completion_phase(
@@ -2702,6 +3118,7 @@ fn execute(
             state.output.to_lowercase()
         );
         state.warnings.push("The raw acquisition evidence could not be finalized; retain the partial .raw.csv file with this run.".into());
+        shutdown_gate_for_recording_failure(pair.as_deref_mut(), state);
     }
     let (hashes, hash_error) = match recording_hashes(path, &raw_path) {
         Ok(hashes) => (hashes, None),
@@ -2733,15 +3150,35 @@ fn execute(
             (serde_json::Value::Null, Some(error))
         }
     };
-    let mut metadata = serde_json::json!({"schema_version":RUN_METADATA_SCHEMA_VERSION,"csv_schema":CSV_SCHEMA,"csv_fields":iv_core::CSV_FIELDS,"csv_numeric_format":"shortest_roundtrip_scientific","application_version":env!("CARGO_PKG_VERSION"),"experiment":config.experiment,"run_id":run_id,"config":config,"requested_config":requested_config,"outcome":state,"in_progress":false,
+    if hash_error.is_some() {
+        shutdown_gate_for_recording_failure(pair.as_deref_mut(), state);
+    }
+    let mut metadata = serde_json::json!({"schema_version":RUN_METADATA_SCHEMA_VERSION,"csv_schema":CSV_SCHEMA,"csv_fields":iv_core::CSV_FIELDS,"csv_numeric_format":"shortest_roundtrip_scientific","application_version":env!("CARGO_PKG_VERSION"),"experiment":config.experiment,"run_id":run_id,"config":config,"requested_config":requested_config,"outcome":recording_snapshot(state),"in_progress":false,
         "source_range_setting":planned.source_range,"hardware_compliance_setting":planned.hardware_compliance,"source_protection_stop":source_stop,"display_settings_changes":display_settings_changes,"instrument_status_events":instrument_status_events,"simulation":state.simulation,"csv":path.display().to_string(),"instruments":instruments,"raw_csv":{"path":raw_path.display().to_string(),"filename":raw_filename,"schema":"raw_csv_v1","provenance_policy":provenance_policy},"file_hashes":hashes,"file_hash_error":hash_error});
     if let Some(commit) = option_env!("KOHDALAB_GIT_COMMIT") {
         metadata["git_commit"] = serde_json::Value::String(commit.into());
     }
     if let Err(error) = replace_json(&manifest, &metadata) {
+        let previous = if state.error.is_empty() {
+            String::new()
+        } else {
+            format!("{} · ", state.error)
+        };
+        state.error = Failure::new(
+            ErrorKind::Storage,
+            format!("{previous}Run metadata could not be saved: {error}"),
+        );
+        state.phase = Phase::Failed;
         state
             .warnings
             .push(format!("Run metadata could not be saved: {error}"));
+        state.message = format!(
+            "{} · {} points saved · output {}",
+            state.phase,
+            state.points,
+            state.output.to_lowercase()
+        );
+        shutdown_gate_for_recording_failure(pair, state);
     }
     publish(latest, state);
     Ok(())
@@ -2852,6 +3289,8 @@ mod tests {
         Control {
             stop: AtomicBool::new(false),
             off: AtomicBool::new(false),
+            gate_request_rejected: Mutex::new(None),
+            running: AtomicBool::new(false),
             closed: AtomicBool::new(false),
             heartbeat: Mutex::new(Instant::now()),
         }
@@ -2964,6 +3403,42 @@ mod tests {
         write_events(&mut output, &mut scratch, &rx, None).unwrap();
         assert_eq!(scratch.capacity(), capacity);
         assert_eq!(output, expected.as_bytes());
+    }
+
+    #[test]
+    fn gui_job_completion_contains_a_final_non_recursive_snapshot() {
+        let mut state = Snapshot {
+            phase: Phase::Completed,
+            points: 3,
+            ..Default::default()
+        };
+        complete_gui_job(&mut state, "job-42".into());
+        let completion = state.gui_job.as_ref().unwrap();
+        assert_eq!(completion.id, "job-42");
+        assert_eq!(completion.snapshot["phase"], "Completed");
+        assert_eq!(completion.snapshot["points"], 3);
+        assert!(completion.snapshot["gui_job"].is_null());
+
+        // Idle/live state publications retain the last tagged completion until
+        // another tagged command replaces it.
+        let retained = state.gui_job.clone();
+        state.message = "Live monitor updated.".into();
+        assert_eq!(state.gui_job, retained);
+        for index in 0..8 {
+            complete_gui_job(&mut state, format!("job-{index}"));
+        }
+        assert_eq!(state.gui_jobs.len(), 4);
+        assert_eq!(state.gui_jobs[0].id, "job-4");
+        let persisted = recording_snapshot(&state);
+        assert!(persisted.get("gui_job").is_none());
+        assert!(persisted.get("gui_jobs").is_none());
+        assert_eq!(persisted["points"], 3);
+        assert!(
+            state
+                .gui_jobs
+                .iter()
+                .all(|job| job.snapshot["gui_jobs"].as_array().unwrap().is_empty())
+        );
     }
 
     #[test]
@@ -3113,6 +3588,8 @@ mod tests {
         let control = Control {
             stop: AtomicBool::new(false),
             off: AtomicBool::new(false),
+            gate_request_rejected: Mutex::new(None),
+            running: AtomicBool::new(false),
             closed: AtomicBool::new(false),
             heartbeat: Mutex::new(Instant::now() - Duration::from_secs(3)),
         };

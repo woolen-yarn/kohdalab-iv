@@ -9,7 +9,8 @@ from unittest.mock import patch
 class NotebookExamplesTests(unittest.TestCase):
     def test_simulation_notebooks(self):
         examples = Path(__file__).parent / "examples"
-        for name in ("native-control.ipynb", "migrate-to-native.ipynb"):
+        for name in ("native-control.ipynb", "migrate-to-native.ipynb",
+                     "gate-balanced-control.ipynb"):
             with self.subTest(notebook=name), tempfile.TemporaryDirectory() as directory:
                 notebook = json.loads((examples / name).read_text(encoding="utf-8"))
                 namespace = {"__name__": "__main__"}

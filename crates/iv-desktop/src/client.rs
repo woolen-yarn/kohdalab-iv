@@ -1,4 +1,4 @@
-use crate::protocol::{Command, Event, Snapshot};
+use crate::protocol::{Command, Event, Snapshot, gui_job, validate_gui_job};
 use crate::state::{OutputState, Phase};
 use std::io::{BufRead, BufReader, Read, Write};
 use std::process::{Child, Command as Process, Stdio};
@@ -8,8 +8,9 @@ use std::time::{Duration, Instant};
 
 const SAFETY_NONE: u8 = 0;
 const SAFETY_STOP: u8 = 1;
-const SAFETY_OUTPUT_OFF: u8 = 2;
-const SAFETY_SHUTDOWN: u8 = 3;
+const SAFETY_GATE_OFF: u8 = 2;
+const SAFETY_OUTPUT_OFF: u8 = 3;
+const SAFETY_SHUTDOWN: u8 = 4;
 
 pub struct Client {
     child: Child,
@@ -49,6 +50,7 @@ impl Client {
         });
         let state = Arc::new(Mutex::new(Snapshot::default()));
         let reader_state = state.clone();
+        let reader_alive = writer_alive.clone();
         let state_revision = Arc::new(AtomicU64::new(0));
         let reader_revision = state_revision.clone();
         let (send_point, points) = mpsc::sync_channel(2048);
@@ -93,9 +95,15 @@ impl Client {
                 }
                 state.connected = false;
                 state.source_connected = false;
+                state.source2_connected = false;
+                state.gate_connected = false;
                 state.meter_connected = false;
                 reader_revision.fetch_add(1, Ordering::Release);
             }
+            // A closed engine output stream means no further final job state
+            // can arrive, even if the stdin writer thread has not observed
+            // its broken pipe yet.
+            reader_alive.store(false, Ordering::Release);
             wake();
         });
         Ok(Self {
@@ -113,8 +121,21 @@ impl Client {
         submit_command(&self.commands, &self.safety, &self.writer_alive, command)
     }
 
+    /// Submit a normal engine operation whose completed state can be matched
+    /// to `id` through `Snapshot::gui_job`.
+    pub fn send_job(&self, id: String, command: Command) -> Result<(), String> {
+        self.send(gui_job(id, command)?)
+    }
+
     pub fn snapshot(&self) -> Snapshot {
         self.state.lock().map(|s| s.clone()).unwrap_or_default()
+    }
+
+    /// False once either the command writer or engine-state reader has lost
+    /// its pipe.  GUI API job tracking uses this to distinguish an engine
+    /// exit from a completed tagged operation.
+    pub fn is_alive(&self) -> bool {
+        self.writer_alive.load(Ordering::Acquire)
     }
 
     /// Returns a cloned state only after the engine has published a newer one.
@@ -140,6 +161,9 @@ fn submit_command(
     writer_alive: &AtomicBool,
     command: Command,
 ) -> Result<(), String> {
+    if let Command::GuiJob { id, command } = &command {
+        validate_gui_job(id, command)?;
+    }
     if let Some(level) = safety_level(&command) {
         if !writer_alive.load(Ordering::Acquire) {
             return Err("Measurement engine command pipe is disconnected.".into());
@@ -147,7 +171,7 @@ fn submit_command(
         safety.fetch_max(level, Ordering::AcqRel);
         return Ok(());
     }
-    if matches!(command, Command::Run { .. }) && safety.load(Ordering::Acquire) != SAFETY_NONE {
+    if needs_clear_safety(&command) && safety.load(Ordering::Acquire) != SAFETY_NONE {
         return Err(
             "A safety command is pending. Wait for Stop or Output Off before starting a run."
                 .into(),
@@ -161,9 +185,21 @@ fn submit_command(
     })
 }
 
+fn needs_clear_safety(command: &Command) -> bool {
+    let command = match command {
+        Command::GuiJob { command, .. } => command.as_ref(),
+        command => command,
+    };
+    matches!(
+        command,
+        Command::Run { .. } | Command::SetGateVoltage { .. }
+    )
+}
+
 fn safety_level(command: &Command) -> Option<u8> {
     match command {
         Command::Stop => Some(SAFETY_STOP),
+        Command::GateOutputOff => Some(SAFETY_GATE_OFF),
         Command::OutputOff => Some(SAFETY_OUTPUT_OFF),
         Command::Shutdown => Some(SAFETY_SHUTDOWN),
         _ => None,
@@ -173,6 +209,7 @@ fn safety_level(command: &Command) -> Option<u8> {
 fn safety_command(level: u8) -> Command {
     match level {
         SAFETY_STOP => Command::Stop,
+        SAFETY_GATE_OFF => Command::GateOutputOff,
         SAFETY_OUTPUT_OFF => Command::OutputOff,
         SAFETY_SHUTDOWN => Command::Shutdown,
         _ => Command::Heartbeat,
@@ -201,25 +238,13 @@ fn writer_loop<W: Write>(
     loop {
         let level = safety.load(Ordering::Acquire);
         if level != SAFETY_NONE {
-            // A command already removed from the queue counts toward the 16
-            // queued commands. Sending it before safety preserves FIFO: an
-            // earlier Run cannot arrive after its Stop command.
-            let mut drained = 0usize;
-            if let Some(command) = pending_normal.take() {
-                if write_command(&mut output, &command).is_err() {
-                    break;
-                }
-                drained += 1;
-            }
-            while drained < 16 {
+            // Discard queued operations rather than allow Run/Gate ON to
+            // execute after a safety request. Already-written commands see
+            // the engine reader's immediate cancellation latch.
+            pending_normal.take();
+            for _ in 0..16 {
                 match receive.try_recv() {
-                    Ok(command) => {
-                        if write_command(&mut output, &command).is_err() {
-                            alive.store(false, Ordering::Release);
-                            return output;
-                        }
-                        drained += 1;
-                    }
+                    Ok(_) => {}
                     Err(mpsc::TryRecvError::Empty) => break,
                     Err(mpsc::TryRecvError::Disconnected) => {
                         safety.fetch_max(SAFETY_SHUTDOWN, Ordering::AcqRel);
@@ -333,10 +358,27 @@ mod tests {
             )
             .is_err()
         );
+        assert!(
+            submit_command(
+                &sender,
+                &safety,
+                &alive,
+                gui_job(
+                    "run-1".into(),
+                    Command::Run {
+                        config: iv_core::RunConfig::default(),
+                        path: "result.csv".into(),
+                    },
+                )
+                .unwrap(),
+            )
+            .is_err(),
+            "tagged runs must observe the same pending-safety admission rule"
+        );
     }
 
     #[test]
-    fn pending_run_is_written_before_stop() {
+    fn safety_discards_queued_run_and_gate_before_they_can_energize() {
         let (sender, receiver) = mpsc::sync_channel(16);
         sender
             .send(Command::Run {
@@ -344,7 +386,14 @@ mod tests {
                 path: "result.csv".into(),
             })
             .unwrap();
-        let safety = Arc::new(AtomicU8::new(SAFETY_STOP));
+        sender
+            .send(Command::SetGateVoltage {
+                voltage: 1.0,
+                compliance: 0.001,
+                ramp_step: 0.01,
+            })
+            .unwrap();
+        let safety = Arc::new(AtomicU8::new(SAFETY_OUTPUT_OFF));
         let alive = Arc::new(AtomicBool::new(true));
         let writer = TestWriter::default();
         let bytes = writer.0.clone();
@@ -354,7 +403,7 @@ mod tests {
             std::thread::spawn(move || writer_loop(writer, receiver, thread_safety, thread_alive));
         let deadline = Instant::now() + Duration::from_secs(1);
         while Instant::now() < deadline {
-            if String::from_utf8_lossy(&bytes.lock().unwrap()).contains("\"stop\"") {
+            if String::from_utf8_lossy(&bytes.lock().unwrap()).contains("\"output_off\"") {
                 break;
             }
             std::thread::sleep(Duration::from_millis(5));
@@ -362,9 +411,10 @@ mod tests {
         submit_command(&sender, &safety, &alive, Command::Shutdown).unwrap();
         let _ = handle.join().unwrap();
         let wire = String::from_utf8(bytes.lock().unwrap().clone()).unwrap();
-        let run = wire.find("\"run\"").unwrap();
-        let stop = wire.find("\"stop\"").unwrap();
+        assert!(!wire.contains("\"run\""), "{wire}");
+        assert!(!wire.contains("\"set_gate_voltage\""), "{wire}");
+        let stop = wire.find("\"output_off\"").unwrap();
         let shutdown = wire.find("\"shutdown\"").unwrap();
-        assert!(run < stop && stop < shutdown, "wire order was {wire:?}");
+        assert!(stop < shutdown, "wire order was {wire:?}");
     }
 }

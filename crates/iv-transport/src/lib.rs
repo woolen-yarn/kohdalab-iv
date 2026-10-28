@@ -119,19 +119,27 @@ pub struct Discovery {
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
 pub enum Role {
     Source,
+    /// A second, independently-addressed source. It uses the same supported
+    /// source catalog and protocol dialects as [`Role::Source`].
+    Source2,
+    /// An optional fixed gate-bias source. It deliberately is not part of the
+    /// ordinary IV sweep shutdown path; callers must shut it down explicitly.
+    Gate,
     Meter,
 }
 
-fn other_role(role: Role) -> Role {
-    match role {
-        Role::Source => Role::Meter,
-        Role::Meter => Role::Source,
-    }
+const ROLES: [Role; 4] = [Role::Source, Role::Source2, Role::Gate, Role::Meter];
+const SOURCE_ROLES: [Role; 2] = [Role::Source, Role::Source2];
+
+fn is_source_role(role: Role) -> bool {
+    matches!(role, Role::Source | Role::Source2 | Role::Gate)
 }
 
 fn role_name(role: Role) -> &'static str {
     match role {
         Role::Source => "source",
+        Role::Source2 => "source 2",
+        Role::Gate => "gate",
         Role::Meter => "meter",
     }
 }
@@ -341,16 +349,25 @@ pub fn list_resources(paths: &HelperPaths) -> Result<Vec<ResourceInfo>, String> 
 
 pub struct DevicePair {
     pub source_identity: String,
+    pub source2_identity: String,
+    pub gate_identity: String,
     pub meter_identity: String,
     pub source_model: String,
+    pub source2_model: String,
+    pub gate_model: String,
     pub meter_model: String,
     meter_discard: bool,
     paths: HelperPaths,
     source_kind: Option<ResourceKind>,
+    source2_kind: Option<ResourceKind>,
+    gate_kind: Option<ResourceKind>,
     meter_kind: Option<ResourceKind>,
     source: Option<Endpoint>,
+    source2: Option<Endpoint>,
+    gate: Option<Endpoint>,
     meter: Option<Endpoint>,
     usable: bool,
+    recovery_pending: [bool; 4],
 }
 
 /// One physical helper exchange performed while translating a logical query.
@@ -384,16 +401,25 @@ impl DevicePair {
     pub fn new(paths: &HelperPaths) -> Self {
         Self {
             source_identity: String::new(),
+            source2_identity: String::new(),
+            gate_identity: String::new(),
             meter_identity: String::new(),
             source_model: instruments::default_model(Role::Source).into(),
+            source2_model: instruments::default_model(Role::Source2).into(),
+            gate_model: instruments::default_model(Role::Gate).into(),
             meter_model: instruments::default_model(Role::Meter).into(),
             meter_discard: false,
             paths: paths.clone(),
             source_kind: None,
+            source2_kind: None,
+            gate_kind: None,
             meter_kind: None,
             source: None,
+            source2: None,
+            gate: None,
             meter: None,
             usable: true,
+            recovery_pending: [false; 4],
         }
     }
 
@@ -435,28 +461,37 @@ impl DevicePair {
                 "Disconnect the selected instrument before connecting a different resource.".into(),
             );
         }
-        if let Some(other) = self.kind_option(other_role(role))
-            && kind.same_physical(other)
-        {
-            return Err("Source and meter must use different physical resources.".into());
+        for existing_role in ROLES {
+            if existing_role == role {
+                continue;
+            }
+            if let Some(other) = self.kind_option(existing_role) {
+                if kind.same_physical(other) {
+                    return Err(
+                        "Source, Source 2, and meter must use different physical resources.".into(),
+                    );
+                }
+                if kind.is_gpib()
+                    && other.is_gpib()
+                    && matches!(&kind, ResourceKind::Visa { .. })
+                        != matches!(other, ResourceKind::Visa { .. })
+                {
+                    return Err("GPIB0 cannot mix official VISA and native WinUSB sessions. Disconnect all instruments, configure one GPIB backend, then click Refresh and reconnect.".into());
+                }
+            }
         }
-        if let Some(other) = self.kind_option(other_role(role))
-            && kind.is_gpib()
-            && other.is_gpib()
-            && matches!(&kind, ResourceKind::Visa { .. })
-                != matches!(other, ResourceKind::Visa { .. })
-        {
-            return Err("GPIB0 cannot mix official VISA and native WinUSB sessions. Disconnect both instruments, configure one GPIB backend, then click Refresh and reconnect.".into());
-        }
-        let shared = self
-            .endpoint_option(other_role(role))
-            .filter(|_| matches!(&kind, ResourceKind::Gpib { .. }))
-            .filter(|_| {
-                matches!(
-                    self.kind_option(other_role(role)),
-                    Some(ResourceKind::Gpib { .. })
-                )
+        let shared = matches!(&kind, ResourceKind::Gpib { .. })
+            .then(|| {
+                ROLES.into_iter().find_map(|existing_role| {
+                    self.endpoint_option(existing_role).filter(|_| {
+                        matches!(
+                            self.kind_option(existing_role),
+                            Some(ResourceKind::Gpib { .. })
+                        )
+                    })
+                })
             })
+            .flatten()
             .map(|endpoint| endpoint.session.clone());
         let endpoint = if let Some(session) = shared {
             Endpoint {
@@ -502,6 +537,18 @@ impl DevicePair {
                 self.source_model = model.into();
                 self.source_kind = Some(kind);
                 self.source = Some(endpoint);
+            }
+            Role::Source2 => {
+                self.source2_identity = identity;
+                self.source2_model = model.into();
+                self.source2_kind = Some(kind);
+                self.source2 = Some(endpoint);
+            }
+            Role::Gate => {
+                self.gate_identity = identity;
+                self.gate_model = model.into();
+                self.gate_kind = Some(kind);
+                self.gate = Some(endpoint);
             }
             Role::Meter => {
                 self.meter_identity = identity;
@@ -557,9 +604,12 @@ impl DevicePair {
         }) {
             return Err(format!("LOCAL {}: {error}", endpoint.resource));
         }
-        let shared_with_other = self
-            .endpoint_option(other_role(role))
-            .is_some_and(|other| Arc::ptr_eq(&other.session, &endpoint.session));
+        let shared_with_other = ROLES.into_iter().any(|other_role| {
+            other_role != role
+                && self
+                    .endpoint_option(other_role)
+                    .is_some_and(|other| Arc::ptr_eq(&other.session, &endpoint.session))
+        });
         if !shared_with_other {
             if let Err(error) = lock_session(&endpoint.session).and_then(|mut session| {
                 session.request("REN", endpoint.address, 2_000, b"0", Duration::from_secs(2))
@@ -583,6 +633,16 @@ impl DevicePair {
                 self.source_kind = None;
                 self.source_identity.clear();
             }
+            Role::Source2 => {
+                self.source2 = None;
+                self.source2_kind = None;
+                self.source2_identity.clear();
+            }
+            Role::Gate => {
+                self.gate = None;
+                self.gate_kind = None;
+                self.gate_identity.clear();
+            }
             Role::Meter => {
                 self.meter = None;
                 self.meter_kind = None;
@@ -602,6 +662,12 @@ impl DevicePair {
             .source
             .as_ref()
             .filter(|endpoint| endpoint.address != 0)
+            .or_else(|| {
+                self.source2
+                    .as_ref()
+                    .filter(|endpoint| endpoint.address != 0)
+            })
+            .or_else(|| self.gate.as_ref().filter(|endpoint| endpoint.address != 0))
             .or_else(|| self.meter.as_ref().filter(|endpoint| endpoint.address != 0))
             .map(|endpoint| (&endpoint.session, endpoint.address));
         match bridge {
@@ -624,6 +690,8 @@ impl DevicePair {
     pub fn model(&self, role: Role) -> &str {
         match role {
             Role::Source => &self.source_model,
+            Role::Source2 => &self.source2_model,
+            Role::Gate => &self.gate_model,
             Role::Meter => &self.meter_model,
         }
     }
@@ -647,6 +715,7 @@ impl DevicePair {
 
     pub fn write(&mut self, role: Role, command: &str) -> Result<(), String> {
         self.ensure_usable()?;
+        self.validate_recovery(role)?;
         let model = self.model(role).to_owned();
         let commands = drivers::write_commands(role, &model, self.meter_usb(), command)?;
         for command in commands {
@@ -662,7 +731,10 @@ impl DevicePair {
     /// Executes the ordinary write path while retaining the physical helper
     /// exchanges. It adds no I/O beyond [`Self::write`].
     pub fn write_recorded(&mut self, role: Role, command: &str) -> RecordedQuery {
-        if let Err(error) = self.ensure_usable() {
+        if let Err(error) = self
+            .ensure_usable()
+            .and_then(|()| self.validate_recovery(role))
+        {
             return RecordedQuery {
                 result: Err(error),
                 exchanges: Vec::new(),
@@ -719,6 +791,7 @@ impl DevicePair {
 
     pub fn query(&mut self, role: Role, command: &str) -> Result<String, String> {
         self.ensure_usable()?;
+        self.validate_recovery(role)?;
         let endpoint = self.endpoint(role)?.clone();
         let model = self.model(role).to_owned();
         let usb = self.meter_usb();
@@ -732,7 +805,10 @@ impl DevicePair {
     /// helper text for each physical request. This does not add any transport
     /// I/O; callers should use it only for persisted acquisition evidence.
     pub fn query_recorded(&mut self, role: Role, command: &str) -> RecordedQuery {
-        if let Err(error) = self.ensure_usable() {
+        if let Err(error) = self
+            .ensure_usable()
+            .and_then(|()| self.validate_recovery(role))
+        {
             return RecordedQuery {
                 result: Err(error),
                 exchanges: Vec::new(),
@@ -760,48 +836,99 @@ impl DevicePair {
         }
     }
 
-    /// Attempts emergency source shutdown. It sends output-off first, verifies
-    /// that output is off, then returns the fixed source level to zero. If the
-    /// source session is poisoned (including by a meter timeout on shared GPIB),
-    /// it kills that helper, transfers its exclusive lease to a fresh helper,
-    /// re-verifies the exact GS210 identity, and retries at most twice.
+    /// Attempts emergency shutdown of the primary source. This legacy API is
+    /// equivalent to [`Self::force_output_off_role`] for [`Role::Source`].
     pub fn force_output_off(&mut self) -> Result<OutputOffReport, String> {
-        if !self.usable {
-            return Err("This instrument pair is unusable after a failed recovery. Reconnect before measuring.".into());
+        self.force_output_off_role(Role::Source)
+    }
+
+    /// Attempts emergency shutdown of one source. Source roles share the same
+    /// recovery rules but retain their individual model and identity checks.
+    pub fn force_output_off_role(&mut self, role: Role) -> Result<OutputOffReport, String> {
+        if !is_source_role(role) {
+            return Err("Emergency output-off is only available for sources.".into());
         }
-        if self.source.is_none() {
-            return Err("Cannot turn output off because the source is not connected.".into());
+        if self.endpoint_option(role).is_none() {
+            if role == Role::Source {
+                return Err("Cannot turn output off because the source is not connected.".into());
+            }
+            return Err(format!(
+                "Cannot turn output off because {} is not connected.",
+                role_name(role)
+            ));
         }
         let deadline = Instant::now() + Duration::from_secs(28);
-        let initial_error = match self.output_off_once(deadline) {
-            Ok(report) => return Ok(report),
-            Err(error) => error,
+        // Validation failure may mean the shared helper is poisoned. Try
+        // replacing it for this source instead of abandoning the OFF attempt.
+        let validation = if !self.usable || self.recovery_pending[role as usize] {
+            self.verify_recovered_role(role, deadline.min(Instant::now() + Duration::from_secs(5)))
+        } else {
+            Ok(())
         };
-        let mut errors = vec![format!("Initial output-off attempt: {initial_error}")];
-        for _attempt in 0..2 {
-            if Instant::now() >= deadline {
-                break;
-            }
-            match self
-                .replace_source_helper(deadline)
-                .and_then(|_| self.output_off_once(deadline))
-            {
-                Ok(report) => return Ok(report),
-                Err(error) => errors.push(error),
+        let result = match validation {
+            Ok(()) => self.output_off_with_recovery(role, deadline),
+            Err(error) => self.output_off_recover(role, deadline, error),
+        };
+        match result {
+            Ok(report) => Ok(report),
+            Err(error) => {
+                self.usable = false;
+                Err(format!(
+                    "Could not confirm {} output off after transport recovery. Use the instrument front panel to turn output off, then reconnect. {error}",
+                    role_name(role)
+                ))
             }
         }
-        self.usable = false;
-        Err(format!(
-            "Could not confirm GS210 output off after transport recovery. Use the instrument front panel to turn output off, then reconnect. {}",
-            errors.join(" ")
-        ))
+    }
+
+    /// Sends the output-off command to every connected source before waiting
+    /// for an output query, zeroing, or helper recovery. A failure on one
+    /// source never prevents an attempt on the other source.
+    pub fn force_sources_output_off(&mut self) -> Vec<(Role, Result<OutputOffReport, String>)> {
+        let deadline = Instant::now() + Duration::from_secs(28);
+        let sources: Vec<_> = SOURCE_ROLES
+            .into_iter()
+            .filter(|role| self.is_connected(*role))
+            .collect();
+        let dispatches: Vec<_> = sources
+            .iter()
+            .map(|role| {
+                (
+                    *role,
+                    (if self.usable && !self.recovery_pending[*role as usize] {
+                        Ok(())
+                    } else {
+                        self.verify_recovered_role(*role, deadline)
+                    })
+                    .and_then(|()| self.output_off_dispatch(*role, deadline)),
+                )
+            })
+            .collect();
+        let mut failed = false;
+        let results = dispatches
+            .into_iter()
+            .map(|(role, dispatch)| {
+                let result = match dispatch {
+                    Ok(()) => self
+                        .output_off_verify_and_zero(role, deadline)
+                        .or_else(|error| self.output_off_recover(role, deadline, error)),
+                    Err(error) => self.output_off_recover(role, deadline, error),
+                };
+                failed |= result.is_err();
+                (role, result)
+            })
+            .collect();
+        if failed {
+            self.usable = false;
+        }
+        results
     }
 
     /// Releases remote control and terminates helpers. This does not claim that
     /// an instrument output is off: output cleanup belongs to the measurement core.
     pub fn close(&mut self) -> Result<(), String> {
         let mut errors = Vec::new();
-        for role in [Role::Source, Role::Meter] {
+        for role in ROLES {
             if let Err(error) = self.disconnect(role) {
                 errors.push(error);
             }
@@ -821,13 +948,35 @@ impl DevicePair {
     fn endpoint_option(&self, role: Role) -> Option<&Endpoint> {
         match role {
             Role::Source => self.source.as_ref(),
+            Role::Source2 => self.source2.as_ref(),
+            Role::Gate => self.gate.as_ref(),
             Role::Meter => self.meter.as_ref(),
+        }
+    }
+
+    fn endpoint_mut(&mut self, role: Role) -> Option<&mut Endpoint> {
+        match role {
+            Role::Source => self.source.as_mut(),
+            Role::Source2 => self.source2.as_mut(),
+            Role::Gate => self.gate.as_mut(),
+            Role::Meter => self.meter.as_mut(),
+        }
+    }
+
+    fn identity(&self, role: Role) -> &str {
+        match role {
+            Role::Source => &self.source_identity,
+            Role::Source2 => &self.source2_identity,
+            Role::Gate => &self.gate_identity,
+            Role::Meter => &self.meter_identity,
         }
     }
 
     fn kind_option(&self, role: Role) -> Option<&ResourceKind> {
         match role {
             Role::Source => self.source_kind.as_ref(),
+            Role::Source2 => self.source2_kind.as_ref(),
+            Role::Gate => self.gate_kind.as_ref(),
             Role::Meter => self.meter_kind.as_ref(),
         }
     }
@@ -836,21 +985,24 @@ impl DevicePair {
             .as_ref()
             .is_some_and(|endpoint| Arc::ptr_eq(&endpoint.session, session))
             || self
+                .source2
+                .as_ref()
+                .is_some_and(|endpoint| Arc::ptr_eq(&endpoint.session, session))
+            || self
+                .gate
+                .as_ref()
+                .is_some_and(|endpoint| Arc::ptr_eq(&endpoint.session, session))
+            || self
                 .meter
                 .as_ref()
                 .is_some_and(|endpoint| Arc::ptr_eq(&endpoint.session, session))
     }
     fn open_single_endpoint(&self, kind: &ResourceKind) -> Result<Endpoint, String> {
         let lease = if kind.is_gpib() {
-            let existing = self
-                .source
-                .as_ref()
-                .filter(|_| self.source_kind.as_ref().is_some_and(ResourceKind::is_gpib))
-                .or_else(|| {
-                    self.meter
-                        .as_ref()
-                        .filter(|_| self.meter_kind.as_ref().is_some_and(ResourceKind::is_gpib))
-                });
+            let existing = ROLES.into_iter().find_map(|role| {
+                self.endpoint_option(role)
+                    .filter(|_| self.kind_option(role).is_some_and(ResourceKind::is_gpib))
+            });
             if let Some(existing) = existing {
                 lock_session(&existing.session)?
                     .lease
@@ -889,16 +1041,26 @@ impl DevicePair {
         }
     }
 
-    fn output_off_once(&mut self, deadline: Instant) -> Result<OutputOffReport, String> {
-        let source = self.source.as_ref().ok_or_else(|| {
-            "Cannot turn output off because the source is not connected.".to_owned()
-        })?;
-        let legacy = drivers::is_legacy_source(&self.source_model);
-        source.request_before(
-            "WRITE",
-            if legacy { "O0;E\n" } else { ":OUTP OFF\n" },
-            deadline,
-        )?;
+    fn output_off_dispatch(&self, role: Role, deadline: Instant) -> Result<(), String> {
+        let source = self.endpoint(role)?;
+        let legacy = drivers::is_legacy_source(self.model(role));
+        source
+            .request_before(
+                "WRITE",
+                if legacy { "O0;E\n" } else { ":OUTP OFF\n" },
+                deadline,
+            )
+            .map(|_| ())
+    }
+
+    fn output_off_verify_and_zero(
+        &self,
+        role: Role,
+        deadline: Instant,
+    ) -> Result<OutputOffReport, String> {
+        let source = self.endpoint(role)?;
+        let model = self.model(role);
+        let legacy = drivers::is_legacy_source(model);
         let output = source.request_before(
             "QUERY",
             if legacy { "OC;E\n" } else { ":OUTP?\n" },
@@ -917,7 +1079,7 @@ impl DevicePair {
         if !matches!(output.trim(), "0" | "OFF") {
             return Err(format!(
                 "{} did not confirm output off (returned {output:?}).",
-                self.source_model
+                model
             ));
         }
         let zeroing_warning = source
@@ -937,24 +1099,66 @@ impl DevicePair {
         })
     }
 
-    fn replace_source_helper(&mut self, deadline: Instant) -> Result<(), String> {
-        let (source_resource, source_address, source_session) = self
-            .source
-            .as_ref()
-            .map(|source| {
-                (
-                    source.resource.clone(),
-                    source.address,
-                    source.session.clone(),
-                )
-            })
+    fn output_off_once(&self, role: Role, deadline: Instant) -> Result<OutputOffReport, String> {
+        self.output_off_dispatch(role, deadline)?;
+        self.output_off_verify_and_zero(role, deadline)
+    }
+
+    fn output_off_with_recovery(
+        &mut self,
+        role: Role,
+        deadline: Instant,
+    ) -> Result<OutputOffReport, String> {
+        match self.output_off_once(role, deadline) {
+            Ok(report) => Ok(report),
+            Err(error) => self.output_off_recover(role, deadline, error),
+        }
+    }
+
+    fn output_off_recover(
+        &mut self,
+        role: Role,
+        deadline: Instant,
+        initial_error: String,
+    ) -> Result<OutputOffReport, String> {
+        let mut errors = vec![format!("Initial output-off attempt: {initial_error}")];
+        for _attempt in 0..2 {
+            if Instant::now() >= deadline {
+                break;
+            }
+            match self
+                .replace_source_helper(role, deadline)
+                .and_then(|_| self.output_off_once(role, deadline))
+            {
+                Ok(report) => return Ok(report),
+                Err(error) => errors.push(error),
+            }
+        }
+        Err(errors.join(" "))
+    }
+
+    fn replace_source_helper(
+        &mut self,
+        recovering_role: Role,
+        deadline: Instant,
+    ) -> Result<(), String> {
+        let source_session = self
+            .endpoint_option(recovering_role)
+            .map(|source| source.session.clone())
             .ok_or_else(|| {
-                "Cannot recover output control because the source is not connected.".to_owned()
+                format!(
+                    "Cannot recover output control because {} is not connected.",
+                    role_name(recovering_role)
+                )
             })?;
         let source_kind = self
-            .source_kind
-            .as_ref()
-            .ok_or_else(|| "Source connection state is incomplete.".to_owned())?
+            .kind_option(recovering_role)
+            .ok_or_else(|| {
+                format!(
+                    "{} connection state is incomplete.",
+                    role_name(recovering_role)
+                )
+            })?
             .clone();
         let lease = {
             let mut old = lock_session(&source_session)?;
@@ -964,36 +1168,54 @@ impl DevicePair {
         };
         let fresh = spawn_for_resource(&self.paths, &source_kind, lease, deadline)?;
         let fresh = Arc::new(Mutex::new(fresh));
-        let candidate = Endpoint {
-            resource: source_resource,
-            address: source_address,
-            session: fresh.clone(),
-        };
-        // Install the fresh source session before validation. If validation or
+        // Install the fresh shared session before validation. If validation or
         // shutdown fails, the next bounded recovery attempt can take its lease
         // and terminate it; no lease is silently dropped between attempts.
-        self.source.as_mut().expect("source checked").session = fresh.clone();
-        if let Some(meter) = self
-            .meter
-            .as_mut()
-            .filter(|meter| Arc::ptr_eq(&meter.session, &source_session))
-        {
-            meter.session = fresh.clone();
+        for role in ROLES {
+            if self
+                .endpoint_option(role)
+                .is_some_and(|endpoint| Arc::ptr_eq(&endpoint.session, &source_session))
+            {
+                self.endpoint_mut(role).expect("endpoint checked").session = fresh.clone();
+                self.recovery_pending[role as usize] = true;
+            }
         }
-        let identity = if drivers::is_legacy_source(&self.source_model) {
-            // Re-identification shares the same emergency deadline, including all OS lines.
-            let panel = legacy_panel_before(&candidate, deadline)?;
-            panel.lines().next().unwrap_or_default().trim().to_owned()
-        } else {
-            candidate.request_before("QUERY", "*IDN?\n", deadline)?
-        };
-        instruments::verify_model(Role::Source, &self.source_model, &identity)?;
-        if normalize_identity(&identity) != normalize_identity(&self.source_identity) {
+        // Validate only the source about to receive OFF. Checking a meter
+        // first can delay shutdown indefinitely after a shared-bus failure.
+        // Other roles are validated lazily before their next ordinary I/O;
+        // they must not delay the emergency OFF of this source.
+        self.verify_recovered_role(recovering_role, deadline)?;
+        self.recovery_pending[recovering_role as usize] = false;
+        Ok(())
+    }
+
+    fn validate_recovery(&mut self, role: Role) -> Result<(), String> {
+        if self.recovery_pending[role as usize] {
+            if let Err(error) =
+                self.verify_recovered_role(role, Instant::now() + Duration::from_secs(5))
+            {
+                self.usable = false;
+                return Err(error);
+            }
+            self.recovery_pending[role as usize] = false;
+        }
+        Ok(())
+    }
+
+    fn verify_recovered_role(&self, role: Role, deadline: Instant) -> Result<(), String> {
+        let endpoint = self.endpoint(role)?;
+        let model = self.model(role);
+        let identity = identify_endpoint_before(endpoint, role, model, deadline)?;
+        instruments::verify_model(role, model, &identity)?;
+        let expected = self.identity(role);
+        if normalize_identity(&identity) != normalize_identity(expected) {
             return Err(format!(
-                "Recovered source identity {identity:?} does not match the previously validated source {}.",
-                self.source_identity
+                "Recovered {} identity {identity:?} does not match the previously validated {} {expected}.",
+                role_name(role),
+                role_name(role)
             ));
         }
+
         Ok(())
     }
 }
@@ -1141,6 +1363,28 @@ fn legacy_panel_before(endpoint: &Endpoint, deadline: Instant) -> Result<String,
 }
 fn identify_endpoint(endpoint: &Endpoint, role: Role, model: &str) -> Result<String, String> {
     drivers::identify(&mut EndpointIo { endpoint }, role, model)
+}
+
+fn identify_endpoint_before(
+    endpoint: &Endpoint,
+    role: Role,
+    model: &str,
+    deadline: Instant,
+) -> Result<String, String> {
+    if drivers::is_legacy_source(model) {
+        Ok(legacy_panel_before(endpoint, deadline)?
+            .lines()
+            .next()
+            .unwrap_or_default()
+            .trim()
+            .into())
+    } else {
+        endpoint.request_before(
+            "QUERY",
+            instruments::identity_command(role, model)?,
+            deadline,
+        )
+    }
 }
 
 fn spawn_for_resource(
@@ -1995,6 +2239,95 @@ exit 1
             DevicePair::new(&paths).force_output_off().unwrap_err(),
             "Cannot turn output off because the source is not connected."
         );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn two_sources_gate_and_meter_share_one_gpib_helper_and_shutdown_only_sweep_sources() {
+        use std::os::unix::fs::PermissionsExt;
+        let _guard = GPIB_TEST_LOCK.lock().unwrap();
+        let directory = std::env::temp_dir().join(format!(
+            "kohdalab-transport-two-sources-test-{}",
+            std::process::id()
+        ));
+        fs::create_dir_all(&directory).unwrap();
+        let log = directory.join("requests.log");
+        let helper = directory.join("fake-gpib-helper.sh");
+        let script = format!(
+            r#"#!/bin/sh
+printf 'START\n' >> '{}'
+printf 'KIV\tOK\t\n'
+while read op address timeout payload; do
+  printf '%s %s %s\n' "$op" "$address" "$payload" >> '{}'
+  if [ "$op" = QUERY ] && [ "$payload" = 2a49444e3f0a ]; then
+    if [ "$address" = 3 ] || [ "$address" = 5 ] || [ "$address" = 9 ]; then printf 'KIV\tOK\t594f4b4f474157412c47533231302c53455249414c2d312c322e30310a\n'; else printf 'KIV\tOK\t4167696c656e742c3334343131412c4d455445522d312c322e300a\n'; fi
+  elif [ "$op" = QUERY ] && [ "$payload" = 3a4f5554503f0a ]; then
+    printf 'KIV\tOK\t300a\n'
+  else
+    printf 'KIV\tOK\t300a\n'
+  fi
+done
+"#,
+            log.display(),
+            log.display()
+        );
+        fs::write(&helper, script).unwrap();
+        let mut permissions = fs::metadata(&helper).unwrap().permissions();
+        permissions.set_mode(0o700);
+        fs::set_permissions(&helper, permissions).unwrap();
+        let paths = HelperPaths {
+            gpib: helper.clone(),
+            usbtmc: helper,
+            setup: None,
+        };
+        let mut pair = DevicePair::new(&paths);
+        pair.connect(Role::Source, "GPIB0::3::INSTR").unwrap();
+        assert!(
+            pair.connect(Role::Source2, "GPIB0::3::INSTR")
+                .unwrap_err()
+                .contains("different physical resources")
+        );
+        pair.connect(Role::Source2, "GPIB0::5::INSTR").unwrap();
+        pair.connect(Role::Gate, "GPIB0::9::INSTR").unwrap();
+        pair.connect(Role::Meter, "GPIB0::7::INSTR").unwrap();
+        assert!(pair.source2_identity.contains("GS210"));
+        assert!(pair.gate_identity.contains("GS210"));
+        assert_eq!(
+            fs::read_to_string(&log).unwrap().matches("START").count(),
+            1
+        );
+
+        let reports = pair.force_sources_output_off();
+        assert_eq!(reports.len(), 2);
+        assert!(reports.iter().all(|(_, result)| {
+            result
+                .as_ref()
+                .is_ok_and(|report| report.output_off_verified)
+        }));
+        let requests = fs::read_to_string(&log).unwrap();
+        let write_3 = requests.find("WRITE 3 3a4f555450204f46460a").unwrap();
+        let write_5 = requests.find("WRITE 5 3a4f555450204f46460a").unwrap();
+        let verify = requests.find("QUERY 3 3a4f5554503f0a").unwrap();
+        assert!(write_3 < verify && write_5 < verify);
+        assert!(!requests.contains("WRITE 9 3a4f555450204f46460a"));
+        assert!(
+            pair.force_output_off_role(Role::Gate)
+                .unwrap()
+                .output_off_verified
+        );
+
+        pair.disconnect(Role::Source).unwrap();
+        assert!(pair.is_connected(Role::Source2));
+        assert!(pair.is_connected(Role::Gate));
+        assert!(pair.is_connected(Role::Meter));
+        assert!(pair.query(Role::Source2, "READ?").is_ok());
+        let requests = fs::read_to_string(&log).unwrap();
+        assert!(!requests.contains("REN 3 30"));
+        pair.close().unwrap();
+        let requests = fs::read_to_string(&log).unwrap();
+        assert!(requests.contains("REN 7 30"));
+        assert!(requests.contains("EXIT 1 -"));
+        fs::remove_dir_all(directory).unwrap();
     }
 
     #[test]

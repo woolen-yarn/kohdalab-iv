@@ -68,6 +68,45 @@ class ClientTests(unittest.TestCase):
             metadata = json.loads(path.with_suffix('.run.json').read_text())
             self.assertFalse(metadata['in_progress'])
 
+    def test_simulated_gate_bias_stays_on_for_a_balanced_iv_sweep(self):
+        """The gate and both sweep sources share one Rust engine session."""
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / 'balanced.csv'
+            with NativeIV() as iv:
+                iv.connect(simulation=True)
+                iv.connect_source2(simulation=True)
+                iv.connect_gate(simulation=True)
+                gate = iv.set_gate_voltage(0.1, compliance=0.001, ramp_step=0.001)
+                self.assertEqual(gate['gate_output'], 'On')
+                state = iv.run(path, {
+                    'pattern': 'linear',
+                    'start': -0.001,
+                    'stop': 0.001,
+                    'step': 0.001,
+                    'source_compliance': 0.001,
+                    'balanced_source': {
+                        'source_model': 'YOKOGAWA_GS210',
+                        'source_compliance': 0.001,
+                    },
+                    'settle_s': 0.0,
+                    'start_settle_s': 0.0,
+                    'ramp_wait_s': 0.0,
+                })
+                self.assertEqual(state['phase'], 'Completed')
+                self.assertEqual(state['output'], 'Off')
+                self.assertEqual(state['gate_output'], 'On')
+                metadata = json.loads(path.with_suffix('.run.json').read_text())
+                self.assertEqual(metadata['balanced_drive']['ratio'], [1, 1])
+                self.assertEqual(len(metadata['dual_source_points']), state['points'])
+                first = metadata['dual_source_points'][0]
+                self.assertEqual(first['source1']['setpoint_V'], -0.0005)
+                self.assertEqual(first['source2']['setpoint_V'], 0.0005)
+                for role in ('source1', 'source2'):
+                    self.assertIsNone(first[role]['level_readback_V'])
+                    self.assertIsNone(first[role]['output_voltage_V'])
+                off = iv.gate_output_off()
+                self.assertEqual(off['gate_output'], 'Off')
+
 
 if __name__ == '__main__':
     unittest.main()

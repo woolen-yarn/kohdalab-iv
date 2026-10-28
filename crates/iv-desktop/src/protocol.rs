@@ -7,6 +7,13 @@ use serde::{Deserialize, Serialize};
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(tag = "command", rename_all = "snake_case")]
 pub enum Command {
+    /// Correlates one finite, non-safety command with the state published
+    /// after that command has completed.
+    GuiJob {
+        id: String,
+        #[serde(rename = "payload")]
+        command: Box<Command>,
+    },
     Heartbeat,
     Discover,
     SetLiveMode {
@@ -27,6 +34,24 @@ pub enum Command {
         simulation: bool,
         resource: String,
     },
+    ConnectSource2 {
+        #[serde(default = "default_source_model")]
+        model: String,
+        simulation: bool,
+        resource: String,
+    },
+    ConnectGate {
+        #[serde(default = "default_source_model")]
+        model: String,
+        simulation: bool,
+        resource: String,
+    },
+    SetGateVoltage {
+        voltage: f64,
+        compliance: f64,
+        ramp_step: f64,
+    },
+    GateOutputOff,
     ConnectMeter {
         #[serde(default = "default_meter_model")]
         model: String,
@@ -34,6 +59,8 @@ pub enum Command {
         resource: String,
     },
     DisconnectSource,
+    DisconnectSource2,
+    DisconnectGate,
     DisconnectMeter,
     Run {
         config: RunConfig,
@@ -43,6 +70,58 @@ pub enum Command {
     OutputOff,
     Disconnect,
     Shutdown,
+}
+
+/// Wrap a command whose final engine state should be correlated with `id`.
+///
+/// Safety and lease commands deliberately cannot be jobs: they must remain
+/// immediate, even if the normal command queue is full.
+pub fn gui_job(id: String, command: Command) -> Result<Command, String> {
+    validate_gui_job(&id, &command).map_err(|_| {
+        "GUI jobs support only finite measurement and connection commands.".to_string()
+    })?;
+    Ok(Command::GuiJob {
+        id,
+        command: Box::new(command),
+    })
+}
+
+/// Removes a single, valid GUI-job envelope before the engine's normal
+/// admission and safety handling.  Invalid envelopes are rejected rather
+/// than allowing a safety command to be delayed behind the normal queue.
+pub fn unwrap_gui_job(command: Command) -> Result<(Option<String>, Command), String> {
+    let Command::GuiJob { id, command } = command else {
+        return Ok((None, command));
+    };
+    validate_gui_job(&id, &command)?;
+    Ok((Some(id), *command))
+}
+
+pub fn validate_gui_job(id: &str, command: &Command) -> Result<(), String> {
+    if id.trim().is_empty() || !is_gui_job_command(command) {
+        return Err("Invalid GUI job envelope.".into());
+    }
+    Ok(())
+}
+
+fn is_gui_job_command(command: &Command) -> bool {
+    matches!(
+        command,
+        Command::Discover
+            | Command::SetLiveMode { .. }
+            | Command::Connect { .. }
+            | Command::ConnectSource { .. }
+            | Command::ConnectSource2 { .. }
+            | Command::ConnectGate { .. }
+            | Command::ConnectMeter { .. }
+            | Command::DisconnectSource
+            | Command::DisconnectSource2
+            | Command::DisconnectGate
+            | Command::DisconnectMeter
+            | Command::Disconnect
+            | Command::Run { .. }
+            | Command::SetGateVoltage { .. }
+    )
 }
 
 /// Latched safety event from the run's frozen configuration, not GUI edits.
@@ -60,6 +139,16 @@ pub struct ProtectionAlert {
     pub unit: String,
     pub observed: Option<f64>,
     pub indicator: String,
+    #[serde(default)]
+    pub source_index: Option<u8>,
+}
+
+/// The final state belonging to the last tagged GUI operation.  The embedded
+/// snapshot deliberately has no `gui_job` field so JSON cannot recurse.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct GuiJobCompletion {
+    pub id: String,
+    pub snapshot: serde_json::Value,
 }
 impl ProtectionAlert {
     pub(crate) fn measurement(config: &RunConfig, observed: f64) -> Self {
@@ -69,12 +158,53 @@ impl ProtectionAlert {
             unit: if config.mode == Mode::Iv { "A" } else { "V" }.into(),
             observed: Some(observed),
             indicator: String::new(),
+            source_index: None,
         }
     }
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct Snapshot {
+    #[serde(default)]
+    pub gui_job: Option<GuiJobCompletion>,
+    /// Small bounded completion history survives coalesced state updates.
+    #[serde(default)]
+    pub gui_jobs: Vec<GuiJobCompletion>,
+    /// Acknowledged explicit safety commands, including cancellation before Run starts.
+    #[serde(default)]
+    pub safety_revision: u64,
+    #[serde(default)]
+    pub source2_connected: bool,
+    #[serde(default)]
+    pub source2_simulation: bool,
+    #[serde(default)]
+    pub source2_identity: String,
+    #[serde(default)]
+    pub source2_resource: String,
+    #[serde(default)]
+    pub source2_output: OutputState,
+    #[serde(default)]
+    pub source2_level: Option<f64>,
+    #[serde(default)]
+    pub source2_resolution: Option<f64>,
+    #[serde(default)]
+    pub balanced_active: bool,
+    #[serde(default)]
+    pub gate_connected: bool,
+    #[serde(default)]
+    pub gate_simulation: bool,
+    #[serde(default)]
+    pub gate_identity: String,
+    #[serde(default)]
+    pub gate_resource: String,
+    #[serde(default)]
+    pub gate_output: OutputState,
+    #[serde(default)]
+    pub gate_voltage: Option<f64>,
+    #[serde(default)]
+    pub gate_compliance: Option<f64>,
+    #[serde(default)]
+    pub gate_revision: u64,
     pub phase: Phase,
     pub message: String,
     pub connected: bool,
@@ -114,6 +244,25 @@ pub struct Snapshot {
 impl Default for Snapshot {
     fn default() -> Self {
         Self {
+            gui_job: None,
+            gui_jobs: Vec::new(),
+            safety_revision: 0,
+            source2_connected: false,
+            source2_simulation: false,
+            source2_identity: String::new(),
+            source2_resource: String::new(),
+            source2_output: OutputState::Unknown,
+            source2_level: None,
+            source2_resolution: None,
+            balanced_active: false,
+            gate_connected: false,
+            gate_simulation: false,
+            gate_identity: String::new(),
+            gate_resource: String::new(),
+            gate_output: OutputState::Unknown,
+            gate_voltage: None,
+            gate_compliance: None,
+            gate_revision: 0,
             phase: Phase::Idle,
             message: "Choose your instruments or explore Simulation.".into(),
             connected: false,
@@ -158,4 +307,35 @@ fn default_source_model() -> String {
 }
 fn default_meter_model() -> String {
     "AGILENT_34411A".into()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn gui_job_envelope_accepts_only_normal_finite_commands() {
+        let command = gui_job("job-1".into(), Command::Discover).unwrap();
+        let (id, inner) = unwrap_gui_job(command).unwrap();
+        assert_eq!(id.as_deref(), Some("job-1"));
+        assert!(matches!(inner, Command::Discover));
+
+        for command in [
+            Command::Heartbeat,
+            Command::Stop,
+            Command::GateOutputOff,
+            Command::OutputOff,
+            Command::Shutdown,
+        ] {
+            assert!(gui_job("job-1".into(), command).is_err());
+        }
+        let nested = Command::GuiJob {
+            id: "outer".into(),
+            command: Box::new(Command::GuiJob {
+                id: "inner".into(),
+                command: Box::new(Command::Discover),
+            }),
+        };
+        assert!(unwrap_gui_job(nested).is_err());
+    }
 }

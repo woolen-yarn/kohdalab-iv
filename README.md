@@ -43,20 +43,24 @@ A stopped simulation: the popup shows the threshold, trigger reading and verifie
 | Channel / 配布チャネル | Version / バージョン | Platforms / 対応プラットフォーム |
 | --- | --- | --- |
 | Stable / 安定版 | [1.2.0](https://github.com/woolen-yarn/kohdalab-iv/releases/tag/portable-v1.2.0) | Windows x64 Setup / portable ZIP; macOS Apple silicon portable ZIP / Windows x64 セットアップ・ポータブル ZIP、macOS Apple silicon ポータブル ZIP |
-| Preview / プレビュー | [1.3.0-alpha.12](https://github.com/woolen-yarn/kohdalab-iv/releases/tag/preview-v1.3.0-alpha.12) | Windows x64 Setup / preview ZIP; macOS Apple silicon preview ZIP / Windows x64 セットアップ・プレビュー ZIP、macOS Apple silicon プレビュー ZIP |
+| Preview / プレビュー | [1.3.0-alpha.13](https://github.com/woolen-yarn/kohdalab-iv/releases/tag/preview-v1.3.0-alpha.13) | Windows x64 Setup / preview ZIP; macOS Apple silicon preview ZIP / Windows x64 セットアップ・プレビュー ZIP、macOS Apple silicon プレビュー ZIP |
 
 | Preview package / プレビューパッケージ | Kohdalab | Personal / 個人ミラー |
 | --- | --- | --- |
-| Windows Setup | [Download](https://github.com/Kohdalab/kohdalab-iv/releases/download/preview-v1.3.0-alpha.12/kohdalab-iv-1.3.0-alpha.12-windows-x64-Setup.exe) | [Download](https://github.com/woolen-yarn/kohdalab-iv/releases/download/preview-v1.3.0-alpha.12/kohdalab-iv-1.3.0-alpha.12-windows-x64-Setup.exe) |
-| Windows portable | [Download](https://github.com/Kohdalab/kohdalab-iv/releases/download/preview-v1.3.0-alpha.12/kohdalab-iv-1.3.0-alpha.12-windows-x64-preview.zip) | [Download](https://github.com/woolen-yarn/kohdalab-iv/releases/download/preview-v1.3.0-alpha.12/kohdalab-iv-1.3.0-alpha.12-windows-x64-preview.zip) |
-| Mac portable (Apple silicon) | [Download](https://github.com/Kohdalab/kohdalab-iv/releases/download/preview-v1.3.0-alpha.12/kohdalab-iv-1.3.0-alpha.12-macos-arm64-preview.zip) | [Download](https://github.com/woolen-yarn/kohdalab-iv/releases/download/preview-v1.3.0-alpha.12/kohdalab-iv-1.3.0-alpha.12-macos-arm64-preview.zip) |
-| Source build kit / ソースビルドキット | [Download](https://github.com/Kohdalab/kohdalab-iv/releases/download/preview-v1.3.0-alpha.12/kohdalab-iv-1.3.0-alpha.12-build-kit.zip) | [Download](https://github.com/woolen-yarn/kohdalab-iv/releases/download/preview-v1.3.0-alpha.12/kohdalab-iv-1.3.0-alpha.12-build-kit.zip) |
+| Windows Setup | [Download](https://github.com/Kohdalab/kohdalab-iv/releases/download/preview-v1.3.0-alpha.13/kohdalab-iv-1.3.0-alpha.13-windows-x64-Setup.exe) | [Download](https://github.com/woolen-yarn/kohdalab-iv/releases/download/preview-v1.3.0-alpha.13/kohdalab-iv-1.3.0-alpha.13-windows-x64-Setup.exe) |
+| Windows portable | [Download](https://github.com/Kohdalab/kohdalab-iv/releases/download/preview-v1.3.0-alpha.13/kohdalab-iv-1.3.0-alpha.13-windows-x64-preview.zip) | [Download](https://github.com/woolen-yarn/kohdalab-iv/releases/download/preview-v1.3.0-alpha.13/kohdalab-iv-1.3.0-alpha.13-windows-x64-preview.zip) |
+| Mac portable (Apple silicon) | [Download](https://github.com/Kohdalab/kohdalab-iv/releases/download/preview-v1.3.0-alpha.13/kohdalab-iv-1.3.0-alpha.13-macos-arm64-preview.zip) | [Download](https://github.com/woolen-yarn/kohdalab-iv/releases/download/preview-v1.3.0-alpha.13/kohdalab-iv-1.3.0-alpha.13-macos-arm64-preview.zip) |
+| Source build kit / ソースビルドキット | [Download](https://github.com/Kohdalab/kohdalab-iv/releases/download/preview-v1.3.0-alpha.13/kohdalab-iv-1.3.0-alpha.13-build-kit.zip) | [Download](https://github.com/woolen-yarn/kohdalab-iv/releases/download/preview-v1.3.0-alpha.13/kohdalab-iv-1.3.0-alpha.13-build-kit.zip) |
 
 Rust and Python are not required to run the packaged application. Current Windows
 artifacts are unsigned; download packages and checksums together from Releases.
 macOS bundles use ad hoc signing and are not Apple-notarized.
 
 配布アプリケーションの実行に Rust や Python は不要です。現在の Windows 配布物は未署名です。Releases からパッケージとチェックサムを必ず一緒に取得してください。macOS バンドルは ad hoc 署名であり、Apple の公証は受けていません。
+
+Preview 1.3.0-alpha.13 adds dual voltage-source V-I sweeps with integer source ratios, a left-panel multi-instrument inventory, and the shared GUI API v2 for Python/Jupyter control of an open GUI. See [dual-source operation](docs/reference/dual-source-and-gui-control.md) and the [GUI API reference](docs/reference/gui-api.md).
+
+Preview 1.3.0-alpha.13 では、整数比で配分する2台の電圧Source V-I測定、左パネルの複数機器インベントリ、起動済みGUIをPython/Jupyterから操作する共通GUI API v2を追加しました。[Dual Source操作](docs/reference/dual-source-and-gui-control.md)と[GUI API仕様](docs/reference/gui-api.md)を参照してください。
 
 ## Supported hardware / 対応機器
 
@@ -194,3 +198,7 @@ dependencies retain their own licenses; keep the accompanying notices and source
 See [redistribution terms](REDISTRIBUTION.md), [code signing](CODE_SIGNING_POLICY.md), and [privacy](PRIVACY.md).
 
 プロジェクトコードは [MIT ライセンス](LICENSE)です。ネイティブヘルパーと再配布する依存関係にはそれぞれのライセンスが適用されるため、付属の通知とソースを保持してください。[再配布条件](REDISTRIBUTION.md)、[コード署名](CODE_SIGNING_POLICY.md)、[プライバシー](PRIVACY.md)も参照してください。
+
+Preview: [Dual source and control of the open GUI](docs/reference/dual-source-and-gui-control.md).
+
+Preview GUI automation: [common API and ownership contract](docs/reference/gui-api.md).
