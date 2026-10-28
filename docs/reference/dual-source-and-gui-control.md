@@ -6,7 +6,8 @@ V-I or I-V workflow. Hardware validation of the new mode is pending.
 ## Devices and measurement settings
 
 The left panel contains saved Source and Meter entries. Use **+ Source** or
-**+ Meter** to add choices. In **Settings > Devices**, choose the entries for
+**+ Meter** above the device cards to add choices after disconnecting the active
+instruments. Remove unused entries with **Remove** on their inactive cards. In **Settings > Devices**, choose the entries for
 Source 1 and Meter, and, in **Dual V-I** mode, Source 2. Initial assignments
 follow entry order. Active cards keep their normal colors; unused cards are
 dimmed. Unused entries are configuration choices and are not opened by All

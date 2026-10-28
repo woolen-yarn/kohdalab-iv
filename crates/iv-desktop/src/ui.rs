@@ -565,6 +565,8 @@ impl IvApp {
                                 .id_salt("settings_scroll")
                                 .auto_shrink([false, false])
                                 .show(ui, |ui| {
+                                    self.device_inventory_actions(ui);
+                                    ui.add_space(4.0);
                                     self.instrument(ui, true);
                                     if self.settings.config.balanced_source.is_some() {
                                         ui.add_space(4.0);
@@ -1739,6 +1741,29 @@ impl IvApp {
         });
     }
 
+    /// Inventory management stays beside the device cards; Settings only
+    /// assigns their measurement roles and the dual-source ratio.
+    fn device_inventory_actions(&mut self, ui: &mut egui::Ui) {
+        let editable = !self.busy()
+            && !self.state.source_connected
+            && !self.state.source2_connected
+            && !self.state.meter_connected;
+        ui.horizontal(|ui| {
+            if button(ui, "+ Source", 82.0, editable)
+                .on_disabled_hover_text("Disconnect the active instruments before adding a device.")
+                .clicked()
+            {
+                self.settings.add_source();
+            }
+            if button(ui, "+ Meter", 78.0, editable)
+                .on_disabled_hover_text("Disconnect the active instruments before adding a device.")
+                .clicked()
+            {
+                self.settings.add_meter();
+            }
+        });
+    }
+
     fn device_bindings(&mut self, ui: &mut egui::Ui) {
         self.settings.store_active_entries();
         section(ui, "Devices", |ui| {
@@ -1841,14 +1866,6 @@ impl IvApp {
                         changed |= before != self.settings.meter_id;
                         ui.end_row();
                     });
-                ui.horizontal(|ui| {
-                    if button(ui, "+ Source", 82.0, true).clicked() {
-                        self.settings.add_source();
-                    }
-                    if button(ui, "+ Meter", 78.0, true).clicked() {
-                        self.settings.add_meter();
-                    }
-                });
                 if let Some(dual) = &mut self.settings.config.balanced_source {
                     ui.add_space(6.0);
                     ui.separator();
