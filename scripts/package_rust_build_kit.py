@@ -57,6 +57,11 @@ def main() -> None:
             "Start with README.md. Mac: scripts/build-macos.command. "
             "Windows: scripts/build-windows.ps1.\n"
             "Pinned Windows helpers, full native source, licenses and icons are included.\n"
+            "Meter Auto/fixed range presets: specs/meters.toml. "
+            "Usage: docs/reference/meter-ranging.md.\n"
+            "Manual DC controls: docs/reference/manual-dc-output.md. "
+            "Shared GPIB service sources are development-only; see "
+            "docs/guides/shared-instruments-development.md.\n"
             "Rust and platform compiler tools are needed only on the build PC.\n",
         )
     with ZipFile(destination) as kit:
