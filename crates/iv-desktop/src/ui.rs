@@ -129,12 +129,13 @@ impl IvApp {
         style(&cc.egui_ctx);
         let ctx = cc.egui_ctx.clone();
         let client = Client::start(move || ctx.request_repaint());
-        let (mut settings, mut settings_notice) = match std::fs::read(settings_path()) {
-            Ok(bytes) => match settings::load_settings(&bytes) {
-                Ok(settings) => (settings, String::new()),
+        let (mut settings, mut settings_notice) = if smoke || startup_profile.is_some() {
+            (Settings::default(), String::new())
+        } else {
+            match settings::load_startup_settings() {
+                Ok(loaded) => loaded,
                 Err(error) => (Settings::default(), error),
-            },
-            Err(_) => (Settings::default(), String::new()),
+            }
         };
         if smoke {
             settings = Settings {
@@ -557,7 +558,9 @@ impl IvApp {
         if !self.smoke && save_preferences {
             self.settings.store_active_entries();
             self.settings.simulation = self.both_simulated();
-            let _ = save_settings(&self.settings, Path::new(&self.config_path));
+            if let Err(error) = save_settings(&self.settings, Path::new(&self.config_path)) {
+                self.report(format!("Settings were not saved: {error}"));
+            }
         }
         if !self.send(Command::Run {
             config: self.settings.config.clone(),

@@ -15,6 +15,8 @@ $utf8=[Text.UTF8Encoding]::new($false)
 if (Test-Path (Join-Path $OutputDir 'gui-benchmark.json')) { throw 'Existing benchmark: preserve it and choose a new output directory' }
 New-Item -ItemType Directory -Force $OutputDir | Out-Null
 $rustProfile=Join-Path $OutputDir 'rust-profile'
+# Seed the legacy IV path for older comparison binaries; new builds migrate it
+# to .kohdalab/iv/config.json inside this isolated benchmark profile.
 $rustConfigDir=Join-Path $rustProfile '.kohdalab\config'
 New-Item -ItemType Directory -Force $rustConfigDir | Out-Null
 $rustSettings=@{source='';meter='';source_model='SIMULATED_SOURCE';meter_model='SIMULATED_METER';simulation=$true;output_dir=(Join-Path $OutputDir 'unused-results');filename='unused';auto_suffix=$true}

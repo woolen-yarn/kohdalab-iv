@@ -105,6 +105,7 @@ impl Default for InstrumentEntry {
 #[derive(Clone, Serialize, Deserialize)]
 #[serde(default)]
 pub(super) struct Settings {
+    pub(super) application: String,
     /// This stays optional on read so pre-versioned config files remain valid.
     pub(super) schema_version: u32,
     pub(super) config: RunConfig,
@@ -152,6 +153,7 @@ pub(super) struct Settings {
 impl Default for Settings {
     fn default() -> Self {
         Self {
+            application: APPLICATION_ID.into(),
             schema_version: SETTINGS_SCHEMA_VERSION,
             config: RunConfig::default(),
             source: String::new(),
@@ -374,25 +376,106 @@ fn user_dir() -> PathBuf {
         .join(".kohdalab")
 }
 
+pub(super) const APPLICATION_ID: &str = "kohdalab-iv";
+
 pub(super) fn settings_path() -> PathBuf {
-    user_dir().join("config").join("iv-next.json")
+    settings_path_in(&user_dir())
+}
+
+fn settings_path_in(root: &Path) -> PathBuf {
+    root.join("iv").join("config.json")
+}
+
+/// Migrate only native Rust IV settings. The Python iv.json and TRKR files
+/// remain untouched; they use different schemas and must not become defaults.
+pub(super) fn load_startup_settings() -> Result<(Settings, String), String> {
+    load_startup_settings_in(&user_dir())
+}
+
+fn load_startup_settings_in(root: &Path) -> Result<(Settings, String), String> {
+    let destination = settings_path_in(root);
+    match std::fs::read(&destination) {
+        Ok(bytes) => return load_settings(&bytes).map(|settings| (settings, String::new())),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+        Err(error) => return Err(format!("Read {}: {error}", destination.display())),
+    }
+    let legacy = root.join("config").join("iv-next.json");
+    let bytes = match std::fs::read(&legacy) {
+        Ok(bytes) => bytes,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+            return Ok((Settings::default(), String::new()));
+        }
+        Err(error) => {
+            return Err(format!(
+                "Read legacy IV settings {}: {error}",
+                legacy.display()
+            ));
+        }
+    };
+    let settings = load_settings(&bytes)
+        .map_err(|error| format!("Legacy IV settings {}: {error}", legacy.display()))?;
+    let parent = destination
+        .parent()
+        .ok_or("Missing IV settings directory")?;
+    std::fs::create_dir_all(parent).map_err(|error| error.to_string())?;
+    let mut temporary =
+        tempfile::NamedTempFile::new_in(parent).map_err(|error| error.to_string())?;
+    use std::io::Write;
+    temporary
+        .write_all(&serde_json::to_vec_pretty(&settings).map_err(|error| error.to_string())?)
+        .map_err(|error| error.to_string())?;
+    temporary
+        .as_file()
+        .sync_all()
+        .map_err(|error| error.to_string())?;
+    match temporary.persist_noclobber(&destination) {
+        Ok(_) => Ok((
+            settings,
+            format!(
+                "Imported IV settings from {}. Original file preserved.",
+                legacy.display()
+            ),
+        )),
+        Err(error) if error.error.kind() == std::io::ErrorKind::AlreadyExists => {
+            let bytes = std::fs::read(&destination).map_err(|error| error.to_string())?;
+            load_settings(&bytes).map(|settings| (settings, String::new()))
+        }
+        Err(error) => Err(format!("Import IV settings: {}", error.error)),
+    }
 }
 
 pub(super) fn save_settings(settings: &Settings, path: &Path) -> Result<(), String> {
-    // Never replace a declared future schema with fallback defaults on auto-save.
-    if let Ok(bytes) = std::fs::read(path)
-        && let Ok(value) = serde_json::from_slice::<serde_json::Value>(&bytes)
-        && value.get("schema_version").is_some()
-    {
-        load_settings(&bytes)?;
+    // Reject foreign files and newer schemas before replacing an existing file.
+    match std::fs::read(path) {
+        Ok(bytes) => {
+            load_settings(&bytes)?;
+        }
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+        Err(error) => return Err(format!("Read settings before Save: {error}")),
     }
-    if let Some(parent) = path.parent() {
-        std::fs::create_dir_all(parent).map_err(|e| e.to_string())?;
-    }
+    let parent = path
+        .parent()
+        .filter(|parent| !parent.as_os_str().is_empty())
+        .unwrap_or_else(|| Path::new("."));
+    std::fs::create_dir_all(parent).map_err(|error| error.to_string())?;
     let mut current = settings.clone();
+    current.application = APPLICATION_ID.into();
     current.schema_version = SETTINGS_SCHEMA_VERSION;
-    let bytes = serde_json::to_vec_pretty(&current).map_err(|e| e.to_string())?;
-    std::fs::write(path, bytes).map_err(|e| e.to_string())
+    let bytes = serde_json::to_vec_pretty(&current).map_err(|error| error.to_string())?;
+    let mut temporary =
+        tempfile::NamedTempFile::new_in(parent).map_err(|error| error.to_string())?;
+    use std::io::Write;
+    temporary
+        .write_all(&bytes)
+        .map_err(|error| error.to_string())?;
+    temporary
+        .as_file()
+        .sync_all()
+        .map_err(|error| error.to_string())?;
+    temporary
+        .persist(path)
+        .map_err(|error| error.error.to_string())?;
+    Ok(())
 }
 
 /// Load old and current settings, while rejecting settings written by a newer
@@ -403,6 +486,17 @@ pub(super) fn load_settings(bytes: &[u8]) -> Result<Settings, String> {
     let object = value
         .as_object()
         .ok_or_else(|| "Invalid settings JSON: expected an object.".to_string())?;
+    if let Some(application) = object.get("application")
+        && application.as_str() != Some(APPLICATION_ID)
+    {
+        return Err("This settings file belongs to another application. Choose a KohdaLab IV configuration.".into());
+    }
+    if object.contains_key("instruments")
+        || object.contains_key("measurements")
+        || object.contains_key("coordinates")
+    {
+        return Err("This is another application's configuration or a legacy Python profile. Native KohdaLab IV settings are required.".into());
+    }
     let version = match object.get("schema_version") {
         None => 0,
         Some(serde_json::Value::Number(number)) => {
@@ -422,6 +516,26 @@ pub(super) fn load_settings(bytes: &[u8]) -> Result<Settings, String> {
             "This settings file uses schema version {version}, but this KohdaLab IV version supports up to {SETTINGS_SCHEMA_VERSION}. Open it with a newer KohdaLab IV release."
         ));
     }
+    let recognizable_iv_fields = [
+        "config",
+        "source",
+        "meter",
+        "sources",
+        "meters",
+        "source_model",
+        "meter_model",
+        "source2",
+        "source2_model",
+        "filename",
+        "simulation",
+    ];
+    if !object.contains_key("application")
+        && !recognizable_iv_fields
+            .iter()
+            .any(|key| object.contains_key(*key))
+    {
+        return Err("This JSON file has no KohdaLab IV settings or application identity. Choose an IV configuration file.".into());
+    }
     let mut settings: Settings = serde_json::from_value(value)
         .map_err(|error| format!("Invalid settings values: {error}"))?;
     // Preserve legacy coupling (None), including its range and resolution.
@@ -440,6 +554,157 @@ const fn default_inventory_id() -> u64 {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn unidentified_json_is_not_loaded_as_defaults_or_replaced_on_save() {
+        let root = tempfile::tempdir().unwrap();
+        let destination = settings_path_in(root.path());
+        std::fs::create_dir_all(destination.parent().unwrap()).unwrap();
+        for bytes in [br#"{}"#.as_slice(), br#"{"foo":"bar"}"#] {
+            std::fs::write(&destination, bytes).unwrap();
+            assert!(load_startup_settings_in(root.path()).is_err());
+            assert!(save_settings(&Settings::default(), &destination).is_err());
+            assert_eq!(std::fs::read(&destination).unwrap(), bytes);
+        }
+        assert!(load_settings(br#"{"application":"kohdalab-iv"}"#).is_ok());
+    }
+
+    #[test]
+    fn application_marker_separates_iv_from_foreign_and_legacy_profiles() {
+        let saved = serde_json::to_value(Settings::default()).unwrap();
+        assert_eq!(saved["application"], APPLICATION_ID);
+        assert!(load_settings(br#"{"application":"kohdalab-trkr","schema_version":3}"#).is_err());
+        assert!(load_settings(br#"{"application":12}"#).is_err());
+        assert!(
+            load_settings(br#"{"instruments":{},"measurements":{},"coordinates":{}}"#).is_err()
+        );
+        assert!(
+            load_settings(br#"{"config_version":1,"instruments":{},"measurements":{},"roles":{}}"#)
+                .is_err()
+        );
+        let legacy = load_settings(br#"{"filename":"native-legacy","simulation":true}"#).unwrap();
+        assert_eq!(legacy.application, APPLICATION_ID);
+        assert_eq!(legacy.filename, "native-legacy");
+    }
+
+    #[test]
+    fn first_launch_migrates_native_iv_without_modifying_original_or_other_apps() {
+        let root = tempfile::tempdir().unwrap();
+        let old = root.path().join("config/iv-next.json");
+        std::fs::create_dir_all(old.parent().unwrap()).unwrap();
+        let mut settings = Settings {
+            filename: "experiment".into(),
+            simulation: true,
+            ..Default::default()
+        };
+        settings.config.start = -0.003;
+        settings.config.stop = 0.004;
+        settings.sources[0].dc.value = 0.001;
+        let mut legacy = serde_json::to_value(settings.clone()).unwrap();
+        legacy.as_object_mut().unwrap().remove("application");
+        let bytes = serde_json::to_vec(&legacy).unwrap();
+        std::fs::write(&old, &bytes).unwrap();
+        let trkr = root.path().join("config/trkr-next.json");
+        std::fs::write(&trkr, br#"{"application":"kohdalab-trkr"}"#).unwrap();
+        let (migrated, notice) = load_startup_settings_in(root.path()).unwrap();
+        assert_eq!(
+            settings_path_in(root.path()),
+            root.path().join("iv/config.json")
+        );
+        assert_eq!(migrated.filename, settings.filename);
+        assert_eq!(migrated.config.start, settings.config.start);
+        assert_eq!(migrated.config.stop, settings.config.stop);
+        assert_eq!(migrated.sources[0].dc.value, settings.sources[0].dc.value);
+        assert_eq!(std::fs::read(old).unwrap(), bytes);
+        assert_eq!(
+            std::fs::read(trkr).unwrap(),
+            br#"{"application":"kohdalab-trkr"}"#
+        );
+        let new = settings_path_in(root.path());
+        let saved: serde_json::Value =
+            serde_json::from_slice(&std::fs::read(new).unwrap()).unwrap();
+        assert_eq!(saved["application"], APPLICATION_ID);
+        assert!(notice.contains("Original file preserved"));
+    }
+
+    #[test]
+    fn new_iv_settings_win_and_never_fall_back_after_parse_or_version_errors() {
+        let root = tempfile::tempdir().unwrap();
+        let old = root.path().join("config/iv-next.json");
+        std::fs::create_dir_all(old.parent().unwrap()).unwrap();
+        std::fs::write(old, br#"{"filename":"old"}"#).unwrap();
+        let new = settings_path_in(root.path());
+        let settings = Settings {
+            filename: "new".into(),
+            ..Default::default()
+        };
+        save_settings(&settings, &new).unwrap();
+        assert_eq!(
+            load_startup_settings_in(root.path()).unwrap().0.filename,
+            "new"
+        );
+        for bytes in [
+            b"broken".as_slice(),
+            br#"{"schema_version":4}"#,
+            br#"{"application":"kohdalab-trkr"}"#,
+        ] {
+            std::fs::write(&new, bytes).unwrap();
+            assert!(load_startup_settings_in(root.path()).is_err());
+            assert_eq!(std::fs::read(&new).unwrap(), bytes);
+        }
+    }
+
+    #[test]
+    fn invalid_native_legacy_and_python_profiles_are_not_silently_migrated() {
+        let root = tempfile::tempdir().unwrap();
+        std::fs::create_dir_all(root.path().join("config")).unwrap();
+        let python = root.path().join("config/iv.json");
+        std::fs::write(&python, br#"{"instruments":{},"measurements":{}}"#).unwrap();
+        assert!(load_startup_settings_in(root.path()).is_ok());
+        assert!(!settings_path_in(root.path()).exists());
+        let old = root.path().join("config/iv-next.json");
+        for bytes in [
+            b"broken".as_slice(),
+            br#"{"application":"kohdalab-trkr"}"#,
+            br#"{"schema_version":4}"#,
+        ] {
+            std::fs::write(&old, bytes).unwrap();
+            assert!(load_startup_settings_in(root.path()).is_err());
+            assert!(!settings_path_in(root.path()).exists());
+            assert_eq!(std::fs::read(&old).unwrap(), bytes);
+        }
+    }
+
+    #[test]
+    fn save_refuses_foreign_unmarked_and_corrupt_files_without_changing_bytes() {
+        let root = tempfile::tempdir().unwrap();
+        let path = root.path().join("other.json");
+        for bytes in [
+            br#"{"application":"kohdalab-trkr"}"#.as_slice(),
+            br#"{"instruments":{},"measurements":{}}"#,
+            b"broken",
+        ] {
+            std::fs::write(&path, bytes).unwrap();
+            assert!(save_settings(&Settings::default(), &path).is_err());
+            assert_eq!(std::fs::read(&path).unwrap(), bytes);
+        }
+        std::fs::remove_file(&path).unwrap();
+        save_settings(&Settings::default(), &path).unwrap();
+        let value: serde_json::Value =
+            serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
+        assert_eq!(value["application"], APPLICATION_ID);
+        let changed = Settings {
+            filename: "updated".into(),
+            ..Default::default()
+        };
+        save_settings(&changed, &path).unwrap();
+        assert_eq!(
+            load_settings(&std::fs::read(path).unwrap())
+                .unwrap()
+                .filename,
+            "updated"
+        );
+    }
 
     #[test]
     fn dc_function_changes_reset_editor_dimensions_and_never_enable_output() {

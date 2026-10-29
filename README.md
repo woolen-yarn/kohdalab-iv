@@ -49,6 +49,12 @@ A stopped simulation: the popup shows the threshold, trigger reading and verifie
 
 </details>
 
+## Settings / 設定の保存先
+
+IV settings use `~/.kohdalab/iv/config.json` (`%USERPROFILE%\.kohdalab\iv\config.json` on Windows). TRKR uses its own `trkr/config.json`. Valid legacy Rust IV settings are imported once without deleting the original; app identity checks prevent loading or overwriting another app's configuration. See [settings storage](docs/reference/settings-storage.md).
+
+IV設定は `~/.kohdalab/iv/config.json`、TRKR設定は独立した `trkr/config.json` に保存します。旧Rust版のIV設定は元ファイルを残して初回に引き継ぎ、別アプリの設定を読み込み・上書きする操作は拒否します。[設定の保存先](docs/reference/settings-storage.md)を参照してください。
+
 ## Downloads / ダウンロード
 
 | Channel / 配布チャネル | Version / バージョン | Platforms / 対応プラットフォーム |
