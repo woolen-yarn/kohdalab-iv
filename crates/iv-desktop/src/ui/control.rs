@@ -1,6 +1,7 @@
 //! External control uses the same GUI settings, validation and single engine.
 use super::*;
 use crate::gui_control::{GuiControl, outputs_off};
+use kohdalab_control_protocol as common;
 use serde_json::{Value, json};
 
 impl IvApp {
@@ -53,12 +54,43 @@ impl IvApp {
                 Ok(None) => self.external_action(&mut control, &request.method, &request.body),
                 Err(error) => Err(error),
             };
+            let result = result.map(|value| self.common_api_value(&control, &request.body, value));
             request.respond(result);
         }
         if let Some((tag, command)) = control.advance(&self.state) {
             self.dispatch_api_command(&mut control, &tag, command);
         }
         self.control = Some(control);
+    }
+    fn common_receipt(&self, native: Value) -> Value {
+        let id = native["id"].as_str().unwrap_or("").to_owned();
+        let kind = native["kind"].as_str().unwrap_or("operation").to_owned();
+        let state = native["status"].as_str().unwrap_or("running").to_owned();
+        let cleanup = if state == "running" {
+            "not_required"
+        } else if native.get("error_code").and_then(Value::as_str) == Some("output_safety") {
+            "pending"
+        } else {
+            "unknown"
+        };
+        common::receipt(&id, &kind, &state, cleanup, None, native)
+    }
+    fn common_api_value(&self, _control: &GuiControl, body: &Value, value: Value) -> Value {
+        let Some(method) = body.get("_control_method").and_then(Value::as_str) else {
+            return value;
+        };
+        match method {
+            "acquire" => {
+                json!({"client_id":body["client_id"],"lease":value["lease"],"heartbeat_seconds":1,"timeout_seconds":10,"native":value})
+            }
+            "heartbeat" => json!({"alive":true,"native":value}),
+            "describe" | "status" | "result" | "release" | "stop" | "output_off"
+            | "gate_output_off" => value,
+            _ if value.get("id").is_some() && value.get("status").is_some() => {
+                self.common_receipt(value)
+            }
+            _ => value,
+        }
     }
     fn dispatch_api_command(&mut self, control: &mut GuiControl, tag: &str, command: Command) {
         let run = matches!(command, Command::Run { .. });
@@ -93,6 +125,86 @@ impl IvApp {
         body: &Value,
     ) -> Result<Value, String> {
         match method {
+            "control_describe" => {
+                let native = self.external_action(control, "capabilities", body)?;
+                return Ok(common::describe(
+                    "kohdalab-iv",
+                    env!("CARGO_PKG_VERSION"),
+                    2,
+                    &[
+                        "control.describe",
+                        "control.status",
+                        "control.config",
+                        "control.acquire",
+                        "control.heartbeat",
+                        "control.release",
+                        "control.result",
+                        "control.stop",
+                        "control.connect",
+                        "control.disconnect",
+                        "control.start",
+                        "control.configure",
+                        "control.load_config",
+                        "control.set_plan",
+                        "control.plan",
+                        "control.output",
+                        "control.set_output",
+                        "control.connect_gate",
+                        "control.set_gate_voltage",
+                        "control.gate_output_off",
+                        "control.disconnect_gate",
+                        "control.output_off",
+                    ],
+                    json!({"lease_timeout_seconds":10,"heartbeat_seconds":1,"stop_requires_lease":true,"on_disconnect":"configurable_default_stop_and_output_off","on_release":"verified_output_off","stop_policy_defaults":{"stop_on_disconnect":true,"stop_on_error":true,"stop_on_timeout":true},"gui_stop_always_available":true,"idempotent_methods":["control.start","control.connect","control.disconnect","control.connect_gate","control.set_gate_voltage","control.disconnect_gate"],"history_limit":32}),
+                    native,
+                ));
+            }
+            "control_status" => {
+                let native = json!({"snapshot":self.state,"active_run":control.active_id().and_then(|id|control.result(id).ok()),"control":control.control()});
+                let alive = self.client.as_ref().is_ok_and(|client| client.is_alive());
+                let cleanup = if alive {
+                    control.common_cleanup(&self.state)
+                } else {
+                    "unknown"
+                };
+                let phase = if cleanup == "pending" {
+                    "cleanup_pending"
+                } else if !alive || !self.state.error.is_empty() {
+                    "error"
+                } else if matches!(self.state.phase, Phase::Running) {
+                    "running"
+                } else if matches!(self.state.phase, Phase::CleaningUp) {
+                    "stopping"
+                } else if self.busy() || self.pending_run {
+                    "initializing"
+                } else if self.state.source_connected
+                    || self.state.meter_connected
+                    || self.state.source2_connected
+                    || self.state.gate_connected
+                {
+                    "ready"
+                } else {
+                    "disconnected"
+                };
+                return Ok(common::status(
+                    phase,
+                    self.busy()
+                        || self.pending_run
+                        || control.has_active()
+                        || control.is_retiring(),
+                    control.control(),
+                    cleanup,
+                    native,
+                ));
+            }
+            "control_result" => {
+                let id = body
+                    .get("run_id")
+                    .and_then(Value::as_str)
+                    .ok_or("Missing job_id")?;
+                let native = control.result(id)?;
+                return Ok(self.common_receipt(native));
+            }
             "capabilities" => {
                 return Ok(
                     json!({"application":"kohdalab-iv","application_version":env!("CARGO_PKG_VERSION"),"api_version":2,"actions":["capabilities","status","config","plan","output","acquire","heartbeat","release","detach","configure","load_config","set_plan","set_output","start","result","stop","output_off","connect","disconnect","connect_gate","set_gate_voltage","gate_output_off","disconnect_gate"],"history_limit":32,"request_id":"uuid","fixed_meter_ranges":true,"safety":{"lease_timeout_seconds":10,"on_disconnect":"configurable_default_stop_and_output_off","stop_policy_defaults":{"stop_on_disconnect":true,"stop_on_error":true,"stop_on_timeout":true},"on_release":"verified_output_off","gui_stop_always_available":true}}),
@@ -124,6 +236,17 @@ impl IvApp {
                 return Ok(control.control());
             }
             "release" => {
+                if body.get("_control_method").and_then(Value::as_str) == Some("release") {
+                    control.cancel_pending();
+                    if !self.send(Command::OutputOff) {
+                        return Err(self.notice.clone());
+                    }
+                    control.mark_common_stop(self.state.safety_revision);
+                    control.release(self.state.safety_revision);
+                    return Ok(
+                        json!({"released":false,"cleanup":"pending","native":control.control()}),
+                    );
+                }
                 if !outputs_off(&self.state) || self.busy() || control.has_active() {
                     return Err("Verify Output OFF and wait for cleanup before releasing the control lease.".into());
                 }
@@ -146,6 +269,12 @@ impl IvApp {
                     _ => Command::OutputOff,
                 }) {
                     return Err(self.notice.clone());
+                }
+                if body.get("_control_method").is_some() {
+                    control.mark_common_stop(self.state.safety_revision);
+                    return Ok(
+                        json!({"requested":true,"job_id":control.active_id(),"cleanup":"pending"}),
+                    );
                 }
                 return if let Some(id) = body.get("run_id").and_then(Value::as_str) {
                     control.result(id)

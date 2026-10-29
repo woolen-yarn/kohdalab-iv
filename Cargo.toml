@@ -1,9 +1,9 @@
 [workspace]
-members = ["crates/iv-core", "crates/iv-transport", "crates/iv-desktop", "crates/instrument-protocol", "crates/instrument-hub"]
+members = ["crates/iv-core", "crates/iv-transport", "crates/iv-desktop", "crates/instrument-protocol", "crates/instrument-hub", "crates/kohdalab-control-protocol"]
 resolver = "3"
 
 [workspace.package]
-version = "1.3.0-alpha.17"
+version = "1.3.0-alpha.18"
 edition = "2024"
 license = "MIT"
 rust-version = "1.99"

@@ -250,6 +250,7 @@ def main() -> None:
         else "aarch64-apple-darwin"
     )
     dependency_notices(documentation / "licenses/rust", target)
+    shutil.copytree(ROOT / "bindings/control", stage / "python-control/common", ignore=shutil.ignore_patterns("__pycache__", "*.pyc"))
     shutil.copy2(ROOT / "README.md", stage / "README.md")
     if not windows:
         for binary in (

@@ -1,5 +1,11 @@
 # Changelog / 変更履歴
 
+## 1.3.0-alpha.18 — 2026-10-29
+
+- Add the authenticated local Control Protocol 1 adapter and shared Python SDK. Camera exposes read-only status/configuration; other apps retain their native ownership and safety policies.
+- Align common discovery, receipts, structured errors, PR templates and release categories. Existing measurement data and native clients remain supported.
+- GUI共通API・独立したPython SDK・PR/Releaseの記載項目を統一。既存測定とデータ形式を維持します。
+
 > **Language navigation / 言語案内:** The English historical record appears first, followed by a complete Japanese counterpart. Versions, dates, API names, commands, compatibility wording, and historical claims are preserved in both languages.
 > 英語の履歴記録を先に置き、その後に完全な日本語対訳を掲載します。バージョン、日付、API 名、コマンド、互換性の表現、履歴上の主張は両言語で保持します。
 
