@@ -407,6 +407,29 @@ fn finite_positive(value: f64, name: &str, maximum: Option<f64>) -> Result<(), S
     Ok(())
 }
 
+/// Increment an SI source level on an exact decimal hardware grid.
+/// Rejects range/precision violations; it never clamps or changes range.
+pub fn nudge_source_value(
+    value: f64,
+    delta: f64,
+    resolution: f64,
+    maximum: f64,
+) -> Result<f64, String> {
+    finite_positive(resolution, "Source resolution", None)?;
+    finite_positive(maximum, "Source range", None)?;
+    let current = aligned_value(value, resolution, "DC level", "SI")?;
+    let increment = aligned_value(delta, resolution, "DC increment", "SI")?;
+    let next = current
+        .checked_add(increment)
+        .ok_or("DC increment is outside the supported numeric range.")?;
+    if next.abs() > decimal(maximum, "Source range")? {
+        return Err(format!(
+            "DC level exceeds the enabled ±{maximum:e} source range."
+        ));
+    }
+    decimal_to_f64(next, "DC level")
+}
+
 fn decimal_range(start: Decimal, stop: Decimal, step: Decimal) -> Result<Vec<Decimal>, String> {
     if step.is_zero() {
         return Err("step must be non-zero.".to_owned());
@@ -2377,5 +2400,30 @@ mod tests {
         );
         drop(writer);
         std::fs::remove_file(path).unwrap();
+    }
+}
+
+#[cfg(test)]
+mod dc_nudge_tests {
+    use super::*;
+    #[test]
+    fn repeated_digit_steps_do_not_accumulate_binary_decimal_drift() {
+        let mut value = 0.0;
+        for _ in 0..1000 {
+            value = nudge_source_value(value, 0.0001, 1e-6, 1.0).unwrap();
+        }
+        assert_eq!(value, 0.1);
+        assert_eq!(nudge_source_value(-0.001, 0.001, 1e-6, 1.0).unwrap(), 0.0);
+        assert_eq!(nudge_source_value(2e-6, 1e-6, 1e-9, 1e-3).unwrap(), 3e-6);
+    }
+    #[test]
+    fn source_increment_rejects_range_and_resolution_errors_without_clamping() {
+        assert!(nudge_source_value(0.1, 0.0001, 1e-6, 0.1).is_err());
+        assert!(nudge_source_value(-0.1, -0.0001, 1e-6, 0.1).is_err());
+        assert!(nudge_source_value(0.0, 1e-9, 1e-6, 0.1).is_err());
+        assert!(nudge_source_value(0.0000005, 0.0, 1e-6, 0.1).is_err());
+        for bad in [f64::NAN, f64::INFINITY, f64::NEG_INFINITY] {
+            assert!(nudge_source_value(bad, 0.0, 1e-6, 0.1).is_err());
+        }
     }
 }

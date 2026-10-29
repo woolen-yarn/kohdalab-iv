@@ -780,6 +780,9 @@ fn clear_connections(state: &mut Snapshot) {
     state.connected = false;
     state.source_dc = None;
     state.source2_dc = None;
+    state.source_dc_limits = None;
+    state.source2_dc_limits = None;
+    state.gate_dc_limits = None;
 }
 
 fn refresh_connections(state: &mut Snapshot) {
@@ -1537,6 +1540,7 @@ fn set_live_mode(
         }
         state.output = OutputState::Off;
         state.source_dc = None;
+        state.source_dc_limits = None;
         device.write(Role::Source, ":SOUR:LEV:FIX 0")?;
         let zero = device
             .query(Role::Source, ":SOUR:LEV?")?
@@ -1585,6 +1589,7 @@ fn set_live_mode(
     }
     // A mode edit never preserves or recreates a manual DC output.
     state.source_dc = None;
+    state.source_dc_limits = None;
     state.output = OutputState::Off;
     state.live_error.clear();
     state.phase = Phase::Ready;
@@ -1798,6 +1803,8 @@ fn shutdown_sweep_sources(
         state.source2_level = Some(0.0);
         state.source_dc = None;
         state.source2_dc = None;
+        state.source_dc_limits = None;
+        state.source2_dc_limits = None;
     } else if errors.is_empty() {
         errors.push("Not all sweep sources could be verified OFF. Check both instruments.".into());
     }
@@ -1825,6 +1832,7 @@ fn clean_output(
     if state.source_simulation && state.source_connected {
         state.output = OutputState::Off;
         state.source_dc = None;
+        state.source_dc_limits = None;
         return;
     }
     if !state.source_connected {
@@ -1867,6 +1875,7 @@ fn clean_output(
         Ok(report) if report.output_off_verified => {
             state.output = OutputState::Off;
             state.source_dc = None;
+            state.source_dc_limits = None;
             if let Some(warning) = report.zeroing_warning {
                 state.warnings.push(format!(
                     "Output off was verified; resetting the source level to zero failed: {warning}"
@@ -2463,6 +2472,7 @@ fn execute(
         // a synthetic ON/OFF transport exchange.
         state.output = OutputState::Off;
         state.source_dc = None;
+        state.source_dc_limits = None;
     }
     state.activity = Activity::Preflight;
     let requested_config = config;
@@ -2492,6 +2502,7 @@ fn execute(
         // The source has now been physically verified OFF, so this manual
         // setting cannot survive into the sweep's reconfiguration sequence.
         state.source_dc = None;
+        state.source_dc_limits = None;
         if let Some(warning) = report.zeroing_warning {
             return Err(format!(
                 "Cannot start: output OFF was verified, but resetting the source level to zero failed. Reconnect before measuring. {warning}"

@@ -5,6 +5,30 @@ the existing header row; the measurement panel and Run / Save controls retain
 their layout. Opening DC reveals the level, unit, source compliance and ramp
 step. A DC ON badge identifies a fixed output independently of the sweep state.
 
+## Per-digit adjustment
+
+The DC level has one up/down pair for each displayed decimal place, plus a
+separate polarity button. Carry and borrow are automatic. While output is ON,
+a valid digit adjustment is applied immediately using the configured ramp; no
+extra Apply click is required. While OFF, the same controls edit the requested
+level without turning output on. Output ON always remains explicit.
+
+The adjacent unit selector changes the display only. It never sends a new level
+to the instrument. Very large or small values use an explicit engineering
+exponent while retaining the selected unit. Decimal arithmetic prevents repeated
+small adjustments from accumulating binary rounding drift.
+
+The enabled hardware range, function and compliance remain fixed while output
+is ON. Arrows outside that range or below its resolution are disabled. A lower
+level is allowed within that held range, without automatically selecting a new
+range. Turn output OFF before changing range, function or compliance.
+
+Click a digit or Type… for direct entry. Set validates the value against the
+source grid before committing. Digit actions are disabled while typing, and a
+verified level or display-unit change invalidates the old text buffer. During a
+pending source update or sweep, setting changes remain locked; the application
+does not accumulate a queue of future levels. OFF retains its priority path.
+
 ## An IV source before a sweep
 
 Connect the selected source, open DC, set its function/level/protection and press

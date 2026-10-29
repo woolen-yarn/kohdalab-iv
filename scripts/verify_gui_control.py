@@ -92,10 +92,15 @@ def main():
             pending.join(timeout=15)
             assert not pending.is_alive() and errors, errors
             iv.wait(lambda s: s['output'] == 'Off' and s['source2_output'] == 'Off' and (s['gate_output'] == 'Off'))
+            # Select the simulation's 100 mV range before the two live bias
+            # values. An enabled source now keeps that verified range fixed.
+            iv.set_gate_voltage(0.03, compliance=0.001, ramp_step=0.01)
+            assert iv.snapshot['gate_dc_limits']['range'] == 0.1
             states = []
             for voltage in [0.01, 0.02]:
                 gate = iv.set_gate_voltage(voltage, compliance=0.001, ramp_step=0.01)
                 assert gate['gate_voltage'] == voltage
+                assert gate['gate_dc_limits']['range'] == 0.1
                 state = iv.run(filename=f'gate_{voltage:.2e}V', directory=profile / 'results', timeout=20)
                 assert state['gate_output'] == 'On' and state['output'] == 'Off' and (state['source2_output'] == 'Off'), state
                 rows = list(csv.DictReader(Path(state['path']).open()))

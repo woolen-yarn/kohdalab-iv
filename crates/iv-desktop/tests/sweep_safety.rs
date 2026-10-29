@@ -579,6 +579,36 @@ fn native_mock_source_dc_verifies_on_then_explicit_off() {
 }
 
 #[test]
+fn native_dc_rejects_an_off_grid_update_before_writing_a_level() {
+    let bridge = Bridge::new(METERS[1].1, "", "0.0001");
+    let mut engine = Engine::start(&bridge.dir);
+    engine.connect("YOKOGAWA_GS210", METERS[1].0);
+    engine.send(json!({
+        "command":"set_source_dc", "mode":"dc_iv", "value":0.0,
+        "compliance":0.2, "ramp_step":0.0001
+    }));
+    let state = engine.wait(|s| s["output"] == "On" && s["source_dc_limits"]["range"] == 0.01);
+    assert_eq!(state["source_dc_limits"]["resolution"], 1e-7, "{state}");
+    let before = bridge.commands().len();
+    engine.send(json!({
+        "command":"set_source_dc", "mode":"dc_iv", "value":5e-10,
+        "compliance":0.2, "ramp_step":0.0001
+    }));
+    let state = engine.wait(|s| !s["error"].as_str().unwrap_or_default().is_empty());
+    assert!(
+        state["error"].as_str().unwrap().contains("multiple of"),
+        "{state}"
+    );
+    let after = bridge.commands();
+    assert!(
+        !after[before..]
+            .iter()
+            .any(|line| line == &format!("WRITE 3 {}", hex(":SOUR:LEV:FIX 5.000000000000e-10\n"))),
+        "off-grid target must never be sent: {after:?}"
+    );
+}
+
+#[test]
 fn native_slow_dc_off_blocks_later_run_before_any_output_resume() {
     let bridge = Bridge::new(METERS[1].1, "slow_status", "0.0001");
     let mut engine = Engine::start(&bridge.dir);

@@ -4,9 +4,11 @@
 //! the selected voltage/current function and its complementary protection unit.
 
 use super::{Control, safety, workflow};
-use crate::protocol::{DcOutputState, Snapshot};
+use crate::protocol::{DcLimits, DcOutputState, Snapshot};
 use crate::state::OutputState;
-use iv_core::{Mode, Pattern, RunConfig, plan, prepare_config, source_protection_profile};
+use iv_core::{
+    InstrumentProfile, Mode, Pattern, RunConfig, plan, prepare_config, source_protection_profile,
+};
 use iv_transport::{DevicePair, Role};
 
 fn role(secondary: bool) -> Role {
@@ -61,6 +63,22 @@ fn set_dc(state: &mut Snapshot, secondary: bool, value: Option<DcOutputState>) {
     }
 }
 
+fn limits(state: &Snapshot, secondary: bool) -> Option<&DcLimits> {
+    if secondary {
+        state.source2_dc_limits.as_ref()
+    } else {
+        state.source_dc_limits.as_ref()
+    }
+}
+
+fn set_limits(state: &mut Snapshot, secondary: bool, value: Option<DcLimits>) {
+    if secondary {
+        state.source2_dc_limits = value;
+    } else {
+        state.source_dc_limits = value;
+    }
+}
+
 fn model(pair: &DevicePair, secondary: bool) -> &str {
     if secondary {
         &pair.source2_model
@@ -107,12 +125,13 @@ fn ensure_not_cancelled(control: &Control) -> Result<(), String> {
 }
 
 fn dc_plan(
-    pair: &DevicePair,
+    source_model: &str,
     secondary: bool,
     mode: Mode,
     value: f64,
     compliance: f64,
     ramp_step: f64,
+    enforce_protection: bool,
 ) -> Result<(RunConfig, iv_core::Plan), String> {
     finite(value, &format!("{} DC value", label(secondary)))?;
     positive(compliance, "Source protection limit")?;
@@ -121,7 +140,7 @@ fn dc_plan(
         return Err("Source 2 manual DC supports voltage source mode only.".into());
     }
     let config = RunConfig {
-        source_model: model(pair, secondary).into(),
+        source_model: source_model.into(),
         mode,
         pattern: Pattern::Linear,
         start: 0.0,
@@ -131,7 +150,7 @@ fn dc_plan(
         // There is no meter acquisition for DC mode. This satisfies shared
         // planner validation without changing the source protection request.
         compliance,
-        source_compliance: Some(compliance),
+        source_compliance: enforce_protection.then_some(compliance),
         ramp_step,
         ..RunConfig::default()
     };
@@ -139,18 +158,46 @@ fn dc_plan(
     if !same(prepared.step.abs(), ramp_step) {
         return Err(format!(
             "DC ramp step {ramp_step:e} is not on the selected {} range grid. Choose {:.12e} or another exact grid increment.",
-            model(pair, secondary),
+            source_model,
             prepared.step.abs()
         ));
     }
     let planned = plan(&config)?;
-    if planned.hardware_compliance > compliance + f64::EPSILON {
+    if enforce_protection && planned.hardware_compliance > compliance + f64::EPSILON {
         return Err(format!(
             "Source protection limit {compliance:e} cannot be represented without increasing protection on {}.",
-            model(pair, secondary)
+            source_model
         ));
     }
     Ok((prepared, planned))
+}
+
+fn range_limits(model: &str, mode: Mode, range: f64) -> Result<DcLimits, String> {
+    let Some(InstrumentProfile::Source(profile)) = iv_core::instrument_profile(model)? else {
+        return Err(format!("No source range profile is available for {model}."));
+    };
+    let ranges = if mode == Mode::Iv {
+        &profile.voltage_ranges
+    } else {
+        &profile.current_ranges
+    };
+    let Some(range) = ranges
+        .iter()
+        .find(|candidate| same(candidate.command_value, range))
+    else {
+        return Err(format!("Unrecognized source range {range:e} for {model}."));
+    };
+    Ok(DcLimits {
+        range: range.command_value,
+        maximum: range.maximum,
+        resolution: range.resolution,
+    })
+}
+
+fn validate_held_value(limits: &DcLimits, value: f64, label: &str) -> Result<(), String> {
+    iv_core::nudge_source_value(value, 0.0, limits.resolution, limits.maximum)
+        .map(|_| ())
+        .map_err(|error| format!("{label}: {error} Turn DC output off before changing range."))
 }
 
 fn force_off(
@@ -161,12 +208,15 @@ fn force_off(
     if simulation(state, secondary) {
         set_output(state, secondary, OutputState::Off);
         set_dc(state, secondary, None);
+        set_limits(state, secondary, None);
         return Ok(());
     }
     let pair = pair.ok_or_else(|| format!("{} transport is unavailable.", label(secondary)))?;
     let report = pair.force_output_off_role(role(secondary))?;
     if !report.output_off_verified {
         set_output(state, secondary, OutputState::Unknown);
+        set_dc(state, secondary, None);
+        set_limits(state, secondary, None);
         return Err(format!(
             "{} output OFF could not be verified.",
             label(secondary)
@@ -174,6 +224,7 @@ fn force_off(
     }
     set_output(state, secondary, OutputState::Off);
     set_dc(state, secondary, None);
+    set_limits(state, secondary, None);
     if let Some(warning) = report.zeroing_warning {
         state
             .warnings
@@ -193,12 +244,41 @@ fn fail_closed(
         Err(off_error) => {
             set_output(state, secondary, OutputState::Unknown);
             set_dc(state, secondary, None);
+            set_limits(state, secondary, None);
             Err(format!(
                 "{error} {} output OFF also failed: {off_error}",
                 label(secondary)
             ))
         }
     }
+}
+
+fn verify_held_settings(
+    pair: &mut DevicePair,
+    secondary: bool,
+    mode: Mode,
+    held: &DcLimits,
+    hardware_compliance: f64,
+) -> Result<(), String> {
+    let role = role(secondary);
+    safety::verify_function(&pair.query(role, ":SOUR:FUNC?")?, mode)?;
+    let source_model = model(pair, secondary).to_owned();
+    let range_query = iv_core::source_range_query(&source_model)?.unwrap_or(":SOUR:RANG?");
+    safety::verify_range(
+        &source_model,
+        mode,
+        held.range,
+        &pair.query(role, range_query)?,
+    )?;
+    if source_protection_profile(&source_model)?.is_some() {
+        let protection = if mode == Mode::Iv {
+            ":SOUR:PROT:CURR?"
+        } else {
+            ":SOUR:PROT:VOLT?"
+        };
+        safety::verify_hardware_limit(hardware_compliance, &pair.query(role, protection)?)?;
+    }
+    Ok(())
 }
 
 fn verify_identity(pair: &mut DevicePair, secondary: bool) -> Result<(), String> {
@@ -302,12 +382,37 @@ pub(super) fn set(
         );
     }
     if simulation(state, secondary) {
-        finite(value, "DC value")?;
-        positive(compliance, "Source protection limit")?;
-        positive(ramp_step, "DC ramp step")?;
         if secondary && mode != Mode::Iv {
             return Err("Source 2 manual DC supports voltage source mode only.".into());
         }
+        // Simulation follows the same reviewed range planner as hardware so
+        // the UI never offers a digit update that hardware would reject.
+        let source_model = pair
+            .as_deref()
+            .map(|pair| model(pair, secondary))
+            .unwrap_or("YOKOGAWA_GS210");
+        let (_prepared, planned) = dc_plan(
+            source_model,
+            secondary,
+            mode,
+            value,
+            compliance,
+            ramp_step,
+            false,
+        )?;
+        let held = if output(state, secondary) == OutputState::On {
+            let held = limits(state, secondary).ok_or_else(|| {
+                format!(
+                    "{} DC range is unknown. Turn DC output off before changing it.",
+                    label(secondary)
+                )
+            })?;
+            validate_held_value(held, value, "DC value")?;
+            validate_held_value(held, ramp_step, "DC ramp step")?;
+            held.clone()
+        } else {
+            range_limits(source_model, mode, planned.source_range)?
+        };
         ensure_not_cancelled(control)?;
         set_output(state, secondary, OutputState::On);
         set_dc(
@@ -320,6 +425,7 @@ pub(super) fn set(
                 ramp_step,
             }),
         );
+        set_limits(state, secondary, Some(held));
         return Ok(());
     }
     let pair = pair.ok_or_else(|| format!("{} transport is unavailable.", label(secondary)))?;
@@ -329,7 +435,15 @@ pub(super) fn set(
             label(secondary)
         ));
     }
-    let (_prepared, planned) = match dc_plan(pair, secondary, mode, value, compliance, ramp_step) {
+    let (_prepared, planned) = match dc_plan(
+        model(pair, secondary),
+        secondary,
+        mode,
+        value,
+        compliance,
+        ramp_step,
+        true,
+    ) {
         Ok(value) => value,
         Err(error) => return fail_closed(Some(pair), state, secondary, error),
     };
@@ -351,7 +465,16 @@ pub(super) fn set(
                     label(secondary)
                 ));
             }
-            verify_settings(pair, secondary, mode, &planned)?
+            let held = limits(state, secondary).ok_or_else(|| {
+                format!(
+                    "{} DC range is unknown. Turn DC output off before changing it.",
+                    label(secondary)
+                )
+            })?;
+            validate_held_value(held, value, "DC value")?;
+            validate_held_value(held, ramp_step, "DC ramp step")?;
+            verify_held_settings(pair, secondary, mode, held, planned.hardware_compliance)?;
+            held.resolution
         } else {
             force_off(Some(pair), state, secondary)?;
             let definition = iv_core::measurement_definition(mode);
@@ -378,6 +501,7 @@ pub(super) fn set(
             ensure_not_cancelled(control)?;
             pair.write(role(secondary), ":SOUR:LEV:FIX 0")?;
             let resolution = verify_settings(pair, secondary, mode, &planned)?;
+            let held = range_limits(model(pair, secondary), mode, planned.source_range)?;
             let zero = pair
                 .query(role(secondary), ":SOUR:LEV?")?
                 .trim()
@@ -390,6 +514,9 @@ pub(super) fn set(
             if safety::output_state(&pair.query(role(secondary), ":OUTP?")?)? != OutputState::On {
                 return Err(format!("{} did not confirm output ON.", label(secondary)));
             }
+            // Do not expose the held range until all hardware configuration
+            // and output enable checks have succeeded.
+            set_limits(state, secondary, Some(held));
             resolution
         };
         let mut current = if was_on {
@@ -455,6 +582,17 @@ pub(super) fn set(
                     ramp_step,
                 }),
             );
+            if !was_on && limits(state, secondary).is_none() {
+                return fail_closed(
+                    Some(pair),
+                    state,
+                    secondary,
+                    format!(
+                        "{} range verification did not produce a held DC range.",
+                        label(secondary)
+                    ),
+                );
+            }
             Ok(())
         }
         Err(error) => fail_closed(Some(pair), state, secondary, error),

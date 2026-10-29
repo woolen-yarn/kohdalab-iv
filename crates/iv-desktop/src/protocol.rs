@@ -170,6 +170,16 @@ pub struct DcOutputState {
     pub ramp_step: f64,
 }
 
+/// The verified hardware range held by an enabled fixed DC output.  The
+/// command value intentionally uses the instrument's native range units
+/// (including 7651 range codes); maximum and resolution are SI values.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct DcLimits {
+    pub range: f64,
+    pub maximum: f64,
+    pub resolution: f64,
+}
+
 /// The final state belonging to the last tagged GUI operation.  The embedded
 /// snapshot deliberately has no `gui_job` field so JSON cannot recurse.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -203,7 +213,11 @@ pub struct Snapshot {
     #[serde(default)]
     pub source_dc: Option<DcOutputState>,
     #[serde(default)]
+    pub source_dc_limits: Option<DcLimits>,
+    #[serde(default)]
     pub source2_dc: Option<DcOutputState>,
+    #[serde(default)]
+    pub source2_dc_limits: Option<DcLimits>,
     #[serde(default)]
     pub source2_connected: bool,
     #[serde(default)]
@@ -236,6 +250,8 @@ pub struct Snapshot {
     pub gate_compliance: Option<f64>,
     #[serde(default)]
     pub gate_revision: u64,
+    #[serde(default)]
+    pub gate_dc_limits: Option<DcLimits>,
     pub phase: Phase,
     pub message: String,
     pub connected: bool,
@@ -279,7 +295,9 @@ impl Default for Snapshot {
             gui_jobs: Vec::new(),
             safety_revision: 0,
             source_dc: None,
+            source_dc_limits: None,
             source2_dc: None,
+            source2_dc_limits: None,
             source2_connected: false,
             source2_simulation: false,
             source2_identity: String::new(),
@@ -296,6 +314,7 @@ impl Default for Snapshot {
             gate_voltage: None,
             gate_compliance: None,
             gate_revision: 0,
+            gate_dc_limits: None,
             phase: Phase::Idle,
             message: "Choose your instruments or explore Simulation.".into(),
             connected: false,

@@ -154,6 +154,31 @@ fn simulated_source_dc_is_explicit_and_sweep_relinquishes_its_source() {
 }
 
 #[test]
+fn simulated_dc_update_keeps_the_verified_range_when_target_moves_down() {
+    let mut engine = Engine::start();
+    engine.send(json!({"command":"connect","simulation":true,"source":"","meter":""}));
+    engine.wait(|state| state["connected"] == true);
+    // 20 mV selects the GS210 100 mV range. Moving down to 1 mV must not
+    // silently reconfigure to the 10 mV range while output remains enabled.
+    engine.send(json!({
+        "command":"set_source_dc", "mode":"dc_iv", "value":0.02,
+        "compliance":0.2, "ramp_step":0.0001
+    }));
+    let state = engine.wait(|state| state["source_dc"]["value"] == 0.02);
+    assert_eq!(state["source_dc_limits"]["range"], 0.1, "{state}");
+    engine.send(json!({
+        "command":"set_source_dc", "mode":"dc_iv", "value":0.001,
+        "compliance":0.2, "ramp_step":0.0001
+    }));
+    let state = engine.wait(|state| state["source_dc"]["value"] == 0.001);
+    assert_eq!(state["output"], "On");
+    assert_eq!(state["source_dc_limits"]["range"], 0.1, "{state}");
+    engine.send(json!({"command":"source_dc_off"}));
+    let state = engine.wait(|state| state["output"] == "Off");
+    assert!(state["source_dc_limits"].is_null(), "{state}");
+}
+
+#[test]
 fn source_dc_change_is_rejected_after_run_admission() {
     let mut engine = Engine::start();
     engine.send(json!({"command":"connect","simulation":true,"source":"","meter":""}));

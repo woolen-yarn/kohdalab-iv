@@ -6,6 +6,7 @@ use crate::state::{OutputState, Phase};
 
 mod control;
 mod dc;
+mod digits;
 mod formatting;
 mod history;
 mod settings;
@@ -2871,7 +2872,7 @@ impl eframe::App for IvApp {
         }
         let limit_smoke = self.smoke && std::env::args().any(|arg| arg == "--gui-limit-smoke");
         let smoke_outcome = if dc_smoke {
-            self.dc_smoke_stage == 4
+            self.dc_smoke_stage == 8
                 && self.state.phase == Phase::Completed
                 && self.state.source_dc.is_none()
                 && self.state.gate_output == OutputState::On
