@@ -1415,7 +1415,9 @@ fn native_slow_dc_off_blocks_later_run_before_any_output_resume() {
             .is_some_and(|error| error.contains("already active or queued"))
     });
     let state = engine.wait(|s| {
-        s["safety_revision"].as_u64().is_some_and(|revision| revision > safety_before)
+        s["safety_revision"]
+            .as_u64()
+            .is_some_and(|revision| revision > safety_before)
             && s["output"] == "Off"
     });
     assert_eq!(state["output"], "Off", "{state}");
