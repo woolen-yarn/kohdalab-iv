@@ -4,10 +4,45 @@ from pathlib import Path
 import tempfile
 import unittest
 import weakref
-from unittest.mock import patch, PropertyMock
+from unittest.mock import patch, PropertyMock, Mock
 from kohdalab_iv_native import GuiIV, GuiIVError, _GuiControlRejected
 
 class GuiClientTests(unittest.TestCase):
+    def test_fixed_range_requires_gui_support_before_a_plan_can_be_sent(self):
+        client = GuiIV.__new__(GuiIV)
+        client.capabilities = Mock(return_value={})
+        client._request = Mock()
+        with self.assertRaisesRegex(GuiIVError, 'Fixed Meter ranges require a newer'):
+            client.set_plan({'meter_current_range': .001})
+        client._request.assert_not_called()
+
+    def test_fixed_range_plan_is_forwarded_when_gui_advertises_support(self):
+        client = GuiIV.__new__(GuiIV)
+        client.capabilities = Mock(return_value={'fixed_meter_ranges': True})
+        client._request = Mock(return_value={})
+        client.set_plan({'meter_voltage_range': 1.})
+        client._request.assert_called_once_with('set_plan', require_lease=True, plan={'meter_voltage_range': 1.})
+
+    def test_fixed_range_in_a_saved_profile_is_not_ignored_by_an_old_gui(self):
+        client = GuiIV.__new__(GuiIV)
+        client.capabilities = Mock(return_value={})
+        client._request = Mock()
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / 'profile.json'
+            path.write_text(json.dumps({'config': {'meter_voltage_range': 1.}}))
+            with self.assertRaisesRegex(GuiIVError, 'Fixed Meter ranges require a newer'):
+                client.load_config(path)
+        client._request.assert_not_called()
+
+    def test_legacy_auto_profile_can_still_load_into_an_older_gui(self):
+        client = GuiIV.__new__(GuiIV)
+        client._request = Mock(return_value={})
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / 'profile.json'
+            path.write_text(json.dumps({'config': {'nplc': 1.}}))
+            client.load_config(path)
+        client._request.assert_called_once()
+
     def test_endpoint_rejects_nonlocal_and_unknown_protocol(self):
         with tempfile.TemporaryDirectory() as directory:
             path=Path(directory)/'endpoint.json'

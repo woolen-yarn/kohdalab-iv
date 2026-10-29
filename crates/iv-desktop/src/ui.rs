@@ -143,6 +143,10 @@ impl IvApp {
             };
             settings.config.start_settle_s = 0.03;
             settings.config.settle_s = 0.02;
+            if hardware.is_none() && std::env::args().any(|arg| arg == "--gui-settings-smoke") {
+                settings.config.meter_current_range = Some(0.001);
+                settings.config.meter_voltage_range = Some(1.0);
+            }
             if std::env::args()
                 .any(|arg| arg == "--gui-balanced-smoke" || arg == "--gui-control-smoke")
             {
@@ -1072,6 +1076,14 @@ impl IvApp {
                 resource,
             });
         }
+        self.send_meter_ranges();
+    }
+
+    fn send_meter_ranges(&mut self) {
+        self.send(Command::SetMeterRanges {
+            meter_voltage_range: self.settings.config.meter_voltage_range,
+            meter_current_range: self.settings.config.meter_current_range,
+        });
     }
 
     fn connect_secondary(&mut self) {
@@ -1678,7 +1690,9 @@ impl IvApp {
                     let next_mode = if choice == 1 { Mode::Vi } else { Mode::Iv };
                     if old_mode != next_mode {
                         let definition = measurement_definition(next_mode);
+                        let ranges = (self.settings.config.meter_voltage_range, self.settings.config.meter_current_range);
                         self.settings.config = definition.default_config();
+                        (self.settings.config.meter_voltage_range, self.settings.config.meter_current_range) = ranges;
                         self.settings.units = [definition.preferred_unit_index; 3];
                     }
                     self.settings.config.mode = next_mode;
@@ -2367,6 +2381,14 @@ impl IvApp {
 
                         });
                         ui.add_space(8.0);
+                        section(ui, "Meter range", |ui| {
+                            ui.label("Voltage measurement");
+                            widgets::meter_range_choice(ui, "meter_voltage_range", &self.settings.meter_model, Mode::Vi, &mut self.settings.config.meter_voltage_range);
+                            ui.label("Current measurement");
+                            widgets::meter_range_choice(ui, "meter_current_range", &self.settings.meter_model, Mode::Iv, &mut self.settings.config.meter_current_range);
+                            ui.label(RichText::new("Fixed keeps the chosen range for the entire sweep. Choose a range covering all expected readings. This does not change Source compliance or Measurement limit.").small().color(MUTED));
+                        });
+                        ui.add_space(8.0);
                         section(ui, "Protection and stop", |ui| {
                             let width = ui.available_width();
                             let effective_source = self.preview.as_ref().ok()
@@ -2454,6 +2476,9 @@ impl IvApp {
             }
             self.timing_before = None;
             self.timing_open = false;
+            if accepted {
+                self.send_meter_ranges();
+            }
         }
     }
 

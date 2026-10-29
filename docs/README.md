@@ -27,6 +27,7 @@
 - [Instrument precision / 機器精度と表示](reference/instrument-precision.md)
 - [Legacy instruments / 旧機器の移植](reference/legacy-instruments.md)
 - [Measurement spec / 測定仕様](reference/measurement-spec.md)
+- [Meter ranging / メーターのAuto・固定レンジ](reference/meter-ranging.md)
 - [Redistribution audit / 再配布監査](reference/redistribution-audit.md)
 
 ## Validation and evidence / 検証記録

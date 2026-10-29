@@ -15,6 +15,43 @@ pub(super) const TEAL: Color32 = Color32::from_rgb(63, 215, 194);
 pub(super) const MUTED: Color32 = Color32::from_rgb(160, 163, 176);
 pub(super) const RED: Color32 = Color32::from_rgb(255, 123, 130);
 
+pub(super) fn meter_range_choice(
+    ui: &mut egui::Ui,
+    id: &str,
+    model: &str,
+    mode: iv_core::Mode,
+    value: &mut Option<f64>,
+) -> bool {
+    let ranges = iv_core::meter_ranges(model, mode).unwrap_or_default();
+    let unit = if mode == iv_core::Mode::Iv { "A" } else { "V" };
+    let before = *value;
+    let selected = value.map_or_else(
+        || "Auto".into(),
+        |v| format!("Fixed · {}", super::formatting::fmt_quantity(v, unit)),
+    );
+    egui::ComboBox::from_id_salt(id)
+        .width(ui.available_width())
+        .selected_text(selected)
+        .show_ui(ui, |ui| {
+            ui.selectable_value(value, None, "Auto");
+            for range in ranges.iter().copied() {
+                ui.selectable_value(
+                    value,
+                    Some(range),
+                    format!("Fixed · {}", super::formatting::fmt_quantity(range, unit)),
+                );
+            }
+        });
+    if ranges.is_empty() {
+        ui.label(
+            RichText::new("Fixed ranges are not verified for this model. Select Auto.")
+                .small()
+                .color(MUTED),
+        );
+    }
+    before != *value
+}
+
 /// Bound expanding DC controls without borrowing the live monitor's space.
 /// Output ON/OFF actions deliberately stay outside this clipped viewport.
 pub(super) fn dc_editor<R>(ui: &mut egui::Ui, id: u64, add: impl FnOnce(&mut egui::Ui) -> R) -> R {

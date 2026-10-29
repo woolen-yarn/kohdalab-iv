@@ -37,3 +37,18 @@ class SourceProtectionClientTests(unittest.TestCase):
         client.wait = lambda predicate, timeout: {'run_id': 2, 'phase': 'Completed', 'output': 'Off'}
         client.run('unused.csv', {'compliance': .001})
         client._send.assert_called_once()
+
+    def test_fixed_meter_range_is_not_silently_ignored_by_an_old_engine(self):
+        for key in ('meter_voltage_range', 'meter_current_range'):
+            client = self.client({})
+            with self.assertRaisesRegex(RuntimeError, 'Fixed Meter ranges require a newer'):
+                client.run('unused.csv', {key: 1.})
+            client._send.assert_not_called()
+
+    def test_independent_meter_ranges_are_forwarded_to_a_supported_engine(self):
+        client = self.client({'meter_voltage_range': None, 'meter_current_range': None})
+        client.wait = lambda predicate, timeout: {'run_id': 2, 'phase': 'Completed', 'output': 'Off'}
+        client.run('unused.csv', {'meter_voltage_range': 1., 'meter_current_range': .001})
+        values = client._send.call_args.kwargs['config']
+        self.assertEqual(values['meter_voltage_range'], 1.)
+        self.assertEqual(values['meter_current_range'], .001)

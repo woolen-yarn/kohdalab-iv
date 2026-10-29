@@ -359,6 +359,9 @@ class NativeIV:
         values = copy.deepcopy(self.default_config)
         values.update(getattr(self, "_models", {}))
         values.update(config or {})
+        for key in ("meter_voltage_range", "meter_current_range"):
+            if values.get(key) is not None and key not in self.default_config:
+                raise RuntimeError("Fixed Meter ranges require a newer KohdaLab IV engine. Upgrade the application; this request will not run with Auto range.")
         if values.get("source_compliance") is not None and "source_compliance" not in self.default_config:
             raise RuntimeError("Independent Source protection requires a newer KohdaLab IV engine. Upgrade the application before running this configuration.")
         if values.get("balanced_source") is not None:
@@ -787,17 +790,37 @@ class GuiIV:
         self._stop_heartbeat.set()
 
     def configure(self, profile=None):
+        if isinstance(profile, dict):
+            self._require_meter_range_support(profile.get("config", profile))
         return self._request("configure", require_lease=True, profile=profile)
 
     def load_config(self, path):
-        return self._request("load_config", require_lease=True, path=str(Path(path).expanduser().resolve()))
+        resolved = Path(path).expanduser().resolve()
+        try:
+            with resolved.open(encoding="utf-8") as stream:
+                profile = json.load(stream)
+        except (OSError, ValueError):
+            # A forwarded GUI can have a different filesystem. Without seeing
+            # the profile, an older GUI cannot safely promise a fixed range.
+            if not self.capabilities().get("fixed_meter_ranges", False):
+                raise GuiIVError("Cannot verify the saved Meter range with this older GUI. Upgrade the application or use a locally readable profile.") from None
+        else:
+            if isinstance(profile, dict):
+                self._require_meter_range_support(profile.get("config", profile))
+        return self._request("load_config", require_lease=True, path=str(resolved))
 
     def set_plan(self, plan):
+        self._require_meter_range_support(plan)
         result = self._request("set_plan", require_lease=True, plan=copy.deepcopy(plan))
         if self._is_job(result):
             self.wait(result["id"])
             return self.config()
         return result
+
+    def _require_meter_range_support(self, plan):
+        if any(plan.get(key) is not None for key in ("meter_voltage_range", "meter_current_range")):
+            if not self.capabilities().get("fixed_meter_ranges", False):
+                raise GuiIVError("Fixed Meter ranges require a newer KohdaLab IV GUI. Upgrade the application; this request will not run with Auto range.")
 
     def set_output(self, directory=None, filename=None, auto_timestamp_suffix=None):
         values = {}

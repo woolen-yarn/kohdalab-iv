@@ -4,8 +4,14 @@ roles = ["meter"]
 measure_modes = ["dc_voltage", "dc_current"]
 max_input_V = 1000.0
 max_input_A = 3.0
-auto_range_required = true
+auto_range_required = false
 nplc_values = [0.02, 0.2, 1, 10, 100]
+# Keysight 34401A User's Guide, Chapter 8 "DC Characteristics"; the service
+# guide's DC-current table confirms the four current shunts/ranges.
+manual_range_reference = "https://www.keysight.com/us/en/assets/9018-01063/user-manuals/9018-01063.pdf"
+manual_range_reference_sections = ["Chapter 8, DC Characteristics: DC Voltage", "Chapter 8, DC Characteristics: DC Current"]
+voltage_ranges = [0.1, 1.0, 10.0, 100.0, 1000.0]
+current_ranges = [0.01, 0.1, 1.0, 3.0]
 
 [AGILENT_34411A]
 display_name = "Agilent 34411A"
@@ -13,8 +19,14 @@ roles = ["meter"]
 measure_modes = ["dc_voltage", "dc_current"]
 max_input_V = 1000.0
 max_input_A = 3.0
-auto_range_required = true
+auto_range_required = false
 nplc_values = [0.001, 0.002, 0.006, 0.02, 0.06, 0.2, 1, 2, 10, 100]
+# Keysight 34410A/34411A Service Guide, "Making Basic Measurements" and
+# Chapter 1 "DC Characteristics" (DC voltage/current range tables).
+manual_range_reference = "https://www.keysight.com/us/en/assets/9018-05591/service-manuals/9018-05591.pdf"
+manual_range_reference_sections = ["Making Basic Measurements: To Measure DC Voltage", "Chapter 1, DC Characteristics: DC Current"]
+voltage_ranges = [0.1, 1.0, 10.0, 100.0, 1000.0]
+current_ranges = [0.0001, 0.001, 0.01, 0.1, 1.0, 3.0]
 
 [KEYSIGHT_34411A]
 display_name = "Keysight 34411A"
@@ -22,8 +34,13 @@ roles = ["meter"]
 measure_modes = ["dc_voltage", "dc_current"]
 max_input_V = 1000.0
 max_input_A = 3.0
-auto_range_required = true
+auto_range_required = false
 nplc_values = [0.001, 0.002, 0.006, 0.02, 0.06, 0.2, 1, 2, 10, 100]
+# Same hardware/manual range tables as AGILENT_34411A.
+manual_range_reference = "https://www.keysight.com/us/en/assets/9018-05591/service-manuals/9018-05591.pdf"
+manual_range_reference_sections = ["Making Basic Measurements: To Measure DC Voltage", "Chapter 1, DC Characteristics: DC Current"]
+voltage_ranges = [0.1, 1.0, 10.0, 100.0, 1000.0]
+current_ranges = [0.0001, 0.001, 0.01, 0.1, 1.0, 3.0]
 
 [KEYSIGHT_34465A]
 display_name = "Keysight 34465A"
@@ -31,8 +48,15 @@ roles = ["meter"]
 measure_modes = ["dc_voltage", "dc_current"]
 max_input_V = 1000.0
 max_input_A = 10.0
-auto_range_required = true
+auto_range_required = false
 nplc_values = [0.001, 0.002, 0.006, 0.02, 0.06, 0.2, 1, 10, 100]
+# Keysight Truevolt Operating and Service Guide, Chapter 1 "DC Characteristics"
+# and "Front Panel Menu Reference" DC-current entry. The 34465A adds 1 uA
+# and 10 uA DC-current ranges.
+manual_range_reference = "https://www.keysight.com/ie/en/assets/9018-03876/service-manuals/9018-03876.pdf"
+manual_range_reference_sections = ["Chapter 1, DC Characteristics: DC Voltage", "Front Panel Menu Reference: DC Current"]
+voltage_ranges = [0.1, 1.0, 10.0, 100.0, 1000.0]
+current_ranges = [0.000001, 0.00001, 0.0001, 0.001, 0.01, 0.1, 1.0, 3.0, 10.0]
 
 [ADCMT_7461A]
 display_name = "ADCMT 7461A"
@@ -43,6 +67,9 @@ max_input_A = 3.0
 auto_range_required = true
 nplc_min = 0.02
 nplc_max = 100.0
+# No verified public programming-manual range command/range table has been
+# incorporated. Fixed range selection must reject rather than fall back to Auto.
+manual_range_status = "unsupported_pending_official_programming_manual"
 
 [SIMULATED_METER]
 display_name = "Simulated meter"
@@ -53,6 +80,10 @@ max_input_A = 1.0
 auto_range_required = false
 nplc_min = 0.001
 nplc_max = 100.0
+manual_range_reference = "simulation profile"
+manual_range_reference_sections = ["Simulation-only ranges"]
+voltage_ranges = [0.1, 1.0, 10.0]
+current_ranges = [0.000001, 0.00001, 0.0001, 0.001, 0.01, 0.1, 1.0]
 
 # Display-only metadata. Accuracy, noise and range limits remain separate.
 

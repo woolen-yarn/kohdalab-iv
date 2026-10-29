@@ -6,6 +6,9 @@ use serde::{Deserialize, Serialize};
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(tag = "command", rename_all = "snake_case")]
+// Commands are low-frequency control messages. Keep RunConfig inline to avoid
+// changing all command producers for a small, bounded queue-size difference.
+#[allow(clippy::large_enum_variant)]
 pub enum Command {
     /// Correlates one finite, non-safety command with the state published
     /// after that command has completed.
@@ -18,6 +21,11 @@ pub enum Command {
     Discover,
     SetLiveMode {
         mode: Mode,
+    },
+    /// Idle acquisition uses the same independent range choices as sweeps.
+    SetMeterRanges {
+        meter_voltage_range: Option<f64>,
+        meter_current_range: Option<f64>,
     },
     Connect {
         simulation: bool,

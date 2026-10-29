@@ -124,6 +124,9 @@ GS210 hardware H/L protection is checked separately from the external Meter
 software stop, including zero-wait ramps; a limited target is kept as raw evidence
 and excluded from analysis. **Settings…** separates Source compliance
 from Measurement limit and shows the effective source range/protection.
+**Settings… → Meter range** selects Auto or a fixed voltage/current range,
+held through the whole return sweep. See [meter ranging](docs/reference/meter-ranging.md)
+for supported models and protection behavior.
 Before enabling output, the engine verifies source function, programmed range,
 zero setting and output ON. This common policy covers both supported sources
 and every supported meter. See [safety notes](SAFETY.md) for limits.

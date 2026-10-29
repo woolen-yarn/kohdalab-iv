@@ -111,6 +111,14 @@ pub struct RunConfig {
     /// original 34411A behaviour.
     #[serde(default = "default_meter_model")]
     pub meter_model: String,
+    /// Fixed DC-voltage meter range in V. `None` leaves voltage measurements
+    /// in the instrument's automatic range mode.
+    #[serde(default)]
+    pub meter_voltage_range: Option<f64>,
+    /// Fixed DC-current meter range in A. `None` leaves current measurements
+    /// in the instrument's automatic range mode.
+    #[serde(default)]
+    pub meter_current_range: Option<f64>,
     pub mode: Mode,
     pub pattern: Pattern,
     /// Start target, in SI units (V for IV and A for VI).
@@ -158,6 +166,8 @@ impl Default for RunConfig {
             experiment: serde_json::Map::new(),
             source_model: default_source_model(),
             meter_model: default_meter_model(),
+            meter_voltage_range: None,
+            meter_current_range: None,
             mode: Mode::Iv,
             pattern: Pattern::ZeroCentered,
             start: -0.001,
@@ -349,6 +359,10 @@ struct DmmSpec {
     max_input_a: f64,
     nplc_min: Option<f64>,
     nplc_max: Option<f64>,
+    #[serde(default)]
+    voltage_ranges: Vec<f64>,
+    #[serde(default)]
+    current_ranges: Vec<f64>,
 }
 
 fn source_specs() -> Result<BTreeMap<String, SourceSpec>, String> {
@@ -377,15 +391,99 @@ fn source_spec(model: &str) -> Result<SourceSpec, String> {
 fn meter_spec(model: &str) -> Result<DmmSpec, String> {
     if !matches!(
         model,
-        "AGILENT_34401A" | "AGILENT_34411A" | "KEYSIGHT_34411A" | "KEYSIGHT_34465A" | "ADCMT_7461A"
+        "AGILENT_34401A"
+            | "AGILENT_34411A"
+            | "KEYSIGHT_34411A"
+            | "KEYSIGHT_34465A"
+            | "ADCMT_7461A"
+            | "SIMULATED_METER"
     ) {
         return Err(format!(
-            "Unsupported meter model '{model}'. Supported meter models: AGILENT_34401A, AGILENT_34411A, KEYSIGHT_34411A, KEYSIGHT_34465A, ADCMT_7461A."
+            "Unsupported meter model '{model}'. Supported meter models: AGILENT_34401A, AGILENT_34411A, KEYSIGHT_34411A, KEYSIGHT_34465A, ADCMT_7461A, SIMULATED_METER."
         ));
     }
     meter_specs()?
         .remove(model)
         .ok_or_else(|| format!("Embedded meter profile for {model} is missing."))
+}
+
+/// Fixed ranges supported by a meter profile for the selected measurement
+/// mode. Values are SI amperes with a voltage source (`Mode::Iv`) and SI volts
+/// with a current source (`Mode::Vi`).
+pub fn meter_ranges(model: &str, mode: Mode) -> Result<Vec<f64>, String> {
+    let meter = meter_spec(model)?;
+    Ok(match mode {
+        Mode::Iv => meter.current_ranges,
+        Mode::Vi => meter.voltage_ranges,
+    })
+}
+
+/// The only fixed range relevant to a run. Voltage-source mode measures current,
+/// while current-source mode measures voltage. The inactive range is retained so a
+/// user can switch modes without losing the previous selection.
+pub const fn selected_meter_range(config: &RunConfig) -> Option<f64> {
+    match config.mode {
+        Mode::Iv => config.meter_current_range,
+        Mode::Vi => config.meter_voltage_range,
+    }
+}
+
+fn ranges_match(expected: f64, actual: f64) -> bool {
+    (expected - actual).abs() <= 1e-12 * expected.abs().max(actual.abs()).max(1.0)
+}
+
+/// Validate a requested fixed meter range without issuing any instrument I/O.
+/// `None` is the explicit Auto mode. A model with no documented manual range
+/// list rejects fixed values instead of silently falling back to Auto.
+pub fn validate_meter_range(config: &RunConfig) -> Result<(), String> {
+    let Some(requested) = selected_meter_range(config) else {
+        return Ok(());
+    };
+    if !requested.is_finite() || requested <= 0.0 {
+        return Err("Fixed meter range must be finite and positive.".into());
+    }
+    let ranges = meter_ranges(&config.meter_model, config.mode)?;
+    let quantity = match config.mode {
+        Mode::Iv => "current",
+        Mode::Vi => "voltage",
+    };
+    if ranges.is_empty() {
+        return Err(format!(
+            "{} has no verified fixed {} range support. Select Auto.",
+            config.meter_model, quantity
+        ));
+    }
+    if !ranges.iter().any(|range| ranges_match(*range, requested)) {
+        return Err(format!(
+            "{} does not support fixed {} range {}. Choose one of: {}.",
+            config.meter_model,
+            quantity,
+            requested,
+            ranges
+                .iter()
+                .map(ToString::to_string)
+                .collect::<Vec<_>>()
+                .join(", ")
+        ));
+    }
+    Ok(())
+}
+
+/// Confirm that a meter stayed on the requested manual range after a range
+/// query. Auto mode intentionally performs no comparison.
+pub fn verify_meter_range(requested: Option<f64>, actual: f64) -> Result<(), String> {
+    let Some(requested) = requested else {
+        return Ok(());
+    };
+    if !actual.is_finite() || actual <= 0.0 {
+        return Err("Meter returned an invalid fixed-range query result.".into());
+    }
+    if !ranges_match(requested, actual) {
+        return Err(format!(
+            "Meter range changed during a fixed-range run (requested {requested}, actual {actual})."
+        ));
+    }
+    Ok(())
 }
 
 fn decimal(value: f64, name: &str) -> Result<Decimal, String> {
@@ -757,6 +855,7 @@ fn prepare_config_single(config: &RunConfig) -> Result<RunConfig, String> {
     // Validate the meter here as well so UI previews report a bad model before
     // a run is started. `plan` validates its mode-dependent limits below.
     meter_spec(&config.meter_model)?;
+    validate_meter_range(config)?;
     let (source_range, range_maximum, resolution) = select_range(
         &source,
         &config.source_model,
@@ -1543,6 +1642,127 @@ pub fn simulate_record(config: &RunConfig, point: &SweepPoint, elapsed_s: f64) -
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn documented_meter_ranges_are_available_for_every_supported_profile() {
+        let current_cases = [
+            ("AGILENT_34401A", vec![0.01, 0.1, 1.0, 3.0]),
+            ("AGILENT_34411A", vec![0.0001, 0.001, 0.01, 0.1, 1.0, 3.0]),
+            ("KEYSIGHT_34411A", vec![0.0001, 0.001, 0.01, 0.1, 1.0, 3.0]),
+            (
+                "KEYSIGHT_34465A",
+                vec![0.000001, 0.00001, 0.0001, 0.001, 0.01, 0.1, 1.0, 3.0, 10.0],
+            ),
+            (
+                "SIMULATED_METER",
+                vec![0.000001, 0.00001, 0.0001, 0.001, 0.01, 0.1, 1.0],
+            ),
+        ];
+        for (model, expected) in current_cases {
+            assert_eq!(meter_ranges(model, Mode::Iv).unwrap(), expected, "{model}");
+        }
+        assert_eq!(
+            meter_ranges("KEYSIGHT_34465A", Mode::Vi).unwrap(),
+            vec![0.1, 1.0, 10.0, 100.0, 1000.0]
+        );
+        for model in [
+            "AGILENT_34401A",
+            "AGILENT_34411A",
+            "KEYSIGHT_34411A",
+            "SIMULATED_METER",
+        ] {
+            assert!(
+                !meter_ranges(model, Mode::Vi).unwrap().is_empty(),
+                "{model}"
+            );
+        }
+        assert!(meter_ranges("ADCMT_7461A", Mode::Iv).unwrap().is_empty());
+        assert!(meter_ranges("ADCMT_7461A", Mode::Vi).unwrap().is_empty());
+    }
+
+    #[test]
+    fn selected_fixed_range_is_independent_for_each_measurement_mode() {
+        let config = RunConfig {
+            meter_current_range: Some(0.001),
+            meter_voltage_range: Some(10.0),
+            ..RunConfig::default()
+        };
+        assert_eq!(selected_meter_range(&config), Some(0.001));
+        let voltage_config = RunConfig {
+            mode: Mode::Vi,
+            ..config
+        };
+        assert_eq!(selected_meter_range(&voltage_config), Some(10.0));
+    }
+
+    #[test]
+    fn fixed_meter_range_validation_requires_a_documented_positive_preset() {
+        let mut config = RunConfig {
+            meter_current_range: Some(0.001),
+            ..RunConfig::default()
+        };
+        assert!(validate_meter_range(&config).is_ok());
+        config.meter_current_range = Some(0.0002);
+        assert!(
+            validate_meter_range(&config)
+                .unwrap_err()
+                .contains("does not support")
+        );
+        config.meter_current_range = Some(0.0);
+        assert!(
+            validate_meter_range(&config)
+                .unwrap_err()
+                .contains("positive")
+        );
+        config.meter_current_range = Some(f64::NAN);
+        assert!(
+            validate_meter_range(&config)
+                .unwrap_err()
+                .contains("finite")
+        );
+        config.meter_current_range = Some(0.001);
+        config.meter_model = "ADCMT_7461A".into();
+        assert!(
+            validate_meter_range(&config)
+                .unwrap_err()
+                .contains("no verified fixed current range support")
+        );
+    }
+
+    #[test]
+    fn inactive_fixed_range_does_not_change_the_active_mode_validation() {
+        let config = RunConfig {
+            meter_current_range: Some(0.001),
+            meter_voltage_range: Some(0.123),
+            ..RunConfig::default()
+        };
+        assert!(validate_meter_range(&config).is_ok());
+        let voltage_config = RunConfig {
+            mode: Mode::Vi,
+            ..config
+        };
+        assert!(validate_meter_range(&voltage_config).is_err());
+    }
+
+    #[test]
+    fn range_verification_only_enforces_fixed_requests() {
+        assert!(verify_meter_range(None, f64::NAN).is_ok());
+        assert!(verify_meter_range(Some(0.001), 0.001).is_ok());
+        assert!(verify_meter_range(Some(0.001), 0.01).is_err());
+        assert!(verify_meter_range(Some(0.001), 0.0).is_err());
+    }
+
+    #[test]
+    fn old_configs_deserialize_with_auto_meter_ranges() {
+        let config = RunConfig::default();
+        let mut encoded = serde_json::to_value(config).unwrap();
+        let object = encoded.as_object_mut().unwrap();
+        object.remove("meter_voltage_range");
+        object.remove("meter_current_range");
+        let decoded: RunConfig = serde_json::from_value(encoded).unwrap();
+        assert_eq!(decoded.meter_voltage_range, None);
+        assert_eq!(decoded.meter_current_range, None);
+    }
 
     #[test]
     fn run_config_experiment_roundtrips_and_empty_default_stays_omitted() {

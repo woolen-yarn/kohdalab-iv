@@ -95,7 +95,7 @@ impl IvApp {
         match method {
             "capabilities" => {
                 return Ok(
-                    json!({"application":"kohdalab-iv","application_version":env!("CARGO_PKG_VERSION"),"api_version":2,"actions":["capabilities","status","config","plan","output","acquire","heartbeat","release","detach","configure","load_config","set_plan","set_output","start","result","stop","output_off","connect","disconnect","connect_gate","set_gate_voltage","gate_output_off","disconnect_gate"],"history_limit":32,"request_id":"uuid","safety":{"lease_timeout_seconds":10,"on_disconnect":"configurable_default_stop_and_output_off","stop_policy_defaults":{"stop_on_disconnect":true,"stop_on_error":true,"stop_on_timeout":true},"on_release":"verified_output_off","gui_stop_always_available":true}}),
+                    json!({"application":"kohdalab-iv","application_version":env!("CARGO_PKG_VERSION"),"api_version":2,"actions":["capabilities","status","config","plan","output","acquire","heartbeat","release","detach","configure","load_config","set_plan","set_output","start","result","stop","output_off","connect","disconnect","connect_gate","set_gate_voltage","gate_output_off","disconnect_gate"],"history_limit":32,"request_id":"uuid","fixed_meter_ranges":true,"safety":{"lease_timeout_seconds":10,"on_disconnect":"configurable_default_stop_and_output_off","stop_policy_defaults":{"stop_on_disconnect":true,"stop_on_error":true,"stop_on_timeout":true},"on_release":"verified_output_off","gui_stop_always_available":true}}),
                 );
             }
             "status" => {
@@ -247,6 +247,7 @@ impl IvApp {
                 .collect::<Vec<_>>()
                 .join(", ");
             self.settings = settings;
+            self.send_meter_ranges();
             if mode_changed {
                 // Mirror the manual GUI mode switch: never relabel an old
                 // V-I curve/live reading as a new I-V measurement.

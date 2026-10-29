@@ -79,6 +79,10 @@ limited target is retained only as raw evidence, not as an analysis point.
 
 Configuration defaults are queried from Rust, rather than maintained separately
 in Python. `snapshot` returns the latest state; `live()` waits for a new sample.
+`meter_voltage_range` and `meter_current_range` select fixed SI ranges; `None`
+means Auto. They are independent and retained in run metadata. See
+[Meter ranging](../../docs/reference/meter-ranging.md) for supported presets,
+an example, and compatibility checks.
 `stop()`, `output_off()` and `disconnect()` send the respective engine commands.
 `run()` waits for completion and sends stop/OFF on timeout or interruption.
 The context manager requests shutdown and waits for cleanup; it never kills a
