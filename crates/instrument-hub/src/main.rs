@@ -326,8 +326,10 @@ $acl.SetOwner($sid);
 $acl.SetAccessRuleProtection($true,$false);
 $rule=New-Object Security.AccessControl.FileSystemAccessRule($sid,'FullControl','ContainerInherit,ObjectInherit','None','Allow');
 $acl.AddAccessRule($rule);
-Set-Acl -LiteralPath $path -AclObject $acl;
-$check=Get-Acl -LiteralPath $path;
+# Use .NET Framework ACL methods directly. A Windows PowerShell child can
+# inherit PowerShell 7 module paths, which make Security cmdlets unloadable.
+[IO.Directory]::SetAccessControl($path,$acl);
+$check=[IO.Directory]::GetAccessControl($path);
 if(-not $check.AreAccessRulesProtected){throw 'Service directory ACL is not protected'};
 foreach($entry in $check.GetAccessRules($true,$true,[Security.Principal.SecurityIdentifier])) {
  if($entry.AccessControlType -eq 'Allow' -and $entry.IdentityReference.Value -ne $sid.Value){throw 'Unexpected service directory access rule'}
