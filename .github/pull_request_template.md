@@ -1,11 +1,11 @@
 ## Summary / 概要
 
+Describe the concrete problem and resulting behavior. Link the relevant issue when one exists.
+
 ## Validation / 検証
 
-- Cargo format / Clippy / workspace tests / Cargoの書式・Clippy・ワークスペーステスト
-- Simulation or hardware checks relevant to this change / 変更に関連するシミュレーションまたは実機確認
+Record the commands/checks run and their results. Distinguish simulation, installer lifecycle, desktop runtime, and physical hardware evidence. State anything not tested.
 
-## Measurement behavior / 測定の挙動
+## Compatibility and safety / 互換性と安全性
 
-Describe effects on device commands, timing, saved data and verified output-off. / 機器命令・タイミング・保存データ・出力OFF確認への影響を記載してください。
-Distinguish simulated checks from real instrument verification. / シミュレーションと実機の確認を区別してください。
+Explain effects on settings, API/Notebook users, data formats, installation, and device ownership/cleanup when relevant. For changes without such effects, say so briefly. Include screenshots for visible UI changes, with version, OS/scale, and simulation context.

@@ -1,0 +1,29 @@
+name: Bug report / 不具合報告
+description: Report a reproducible application problem / 再現できる不具合を報告
+title: "[Bug]: "
+labels: [bug]
+body:
+  - type: input
+    id: version
+    attributes:
+      label: Application version and package / 版・配布形式
+      description: Include the release tag and Setup/portable/source, plus OS and architecture.
+    validations:
+      required: true
+  - type: textarea
+    id: reproduce
+    attributes:
+      label: Steps, expected result, and actual result / 再現手順・期待と実際
+      description: Include mode/settings and device/transport when relevant. Say whether this was a simulation or physical hardware.
+    validations:
+      required: true
+  - type: textarea
+    id: evidence
+    attributes:
+      label: Error and diagnostic evidence / エラー・証跡
+      description: Paste the error and relevant logs/screenshots. Remove API tokens, passwords, private paths, and sensitive experiment data. Do not rerun an unsafe experiment to collect evidence.
+  - type: textarea
+    id: cleanup
+    attributes:
+      label: Stop or cleanup state / 停止・後処理の状態
+      description: If relevant, say whether output/motion/acquisition stopped and whether the app reported confirmation or an unknown/pending state. Do not infer physical state solely from a click.

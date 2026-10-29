@@ -140,3 +140,5 @@ Recorded validation scope and limitations: [GUI API v2 validation](../validation
 See the [English/Japanese Python guide](../../bindings/python/README.md#gui-stop-conditions--guiの停止条件) for `stop_on_disconnect`, `stop_on_error`, `stop_on_timeout`, typed exceptions and `stop_and_wait()`. IV defaults all three to True; TRKR defaults all three to False. Normal IV `release()`/`close()` still verifies all outputs OFF. A disconnected client with continuation selected cannot edit an active operation: the GUI remains locked until its job finishes. Failed output cleanup is an error receipt, never a successful stopped receipt.
 
 [英日Pythonガイド](../../bindings/python/README.md#gui-stop-conditions--guiの停止条件)に各停止条件・例外・停止完了待ちをまとめています。IVの既定は3条件ともTrue、TRKRはFalseです。IVの正常な解放・終了時のOFF確認は維持します。継続を選んで切り離した処理も完了までGUIをロックし、出力停止失敗は停止済みとせずエラーにします。
+
+The additive [common control API](common-control-api.md) offers a shared SDK across the desktop suite. Native protocol 2 remains available.

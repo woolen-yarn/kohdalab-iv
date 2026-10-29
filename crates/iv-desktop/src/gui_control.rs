@@ -1,6 +1,7 @@
 //! Authenticated, bounded loopback API. Device I/O belongs to the GUI's engine.
 use crate::protocol::{Command, Snapshot};
 use crate::state::Phase;
+use kohdalab_control_protocol as common;
 use serde_json::{Value, json};
 use std::{
     collections::{HashMap, HashSet, VecDeque},
@@ -110,6 +111,7 @@ pub struct GuiControl {
     active: Option<Active>,
     retiring: bool,
     retire_safety: u64,
+    common_stop_safety: Option<u64>,
 }
 impl GuiControl {
     pub fn start() -> Result<Self, String> {
@@ -126,7 +128,11 @@ impl GuiControl {
         let token = uuid::Uuid::new_v4().to_string();
         let instance = uuid::Uuid::new_v4().to_string();
         let endpoint = directory.join(format!("iv-{}-{instance}.json", std::process::id()));
-        let declaration = json!({"protocol":2,"pid":std::process::id(),"address":listener.local_addr().map_err(|e|e.to_string())?.to_string(),"token":token,"instance_id":instance});
+        let declaration = common::descriptor(
+            json!({"protocol":2,"pid":std::process::id(),"address":listener.local_addr().map_err(|e|e.to_string())?.to_string(),"token":token,"instance_id":instance}),
+            "kohdalab-iv",
+            2,
+        );
         // Publish atomically, with private permissions on Unix.
         let mut file = tempfile::NamedTempFile::new_in(&directory).map_err(|e| e.to_string())?;
         serde_json::to_writer(&mut file, &declaration).map_err(|e| e.to_string())?;
@@ -172,6 +178,7 @@ impl GuiControl {
             active: None,
             retiring: false,
             retire_safety: 0,
+            common_stop_safety: None,
         })
     }
     pub fn next(&self) -> Option<Request> {
@@ -249,6 +256,27 @@ impl GuiControl {
             self.retiring = false;
         }
     }
+    pub fn mark_common_stop(&mut self, safety: u64) {
+        self.common_stop_safety = Some(safety);
+    }
+    pub fn common_cleanup(&self, state: &Snapshot) -> &'static str {
+        if self.retiring
+            || self.common_stop_safety.is_some_and(|revision| {
+                state.safety_revision <= revision
+                    || !outputs_off(state)
+                    || busy(state)
+                    || self.has_active()
+            })
+        {
+            "pending"
+        } else if !state.source_connected && !state.source2_connected && !state.gate_connected {
+            "not_required"
+        } else if outputs_off(state) {
+            "verified"
+        } else {
+            "unknown"
+        }
+    }
     pub fn control(&self) -> Value {
         json!({"owned":self.owner.is_some(),"client_id":self.owner.as_ref().map(|o|&o.client),"label":self.owner.as_ref().map(|o|&o.label),"stop_policy":self.owner.as_ref().map(|o|o.policy),"status":if self.retiring || (self.owner.is_none() && self.active.is_some()) {"detached"} else if self.owner.is_some(){"python"}else{"idle"},"active_run":self.active.as_ref().and_then(|a|self.result(&a.id).ok())})
     }
@@ -262,7 +290,7 @@ impl GuiControl {
         }
         match request.method.as_str() {
             "status" | "config" | "configuration" | "plan" | "output" | "result"
-            | "capabilities" => Ok(None),
+            | "capabilities" | "control_describe" | "control_status" | "control_result" => Ok(None),
             "acquire" | "claim" => {
                 let client = request
                     .body
@@ -538,6 +566,9 @@ fn request_fingerprint(kind: &str, body: &Value) -> String {
         for field in [
             "token",
             "client_id",
+            "client",
+            "control_protocol",
+            "_control_method",
             "lease",
             "request_id",
             "method",
@@ -615,12 +646,18 @@ fn serve(
             break;
         }
     }
+    let mut original = Value::Null;
     let result = (|| {
         let body: Value =
             serde_json::from_slice(&bytes).map_err(|_| "Invalid GUI control request")?;
+        original = body.clone();
         if body["token"].as_str() != Some(token) {
             return Err("GUI control authentication failed".into());
         }
+        let body = match common::prepare(&body) {
+            Ok(body) => body,
+            Err(error) => return Ok(error),
+        };
         let method = body
             .get("method")
             .or_else(|| body.get("action"))
@@ -639,7 +676,10 @@ fn serve(
             .recv_timeout(REQUEST_TIMEOUT)
             .map_err(|_| "GUI is not responding; inspect its screen before retrying".to_string())
     })();
-    let value = result.unwrap_or_else(|error| response(Err(error)));
+    let value = common::response(
+        &original,
+        result.unwrap_or_else(|error| response(Err(error))),
+    );
     serde_json::to_writer(&mut stream, &value).map_err(|e| e.to_string())?;
     stream.write_all(b"\n").map_err(|e| e.to_string())
 }
@@ -1073,5 +1113,94 @@ mod tests {
                 "On"
             );
         }
+    }
+    #[test]
+    fn common_transport_authenticates_normalizes_and_preserves_read_only_admission() {
+        use std::io::{BufRead, BufReader};
+        let (_directory, mut control) = control();
+        let declaration: Value =
+            serde_json::from_slice(&std::fs::read(&control.endpoint).unwrap()).unwrap();
+        assert_eq!(declaration["application"], "kohdalab-iv");
+        assert_eq!(declaration["control_protocol"], 1);
+        let address = declaration["address"].as_str().unwrap().to_string();
+        let mut wrong = TcpStream::connect(&address).unwrap();
+        wrong
+            .set_read_timeout(Some(Duration::from_secs(2)))
+            .unwrap();
+        writeln!(
+            wrong,
+            "{}",
+            json!({"token":"wrong","method":"control.status","control_protocol":1})
+        )
+        .unwrap();
+        let mut line = String::new();
+        BufReader::new(wrong).read_line(&mut line).unwrap();
+        let value: Value = serde_json::from_str(&line).unwrap();
+        assert_eq!(value["error"]["code"], "authentication");
+        assert!(control.next().is_none());
+        let token = declaration["token"].as_str().unwrap().to_owned();
+        let handle = std::thread::spawn(move || {
+            let mut peer = TcpStream::connect(address).unwrap();
+            peer.set_read_timeout(Some(Duration::from_secs(2))).unwrap();
+            writeln!(peer,"{}",json!({"token":token,"method":"control.status","control_protocol":1,"request_id":"read"})).unwrap();
+            let mut line = String::new();
+            BufReader::new(peer).read_line(&mut line).unwrap();
+            serde_json::from_str::<Value>(&line).unwrap()
+        });
+        let deadline = Instant::now() + Duration::from_secs(2);
+        let request = loop {
+            if let Some(request) = control.next() {
+                break request;
+            }
+            assert!(Instant::now() < deadline);
+            std::thread::sleep(Duration::from_millis(2));
+        };
+        assert_eq!(request.method, "control_status");
+        assert!(control.authorize(&request, false).unwrap().is_none());
+        assert!(!control.has_lease());
+        request.respond(Ok(common::status(
+            "disconnected",
+            false,
+            json!({"owned":false}),
+            "not_required",
+            json!({}),
+        )));
+        let value = handle.join().unwrap();
+        assert_eq!(value["result"]["phase"], "disconnected");
+        assert_eq!(value["request_id"], "read");
+        assert!(value.get("data").is_none());
+        assert!(value["result"].get("token").is_none());
+    }
+    #[test]
+    fn common_stop_requires_a_fresh_off_ack_not_an_old_safe_snapshot() {
+        let (_directory, mut control) = control();
+        let mut state = Snapshot {
+            source_connected: true,
+            output: crate::state::OutputState::Off,
+            safety_revision: 17,
+            ..Default::default()
+        };
+        state.output = crate::state::OutputState::On;
+        assert_eq!(control.common_cleanup(&state), "unknown");
+        state.output = crate::state::OutputState::Off;
+        control.mark_common_stop(17);
+        assert_eq!(control.common_cleanup(&state), "pending");
+        state.safety_revision = 18;
+        assert_eq!(control.common_cleanup(&state), "verified");
+        state.output = crate::state::OutputState::Unknown;
+        assert_eq!(control.common_cleanup(&state), "pending");
+    }
+    #[test]
+    fn common_namespace_does_not_change_job_duplicate_fingerprints() {
+        let native =
+            json!({"method":"start","client_id":client(),"request_id":client(),"filename":"run"});
+        let mut common_request = native.clone();
+        common_request["method"] = json!("control.start");
+        common_request["control_protocol"] = json!(1);
+        let prepared = common::prepare(&common_request).unwrap();
+        assert_eq!(
+            request_fingerprint("start", &native),
+            request_fingerprint("start", &prepared)
+        );
     }
 }
