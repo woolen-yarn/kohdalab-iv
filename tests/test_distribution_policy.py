@@ -4,6 +4,7 @@ from pathlib import Path
 import sys
 import tempfile
 import unittest
+from unittest.mock import patch
 from zipfile import ZipFile
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "scripts"))
@@ -19,6 +20,25 @@ def archive(files):
 
 
 class DistributionPolicyTests(unittest.TestCase):
+    def test_windows_source_kit_keeps_shell_scripts_executable_with_lf(self):
+        import package_rust_preview as package
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            scripts = root / "scripts"
+            scripts.mkdir()
+            shell = scripts / "build-macos.command"
+            shell.write_bytes(b"#!/bin/bash\r\nset -e\r\n")
+            shell.chmod(0o755)
+            (scripts / "setup.cmd").write_bytes(b"@echo off\r\n")
+            target = root / "source.zip"
+            with patch.object(package, "ROOT", root):
+                package.source_archive(target)
+            with ZipFile(target) as source:
+                self.assertEqual(source.read("scripts/build-macos.command"), b"#!/bin/bash\nset -e\n")
+                self.assertEqual(source.read("scripts/setup.cmd"), b"@echo off\r\n")
+                mode = source.getinfo("scripts/build-macos.command").external_attr >> 16
+                self.assertEqual(mode & 0o777, 0o755)
+
     def test_firmware_hidden_in_corresponding_source_is_rejected(self):
         source = archive({"native/vendor/renamed.hex": b":00000001FF"})
         with self.assertRaisesRegex(ValueError, "firmware"):

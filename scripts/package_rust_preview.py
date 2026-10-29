@@ -12,7 +12,7 @@ import re
 import shutil
 import subprocess
 import tomllib
-from zipfile import ZIP_DEFLATED, ZipFile
+from zipfile import ZIP_DEFLATED, ZipFile, ZipInfo
 
 from distribution_policy import validate_archive
 
@@ -83,7 +83,16 @@ def source_archive(path: Path) -> None:
                     and not any(part in EXCLUDED for part in relative.parts)
                     and file.suffix not in {".pyc", ".exe", ".dll"}
                 ):
-                    archive.write(file, relative)
+                    if file.suffix in {".sh", ".command"}:
+                        # Windows checkout conversion must not make the Mac/MSYS
+                        # rebuild scripts unusable after extracting a build kit.
+                        metadata = ZipInfo.from_file(file, arcname=str(relative))
+                        metadata.compress_type = ZIP_DEFLATED
+                        metadata.create_system = 3  # Preserve executable bits across Windows builds.
+                        metadata.external_attr = 0o100755 << 16
+                        archive.writestr(metadata, file.read_bytes().replace(b"\r\n", b"\n"))
+                    else:
+                        archive.write(file, relative)
 
 
 def dependency_notices(destination: Path, target: str) -> None:

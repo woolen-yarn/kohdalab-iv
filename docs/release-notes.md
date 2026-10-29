@@ -2,7 +2,7 @@
 
 ## Changes / 変更内容
 
-Add the authenticated Control Protocol 1 adapter and separate common Python SDK. Refresh the current simulation screenshot and standardize PR/release maintenance.
+Add the authenticated Control Protocol 1 adapter and separate common Python SDK. Refresh the current simulation screenshot and standardize PR/release maintenance. Windows-generated source/build kits retain LF and executable permissions for Mac/MSYS shell scripts.
 
 ## Compatibility and migration / 互換性と移行
 
