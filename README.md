@@ -53,27 +53,31 @@ A stopped simulation: the popup shows the threshold, trigger reading and verifie
 
 IV settings use `~/.kohdalab/iv/config.json` (`%USERPROFILE%\.kohdalab\iv\config.json` on Windows). TRKR uses its own `trkr/config.json`. Old shared/preview settings are not automatically discovered or migrated; app identity checks prevent loading or overwriting another app's configuration. See [settings storage](docs/reference/settings-storage.md).
 
-IV設定は `~/.kohdalab/iv/config.json`、TRKR設定は独立した `trkr/config.json` に保存します。旧Rust版のIV設定は元ファイルを残して初回に引き継ぎ、別アプリの設定を読み込み・上書きする操作は拒否します。[設定の保存先](docs/reference/settings-storage.md)を参照してください。
+IV設定は `~/.kohdalab/iv/config.json`、TRKR設定は独立した `trkr/config.json` に保存します。旧共有設定や `next.json` は自動探索・移行せず、既存ファイルを残します。別アプリの設定を読み込み・上書きする操作は拒否します。[設定の保存先](docs/reference/settings-storage.md)を参照してください。
 
 ## Downloads / ダウンロード
 
 | Channel / 配布チャネル | Version / バージョン | Platforms / 対応プラットフォーム |
 | --- | --- | --- |
 | Stable / 安定版 | [1.2.0](https://github.com/woolen-yarn/kohdalab-iv/releases/tag/portable-v1.2.0) | Windows x64 Setup / portable ZIP; macOS Apple silicon portable ZIP / Windows x64 セットアップ・ポータブル ZIP、macOS Apple silicon ポータブル ZIP |
-| Preview / プレビュー | [1.3.0-alpha.16](https://github.com/woolen-yarn/kohdalab-iv/releases/tag/preview-v1.3.0-alpha.16) | Windows x64 Setup / preview ZIP; macOS Apple silicon preview ZIP / Windows x64 セットアップ・プレビュー ZIP、macOS Apple silicon プレビュー ZIP |
+| Preview / プレビュー | [1.3.0-alpha.17](https://github.com/woolen-yarn/kohdalab-iv/releases/tag/preview-v1.3.0-alpha.17) | Windows x64 Setup / preview ZIP; macOS Apple silicon preview ZIP / Windows x64 セットアップ・プレビュー ZIP、macOS Apple silicon プレビュー ZIP |
 
 | Preview package / プレビューパッケージ | Kohdalab | Personal / 個人ミラー |
 | --- | --- | --- |
-| Windows Setup | [Download](https://github.com/Kohdalab/kohdalab-iv/releases/download/preview-v1.3.0-alpha.16/kohdalab-iv-1.3.0-alpha.16-windows-x64-Setup.exe) | [Download](https://github.com/woolen-yarn/kohdalab-iv/releases/download/preview-v1.3.0-alpha.16/kohdalab-iv-1.3.0-alpha.16-windows-x64-Setup.exe) |
-| Windows portable | [Download](https://github.com/Kohdalab/kohdalab-iv/releases/download/preview-v1.3.0-alpha.16/kohdalab-iv-1.3.0-alpha.16-windows-x64-preview.zip) | [Download](https://github.com/woolen-yarn/kohdalab-iv/releases/download/preview-v1.3.0-alpha.16/kohdalab-iv-1.3.0-alpha.16-windows-x64-preview.zip) |
-| Mac portable (Apple silicon) | [Download](https://github.com/Kohdalab/kohdalab-iv/releases/download/preview-v1.3.0-alpha.16/kohdalab-iv-1.3.0-alpha.16-macos-arm64-preview.zip) | [Download](https://github.com/woolen-yarn/kohdalab-iv/releases/download/preview-v1.3.0-alpha.16/kohdalab-iv-1.3.0-alpha.16-macos-arm64-preview.zip) |
-| Source build kit / ソースビルドキット | [Download](https://github.com/Kohdalab/kohdalab-iv/releases/download/preview-v1.3.0-alpha.16/kohdalab-iv-1.3.0-alpha.16-build-kit.zip) | [Download](https://github.com/woolen-yarn/kohdalab-iv/releases/download/preview-v1.3.0-alpha.16/kohdalab-iv-1.3.0-alpha.16-build-kit.zip) |
+| Windows Setup | [Download](https://github.com/Kohdalab/kohdalab-iv/releases/download/preview-v1.3.0-alpha.17/kohdalab-iv-1.3.0-alpha.17-windows-x64-Setup.exe) | [Download](https://github.com/woolen-yarn/kohdalab-iv/releases/download/preview-v1.3.0-alpha.17/kohdalab-iv-1.3.0-alpha.17-windows-x64-Setup.exe) |
+| Windows portable | [Download](https://github.com/Kohdalab/kohdalab-iv/releases/download/preview-v1.3.0-alpha.17/kohdalab-iv-1.3.0-alpha.17-windows-x64-preview.zip) | [Download](https://github.com/woolen-yarn/kohdalab-iv/releases/download/preview-v1.3.0-alpha.17/kohdalab-iv-1.3.0-alpha.17-windows-x64-preview.zip) |
+| Mac portable (Apple silicon) | [Download](https://github.com/Kohdalab/kohdalab-iv/releases/download/preview-v1.3.0-alpha.17/kohdalab-iv-1.3.0-alpha.17-macos-arm64-preview.zip) | [Download](https://github.com/woolen-yarn/kohdalab-iv/releases/download/preview-v1.3.0-alpha.17/kohdalab-iv-1.3.0-alpha.17-macos-arm64-preview.zip) |
+| Source build kit / ソースビルドキット | [Download](https://github.com/Kohdalab/kohdalab-iv/releases/download/preview-v1.3.0-alpha.17/kohdalab-iv-1.3.0-alpha.17-build-kit.zip) | [Download](https://github.com/woolen-yarn/kohdalab-iv/releases/download/preview-v1.3.0-alpha.17/kohdalab-iv-1.3.0-alpha.17-build-kit.zip) |
 
 Rust and Python are not required to run the packaged application. Current Windows
 artifacts are unsigned; download packages and checksums together from Releases.
 macOS bundles use ad hoc signing and are not Apple-notarized.
 
 配布アプリケーションの実行に Rust や Python は不要です。現在の Windows 配布物は未署名です。Releases からパッケージとチェックサムを必ず一緒に取得してください。macOS バンドルは ad hoc 署名であり、Apple の公証は受けていません。
+
+Preview 1.3.0-alpha.17 uses the dedicated `iv/config.json` default and `iv/results` output directory. Windows Setup remains in `C:\Program Files\Kohdalab\KohdaLab IV`; portable packages use the same per-user defaults. Old shared/preview profiles are not imported automatically. Save a reviewed IV profile to the new default when moving from an older version. See [settings storage](docs/reference/settings-storage.md) and [alpha.17 validation](docs/validation/application-settings-alpha17.md).
+
+Preview 1.3.0-alpha.17は、設定を専用の `iv/config.json`、標準の測定保存先を `iv/results` に統一します。Windowsのインストール先は `C:\Program Files\Kohdalab\KohdaLab IV` で、portable版も同じユーザー別設定を使います。旧共有設定は自動移行しません。旧版から移る際は、内容を確認したIV設定を新しい既定先へ保存してください。
 
 Preview 1.3.0-alpha.16 makes manual DC range selection explicit: use the central range selector and its left/right arrows to choose a documented native range before Output. The Source card then keeps a fixed, range-derived V/mV/mA display unit and precision; Output and Zero are equal-width controls. Device → live → settings remains the compact Source/Meter workflow. Meter transition protection, CSV columns, and existing output safety remain unchanged. See [manual DC operation](docs/reference/manual-dc-output.md), [meter ranging](docs/reference/meter-ranging.md), and [alpha.16 validation](docs/validation/manual-dc-alpha16.md).
 

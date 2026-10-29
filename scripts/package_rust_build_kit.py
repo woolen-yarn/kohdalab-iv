@@ -54,6 +54,8 @@ def main() -> None:
         kit.writestr(
             f"{name}/BUILD-README.txt",
             f"KohdaLab IV {version} build kit\n\n"
+            "Application-specific settings and canonical installation defaults: "
+            "docs/reference/settings-storage.md. Old shared/preview profiles are not auto-imported.\n"
             "Start with README.md. Mac: scripts/build-macos.command. "
             "Windows: scripts/build-windows.ps1.\n"
             "Pinned Windows helpers, full native source, licenses and icons are included.\n"
