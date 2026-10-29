@@ -77,6 +77,7 @@ fn gate_plan(
     finite(voltage, "voltage")?;
     finite_positive(compliance, "compliance")?;
     finite_positive(ramp_step, "ramp step")?;
+    iv_core::manual_source_range(model, Mode::Iv, voltage, compliance)?;
     let config = RunConfig {
         source_model: model.into(),
         mode: Mode::Iv,
@@ -290,15 +291,19 @@ pub(super) fn set_voltage(
             .as_deref()
             .map(|pair| pair.gate_model.as_str())
             .unwrap_or("YOKOGAWA_GS210");
-        let (_prepared, planned) = gate_plan(model, voltage, compliance, ramp_step, false)?;
+        let (_prepared, planned) = gate_plan(model, voltage, compliance, ramp_step, true)?;
         let held = if state.gate_output == OutputState::On {
             let held = state
                 .gate_dc_limits
                 .as_ref()
                 .ok_or("Gate DC range is unknown. Turn Gate Output Off before changing it.")?;
-            validate_held_value(held, voltage, "voltage")?;
-            validate_held_value(held, ramp_step, "ramp step")?;
-            held.clone()
+            if validate_held_value(held, voltage, "voltage").is_ok()
+                && validate_held_value(held, ramp_step, "ramp step").is_ok()
+            {
+                held.clone()
+            } else {
+                range_limits(model, planned.source_range)?
+            }
         } else {
             range_limits(model, planned.source_range)?
         };
@@ -322,6 +327,20 @@ pub(super) fn set_voltage(
     let operation = (|| -> Result<(), String> {
         ensure_not_cancelled(control)?;
         verify_identity(pair)?;
+        let mut was_on = was_on;
+        if was_on {
+            let held = state
+                .gate_dc_limits
+                .as_ref()
+                .ok_or("Gate range is unknown. Turn output off and reconnect.")?;
+            if validate_held_value(held, voltage, "voltage").is_err()
+                || validate_held_value(held, ramp_step, "ramp step").is_err()
+            {
+                verify_held_settings(pair, held, planned.hardware_compliance)?;
+                force_off(Some(pair), state)?;
+                was_on = false;
+            }
+        }
         let resolution = if was_on {
             if state
                 .gate_compliance

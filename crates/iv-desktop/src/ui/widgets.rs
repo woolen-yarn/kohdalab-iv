@@ -26,36 +26,107 @@ pub(super) fn meter_range_choice(
     let unit = if mode == iv_core::Mode::Iv { "A" } else { "V" };
     let before = *value;
     let selected = value.map_or_else(
-        || {
-            if mode == iv_core::Mode::Iv {
-                "Auto · I".into()
-            } else {
-                "Auto · V".into()
-            }
-        },
+        || "Auto".into(),
         |v| format!("Fixed · {}", super::formatting::fmt_quantity(v, unit)),
     );
+    let help = meter_range_help(model, mode, *value);
     egui::ComboBox::from_id_salt(id)
         .width(ui.available_width())
+        .truncate()
         .selected_text(selected)
         .show_ui(ui, |ui| {
             ui.selectable_value(value, None, "Auto");
             for range in ranges.iter().copied() {
-                ui.selectable_value(
-                    value,
-                    Some(range),
-                    format!("Fixed · {}", super::formatting::fmt_quantity(range, unit)),
-                );
+                let mut label = format!("Fixed · {}", super::formatting::fmt_quantity(range, unit));
+                if let Some(r) = iv_core::meter_input_resistance(model, mode, range) {
+                    label.push_str(&format!(
+                        " · {} {}",
+                        super::formatting::fmt_quantity(r.ohms, "ohm"),
+                        if r.kind == iv_core::MeterResistanceKind::Shunt {
+                            "shunt"
+                        } else {
+                            "input"
+                        }
+                    ));
+                }
+                ui.selectable_value(value, Some(range), label);
             }
-        });
-    if ranges.is_empty() {
-        ui.label(
-            RichText::new("Fixed ranges are not verified for this model. Select Auto.")
-                .small()
-                .color(MUTED),
-        );
-    }
+        })
+        .response
+        .on_hover_text(help);
     before != *value
+}
+
+pub(super) const DC_BUTTON_WIDTH: f32 = 92.0;
+
+pub(super) fn device_width(ui: &egui::Ui) -> f32 {
+    (ui.available_width() - DC_BUTTON_WIDTH - ui.spacing().item_spacing.x).max(80.0)
+}
+
+pub(super) fn device_disclosure(
+    ui: &mut egui::Ui,
+    summary: &str,
+    width: f32,
+    open: &mut bool,
+) -> egui::Response {
+    let label = format!("   Device · {summary}");
+    let response = ui.add_sized(
+        [width, 24.0],
+        egui::Button::new(label).truncate().fill(BUTTON),
+    );
+    let center = egui::pos2(response.rect.left() + 11., response.rect.center().y);
+    let offsets = if *open {
+        [(-4., -2.), (4., -2.), (0., 3.)]
+    } else {
+        [(-2., -4.), (-2., 4.), (3., 0.)]
+    };
+    ui.painter().add(egui::Shape::convex_polygon(
+        offsets
+            .into_iter()
+            .map(|(x, y)| center + egui::vec2(x, y))
+            .collect(),
+        MUTED,
+        egui::Stroke::NONE,
+    ));
+    if response.clicked() {
+        *open = !*open;
+    }
+    response.on_hover_text(summary)
+}
+
+pub(super) fn meter_range_help(model: &str, mode: iv_core::Mode, range: Option<f64>) -> String {
+    let function = if mode == iv_core::Mode::Iv {
+        "current"
+    } else {
+        "voltage"
+    };
+    let mut help = format!(
+        "{function} measurement range. Fixed holds one range for the whole sweep; Limit is a separate stop threshold."
+    );
+    if let Some(range) = range {
+        if let Some(r) = iv_core::meter_input_resistance(model, mode, range) {
+            help.push_str(&format!(
+                "\n{}: {}.",
+                if r.kind == iv_core::MeterResistanceKind::Shunt {
+                    "Shunt resistance"
+                } else {
+                    "Input resistance"
+                },
+                super::formatting::fmt_quantity(r.ohms, "ohm")
+            ));
+        } else if mode == iv_core::Mode::Vi {
+            help.push_str("\nInput impedance depends on the instrument setting.");
+        } else {
+            help.push_str("\nInternal resistance has not been verified for this model.");
+        }
+    } else if model == "ADCMT_7461A" {
+        help.push_str(
+            "\nRange monitoring and fixed-range commands are not verified for this model.",
+        );
+    } else {
+        help.push_str("\nAuto stops on a change of documented input resistance, or an unverified range change. A physical switch can occur before detection.");
+    }
+    help
 }
 
 /// Bound expanding DC controls without borrowing the live monitor's space.
@@ -325,6 +396,40 @@ pub(super) fn quantity(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn device_headers_share_width_and_config_browse_reaches_the_card_edge() {
+        let context = egui::Context::default();
+        let mut rects = Vec::new();
+        let mut ends = None;
+        let _ = context.run(Default::default(), |ctx| {
+            egui::CentralPanel::default().show(ctx, |ui| {
+                ui.set_max_width(244.0);
+                let width = device_width(ui);
+                let mut open = false;
+                ui.horizontal(|ui| {
+                    rects.push(device_disclosure(ui, "Yokogawa GS210", width, &mut open).rect);
+                    button(ui, "DC output", DC_BUTTON_WIDTH, true);
+                });
+                ui.horizontal(|ui| {
+                    rects.push(
+                        device_disclosure(ui, "Long meter model identifier", width, &mut open).rect,
+                    );
+                });
+                ui.horizontal(|ui| {
+                    let right = ui.max_rect().right();
+                    let w = ui.available_width() - 70.0 - ui.spacing().item_spacing.x;
+                    let mut value = "path".to_owned();
+                    compact_field(ui, "test_config_path", &mut value, w, "path".into());
+                    let browse = button(ui, "Browse", 70.0, true);
+                    ends = Some((right, browse.rect.right()));
+                });
+            });
+        });
+        assert!((rects[0].width() - rects[1].width()).abs() < 0.1);
+        let (edge, browse) = ends.unwrap();
+        assert!((edge - browse).abs() < 0.1, "edge={edge} browse={browse}");
+    }
 
     #[test]
     fn expanded_dc_editor_reserves_space_for_actions_and_following_meter() {

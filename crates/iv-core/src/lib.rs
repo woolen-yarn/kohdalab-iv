@@ -379,14 +379,19 @@ fn meter_specs() -> Result<BTreeMap<String, DmmSpec>, String> {
         .map_err(|error| format!("embedded meter specification is invalid: {error}"))
 }
 
-fn source_spec(model: &str) -> Result<SourceSpec, String> {
+fn source_spec(model: &str) -> Result<&'static SourceSpec, String> {
+    static SOURCES: std::sync::OnceLock<Result<BTreeMap<String, SourceSpec>, String>> =
+        std::sync::OnceLock::new();
     if !matches!(model, "YOKOGAWA_GS210" | "YOKOGAWA_7651") {
         return Err(format!(
             "Unsupported source model '{model}'. Supported source models: YOKOGAWA_GS210, YOKOGAWA_7651."
         ));
     }
-    source_specs()?
-        .remove(model)
+    SOURCES
+        .get_or_init(source_specs)
+        .as_ref()
+        .map_err(Clone::clone)?
+        .get(model)
         .ok_or_else(|| format!("Embedded source profile for {model} is missing."))
 }
 
@@ -570,6 +575,34 @@ pub fn nudge_source_value(
         ));
     }
     decimal_to_f64(next, "DC level")
+}
+
+/// Select a documented manual-output range without weakening source protection.
+/// Zero is allowed; nonzero levels must lie on the selected hardware grid.
+pub fn manual_source_range(
+    model: &str,
+    mode: Mode,
+    value: f64,
+    compliance: f64,
+) -> Result<SourceRangeProfile, String> {
+    if !value.is_finite() {
+        return Err("DC level must be finite.".into());
+    }
+    let spec = source_spec(model)?;
+    let (command_value, maximum, resolution) =
+        select_range(spec, model, mode, value.abs(), Some(compliance))?;
+    if value != 0.0 && value.abs() < resolution * (1.0 - 4.0 * f64::EPSILON) {
+        return Err(format!(
+            "The minimum nonzero DC increment is {resolution:e} SI for the selected source range."
+        ));
+    }
+    nudge_source_value(0.0, value, resolution, maximum)?;
+    Ok(SourceRangeProfile {
+        name: String::new(),
+        command_value,
+        maximum,
+        resolution,
+    })
 }
 
 fn decimal_range(start: Decimal, stop: Decimal, step: Decimal) -> Result<Vec<Decimal>, String> {
@@ -901,7 +934,7 @@ fn prepare_config_single(config: &RunConfig) -> Result<RunConfig, String> {
     meter_spec(&config.meter_model)?;
     validate_meter_range(config)?;
     let (source_range, range_maximum, resolution) = select_range(
-        &source,
+        source,
         &config.source_model,
         config.mode,
         maximum,
@@ -1031,7 +1064,7 @@ fn plan_single(config: &RunConfig) -> Result<Plan, String> {
         config.start.abs().max(config.stop.abs())
     };
     let (source_range, range_maximum, resolution) = select_range(
-        &source,
+        source,
         &config.source_model,
         config.mode,
         maximum,
@@ -1120,7 +1153,7 @@ fn plan_single(config: &RunConfig) -> Result<Plan, String> {
         ));
     }
     let hardware_compliance = quantized_hardware_compliance(
-        &source,
+        source,
         &config.source_model,
         config.mode,
         source_protection,
@@ -1323,17 +1356,17 @@ fn prepare_balanced_configs(
     };
     let first_spec = source_spec(&config.source_model)?;
     let second_spec = source_spec(&second.source_model)?;
-    require_exact_protection(&first_spec, &config.source_model, primary_protection)?;
-    require_exact_protection(&second_spec, &second.source_model, second.source_compliance)?;
+    require_exact_protection(first_spec, &config.source_model, primary_protection)?;
+    require_exact_protection(second_spec, &second.source_model, second.source_compliance)?;
     let (_, first_range_max, first_resolution) = select_range(
-        &first_spec,
+        first_spec,
         &config.source_model,
         Mode::Iv,
         maximum * fraction1,
         Some(primary_protection),
     )?;
     let (_, second_range_max, second_resolution) = select_range(
-        &second_spec,
+        second_spec,
         &second.source_model,
         Mode::Iv,
         maximum * fraction2,
@@ -2699,6 +2732,38 @@ mod dc_nudge_tests {
         assert_eq!(nudge_source_value(-0.001, 0.001, 1e-6, 1.0).unwrap(), 0.0);
         assert_eq!(nudge_source_value(2e-6, 1e-6, 1e-9, 1e-3).unwrap(), 3e-6);
     }
+    #[test]
+    fn manual_dc_ranges_preserve_precision_polarity_and_protection() {
+        for (mode, value, limit, range, resolution) in [
+            (Mode::Iv, 0.0000001, 0.2, 0.01, 1e-7),
+            (Mode::Iv, 0.012, 0.2, 0.01, 1e-7),
+            (Mode::Iv, 0.012001, 0.2, 0.1, 1e-6),
+            (Mode::Iv, 1.3, 0.2, 10.0, 1e-4),
+            (Mode::Iv, 0.001, 0.001, 1.0, 1e-5),
+            (Mode::Vi, 1e-8, 1.0, 0.001, 1e-8),
+            (Mode::Vi, 0.002, 1.0, 0.01, 1e-7),
+            (Mode::Vi, 0.2, 30.0, 0.2, 1e-6),
+        ] {
+            for sign in [-1.0, 1.0] {
+                let actual =
+                    manual_source_range("YOKOGAWA_GS210", mode, sign * value, limit).unwrap();
+                assert_eq!(actual.command_value, range);
+                assert_eq!(actual.resolution, resolution);
+            }
+        }
+        for (mode, value, limit) in [
+            (Mode::Iv, 1e-30, 0.2),
+            (Mode::Vi, -1e-30, 30.0),
+            (Mode::Iv, 1e-8, 0.2),
+            (Mode::Vi, 1e-9, 30.0),
+            (Mode::Iv, 32.001, 0.2),
+            (Mode::Vi, 0.200001, 30.0),
+            (Mode::Iv, 0.0120001, 0.2),
+        ] {
+            assert!(manual_source_range("YOKOGAWA_GS210", mode, value, limit).is_err());
+        }
+    }
+
     #[test]
     fn source_increment_rejects_range_and_resolution_errors_without_clamping() {
         assert!(nudge_source_value(0.1, 0.0001, 1e-6, 0.1).is_err());

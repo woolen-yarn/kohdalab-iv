@@ -1051,6 +1051,203 @@ fn native_mock_source_dc_verifies_on_then_explicit_off() {
     );
 }
 
+fn use_written_source_range_responses(bridge: &Bridge) {
+    std::fs::write(bridge.dir.join("use-real-source-range"), "").unwrap();
+}
+
+/// The stock safety bridge deliberately keeps source readback at zero because
+/// ordinary sweep tests do not need a final DC-level confirmation.  DC range
+/// changes do, so opt in to a tiny stateful level readback for these tests.
+fn use_written_source_level_responses(bridge: &Bridge) {
+    let level_write = hex(":SOUR:LEV:FIX ");
+    let level_query = hex(":SOUR:LEV?\n");
+    let zero = hex("0");
+    for name in ["kohdalab-gpib-helper", "kohdalab-usbtmc-helper"] {
+        let path = bridge.dir.join(name);
+        let script = std::fs::read_to_string(&path).unwrap();
+        let hook = format!(
+            " response=''\n case \"$operation:$address:$payload\" in WRITE:3:{level_write}*|WRITE:0:{level_write}*) source_level=${{payload#{level_write}}}; source_level=${{source_level%0a}} ;; esac\n if [ \"$operation\" = QUERY ] && {{ [ \"$address\" = 3 ] || [ \"$address\" = 0 ]; }} && [ \"$payload\" = '{level_query}' ]; then printf 'KIV\\tOK\\t%s\\n' \"${{source_level:-{zero}}}\"; continue; fi\n"
+        );
+        assert!(
+            script.contains(" response=''\n"),
+            "missing fake response hook"
+        );
+        std::fs::write(path, script.replacen(" response=''\n", &hook, 1)).unwrap();
+    }
+}
+
+/// Make output-state verification fail only after a test arms the marker.  The
+/// initial DC setup remains real, so this exercises the physical re-range
+/// path rather than a connection/setup failure.
+fn install_off_verification_refusal(bridge: &Bridge, address: u8) -> std::path::PathBuf {
+    let marker = bridge.dir.join(format!("refuse-output-off-{address}"));
+    let outq = hex(":OUTP?\n");
+    let one = hex("1");
+    for name in ["kohdalab-gpib-helper", "kohdalab-usbtmc-helper"] {
+        let path = bridge.dir.join(name);
+        let script = std::fs::read_to_string(&path).unwrap();
+        let hook = format!(
+            " response=''\n if [ \"$operation\" = QUERY ] && [ \"$address\" = {address} ] && [ \"$payload\" = '{outq}' ] && [ -f '{marker}' ]; then printf 'KIV\\tOK\\t{one}\\n'; continue; fi\n",
+            marker = marker.display(),
+        );
+        assert!(
+            script.contains(" response=''\n"),
+            "missing fake response hook"
+        );
+        std::fs::write(path, script.replacen(" response=''\n", &hook, 1)).unwrap();
+    }
+    marker
+}
+
+fn assert_reconfigure_restarts_after_verified_off(commands: &[String], start: usize, address: u8) {
+    let commands = &commands[start..];
+    let off = format!("WRITE {address} {}", hex(":OUTP OFF\n"));
+    let range = format!("WRITE {address} {}", hex(":SOUR:RANG 1.000000000000e-1\n"));
+    let on = format!("WRITE {address} {}", hex(":OUTP ON\n"));
+    let off_at = commands
+        .iter()
+        .position(|line| line == &off)
+        .expect("OFF write");
+    let range_at = commands
+        .iter()
+        .position(|line| line == &range)
+        .expect("new range write");
+    let on_at = commands
+        .iter()
+        .position(|line| line == &on)
+        .expect("ON write");
+    let off_query = format!("QUERY {address} {}", hex(":OUTP?\n"));
+    assert!(
+        commands[off_at + 1..range_at]
+            .iter()
+            .any(|line| line == &off_query),
+        "OFF must be read back before changing range: {commands:?}"
+    );
+    assert!(
+        off_at < range_at && range_at < on_at,
+        "a cross-range DC update must verify OFF before configuring its range and only then enable output: {commands:?}"
+    );
+}
+
+fn assert_held_range_update_does_not_reconfigure(commands: &[String], start: usize, address: u8) {
+    let commands = &commands[start..];
+    for command in [":OUTP OFF\n", ":SOUR:RANG ", ":OUTP ON\n"] {
+        assert!(
+            !commands
+                .iter()
+                .any(|line| line.starts_with(&format!("WRITE {address} {}", hex(command)))),
+            "an update within the verified DC range must only change level: {commands:?}"
+        );
+    }
+}
+
+#[test]
+fn physical_source_dc_cross_range_restarts_only_after_verified_off() {
+    let bridge = Bridge::new(METERS[1].1, "", "0.0001");
+    use_written_source_range_responses(&bridge);
+    use_written_source_level_responses(&bridge);
+    let mut engine = Engine::start(&bridge.dir);
+    engine.connect("YOKOGAWA_GS210", METERS[1].0);
+    engine.send(json!({
+        "command":"set_source_dc", "mode":"dc_iv", "value":0.0,
+        "compliance":0.2, "ramp_step":0.0001
+    }));
+    engine.wait(|s| s["output"] == "On" && s["source_dc_limits"]["range"] == 0.01);
+
+    let before = bridge.commands().len();
+    engine.send(json!({
+        "command":"set_source_dc", "mode":"dc_iv", "value":0.02,
+        "compliance":0.2, "ramp_step":0.0001
+    }));
+    let state = engine.wait(|s| s["output"] == "On" && s["source_dc_limits"]["range"] == 0.1);
+    assert_eq!(state["error"], "", "{state}");
+    assert_reconfigure_restarts_after_verified_off(&bridge.commands(), before, 3);
+
+    let before = bridge.commands().len();
+    engine.send(json!({
+        "command":"set_source_dc", "mode":"dc_iv", "value":0.03,
+        "compliance":0.2, "ramp_step":0.0001
+    }));
+    let state = engine.wait(|s| s["source_dc"]["value"] == 0.03 && s["output"] == "On");
+    assert_eq!(state["source_dc_limits"]["range"], 0.1, "{state}");
+    assert_held_range_update_does_not_reconfigure(&bridge.commands(), before, 3);
+}
+
+#[test]
+fn physical_source_dc_does_not_reconfigure_after_off_verification_failure() {
+    let bridge = Bridge::new(METERS[1].1, "", "0.0001");
+    use_written_source_range_responses(&bridge);
+    use_written_source_level_responses(&bridge);
+    let refusal = install_off_verification_refusal(&bridge, 3);
+    let mut engine = Engine::start(&bridge.dir);
+    engine.connect("YOKOGAWA_GS210", METERS[1].0);
+    engine.send(json!({
+        "command":"set_source_dc", "mode":"dc_iv", "value":0.0,
+        "compliance":0.2, "ramp_step":0.0001
+    }));
+    engine.wait(|s| s["output"] == "On" && s["source_dc_limits"]["range"] == 0.01);
+
+    std::fs::write(refusal, "").unwrap();
+    let before = bridge.commands().len();
+    engine.send(json!({
+        "command":"set_source_dc", "mode":"dc_iv", "value":0.02,
+        "compliance":0.2, "ramp_step":0.0001
+    }));
+    let state = engine.wait(|s| !s["error"].as_str().unwrap_or_default().is_empty());
+    assert_eq!(state["output"], "Unknown", "{state}");
+    let commands = bridge.commands();
+    let commands = &commands[before..];
+    assert!(
+        !commands
+            .iter()
+            .any(|line| line == &format!("WRITE 3 {}", hex(":SOUR:RANG 1.000000000000e-1\n"))),
+        "range must not change if OFF is unverified: {commands:?}"
+    );
+    assert!(
+        !commands
+            .iter()
+            .any(|line| line == &format!("WRITE 3 {}", hex(":OUTP ON\n"))),
+        "output must not be re-enabled if OFF is unverified: {commands:?}"
+    );
+}
+
+#[test]
+fn physical_gate_dc_cross_range_obeys_the_same_verified_off_contract() {
+    let bridge = Bridge::new(METERS[1].1, "", "0.0001");
+    use_written_source_range_responses(&bridge);
+    use_written_source_level_responses(&bridge);
+    let mut engine = Engine::start(&bridge.dir);
+    engine.connect("YOKOGAWA_GS210", METERS[1].0);
+    engine.send(json!({
+        "command":"connect_gate", "simulation":false,
+        "resource":"USB0::0x0B21::0x0039::GATE::INSTR", "model":"YOKOGAWA_GS210"
+    }));
+    engine.wait(|s| s["gate_connected"] == true && s["error"] == "");
+    engine.send(json!({
+        "command":"set_gate_voltage", "voltage":0.0,
+        "compliance":0.2, "ramp_step":0.0001
+    }));
+    engine.wait(|s| s["gate_output"] == "On" && s["gate_dc_limits"]["range"] == 0.01);
+
+    let before = bridge.commands().len();
+    engine.send(json!({
+        "command":"set_gate_voltage", "voltage":0.02,
+        "compliance":0.2, "ramp_step":0.0001
+    }));
+    let state = engine.wait(|s| s["gate_output"] == "On" && s["gate_dc_limits"]["range"] == 0.1);
+    assert_eq!(state["error"], "", "{state}");
+    assert_reconfigure_restarts_after_verified_off(&bridge.commands(), before, 0);
+
+    let before = bridge.commands().len();
+    engine.send(json!({
+        "command":"set_gate_voltage", "voltage":0.03,
+        "compliance":0.2, "ramp_step":0.0001
+    }));
+    let state = engine.wait(|s| s["gate_voltage"] == 0.03 && s["gate_output"] == "On");
+    assert_eq!(state["gate_dc_limits"]["range"], 0.1, "{state}");
+    assert_held_range_update_does_not_reconfigure(&bridge.commands(), before, 0);
+}
+
 #[test]
 fn native_dc_rejects_an_off_grid_update_before_writing_a_level() {
     let bridge = Bridge::new(METERS[1].1, "", "0.0001");

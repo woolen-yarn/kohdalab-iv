@@ -53,11 +53,12 @@ The left-panel Source card shows **Compliance**. The Meter card shows
 Settings → Timing. The central Measurement area retains its two-column layout:
 sweep controls on the left and Output/Run on the right. Device assignments,
 Dual split and less common acquisition settings stay in Settings. Fixed current ranges show verified shunt
-or terminal input resistance, distinguished by name; unknown values are labeled
-as unverified. Voltage input impedance depends on the instrument's setting.
+or terminal input resistance in the range menu and tooltip, distinguished by
+name; unknown values are labeled as unverified there. No permanent explanatory
+text sits below Range. Voltage input impedance depends on the instrument's setting.
 
-The units and range presets follow the active voltage/current function. Auto
-explicitly shows I or V. An open primary DC editor and a held DC output use
+The units and range presets follow the active voltage/current function. Auto is labeled simply **Auto**; the live channel and limit unit identify the
+measured quantity. An open primary DC editor and a held DC output use
 the DC function; a running sweep uses its own mode. DC compliance uses the
 DC editor's value and is read-only while ON; it is not a second editable copy.
 Changing an idle DC function updates live channels only after verified OFF and
@@ -66,7 +67,7 @@ channels with the selected context. The Meter Limit remains a sweep software
 threshold, not a replacement for DC hardware compliance.
 
 Meter limit is an independent software stop threshold, not a range selector or
-current limiter. If it exceeds a fixed range, a nonblocking notice explains that
+current limiter. If it exceeds a fixed range, the range tooltip explains that
 instrument overload may stop acquisition first. The app does not silently alter
 either setting. Editing Meter limit preserves the existing Source compliance,
 including when loading legacy profiles with coupled defaults.

@@ -681,7 +681,7 @@ impl IvApp {
             let enabled = !self.busy();
             ui.add_enabled_ui(enabled, |ui| {
                 ui.horizontal(|ui| {
-                    let field_width = (ui.available_width() - 92.0).max(80.0);
+                    let field_width = (ui.available_width() - 70.0 - ui.spacing().item_spacing.x).max(40.0);
                     let summary = path_summary(&self.config_path);
                     compact_field(
                         ui,
@@ -705,7 +705,7 @@ impl IvApp {
                     }
                 });
                 ui.add_space(6.0);
-                let row_width = (ui.available_width() - 8.0) / 2.0;
+                let row_width = (ui.available_width() - ui.spacing().item_spacing.x) / 2.0;
                 ui.horizontal(|ui| {
                     if button(
                         ui,
@@ -1112,72 +1112,6 @@ impl IvApp {
                 egui::FontId::proportional(10.0),
                 if connected { TEAL } else { MUTED },
             );
-            let summary = device_summary(&self.settings.source2_model).to_owned();
-            let id = self.settings.source2_id;
-            if self.source_card_header(ui, id, &summary) {
-                ui.add_enabled_ui(idle && !connected, |ui| {
-                    egui::ComboBox::from_id_salt("source2_model")
-                        .width(ui.available_width())
-                        .selected_text(&self.settings.source2_model)
-                        .show_ui(ui, |ui| {
-                            ui.set_min_width(230.0);
-                            for descriptor in instrument_catalog(InstrumentRole::Source) {
-                                if model_supported(descriptor.id) {
-                                    ui.selectable_value(
-                                        &mut self.settings.source2_model,
-                                        descriptor.id.into(),
-                                        descriptor.id,
-                                    );
-                                }
-                            }
-                        });
-                    ui.horizontal(|ui| {
-                        let summary = resource_summary(&self.settings.source2);
-                        let width = (ui.available_width() - 30.0).max(65.0);
-                        compact_field(
-                            ui,
-                            "source2_resource",
-                            &mut self.settings.source2,
-                            width,
-                            summary,
-                        );
-                        egui::ComboBox::from_id_salt("source2_resources")
-                            .width(20.0)
-                            .selected_text("")
-                            .show_ui(ui, |ui| {
-                                ui.set_min_width(470.0);
-                                for resource in &self.state.resources {
-                                    ui.selectable_value(
-                                        &mut self.settings.source2,
-                                        resource.resource.clone(),
-                                        &resource.label,
-                                    );
-                                }
-                            });
-                    });
-                });
-                ui.horizontal(|ui| {
-                    if button(ui, "Refresh", 70.0, idle).clicked() {
-                        self.send(Command::Discover);
-                    }
-                    if button(
-                        ui,
-                        "Connect",
-                        70.0,
-                        idle && !connected
-                            && (self.settings.source2_model == "SIMULATED_SOURCE"
-                                || !self.settings.source2.is_empty()),
-                    )
-                    .clicked()
-                    {
-                        self.connect_secondary();
-                    }
-                    if button(ui, "Disconnect", 80.0, idle && connected).clicked() {
-                        self.send(Command::DisconnectSource2);
-                    }
-                });
-            }
-            self.dc_controls(ui, id);
             ui.add_space(4.0);
             ui.separator();
             ui.horizontal(|ui| {
@@ -1274,6 +1208,72 @@ impl IvApp {
                     .size(9.0)
                     .color(MUTED),
             );
+            let summary = device_summary(&self.settings.source2_model).to_owned();
+            let id = self.settings.source2_id;
+            if self.source_card_header(ui, id, &summary) {
+                ui.add_enabled_ui(idle && !connected, |ui| {
+                    egui::ComboBox::from_id_salt("source2_model")
+                        .width(ui.available_width())
+                        .selected_text(&self.settings.source2_model)
+                        .show_ui(ui, |ui| {
+                            ui.set_min_width(230.0);
+                            for descriptor in instrument_catalog(InstrumentRole::Source) {
+                                if model_supported(descriptor.id) {
+                                    ui.selectable_value(
+                                        &mut self.settings.source2_model,
+                                        descriptor.id.into(),
+                                        descriptor.id,
+                                    );
+                                }
+                            }
+                        });
+                    ui.horizontal(|ui| {
+                        let summary = resource_summary(&self.settings.source2);
+                        let width = (ui.available_width() - 30.0).max(65.0);
+                        compact_field(
+                            ui,
+                            "source2_resource",
+                            &mut self.settings.source2,
+                            width,
+                            summary,
+                        );
+                        egui::ComboBox::from_id_salt("source2_resources")
+                            .width(20.0)
+                            .selected_text("")
+                            .show_ui(ui, |ui| {
+                                ui.set_min_width(470.0);
+                                for resource in &self.state.resources {
+                                    ui.selectable_value(
+                                        &mut self.settings.source2,
+                                        resource.resource.clone(),
+                                        &resource.label,
+                                    );
+                                }
+                            });
+                    });
+                });
+                ui.horizontal(|ui| {
+                    if button(ui, "Refresh", 70.0, idle).clicked() {
+                        self.send(Command::Discover);
+                    }
+                    if button(
+                        ui,
+                        "Connect",
+                        70.0,
+                        idle && !connected
+                            && (self.settings.source2_model == "SIMULATED_SOURCE"
+                                || !self.settings.source2.is_empty()),
+                    )
+                    .clicked()
+                    {
+                        self.connect_secondary();
+                    }
+                    if button(ui, "Disconnect", 80.0, idle && connected).clicked() {
+                        self.send(Command::DisconnectSource2);
+                    }
+                });
+            }
+            self.dc_controls(ui, id);
         });
     }
 
@@ -1333,10 +1333,12 @@ impl IvApp {
                     });
                 });
                 ui.add_space(3.0);
-                egui::CollapsingHeader::new(format!("Device · {}", device_summary(&model)))
-                    .id_salt(("inactive_device", source, id))
-                    .default_open(false)
-                    .show(ui, |ui| {
+                let key=ui.make_persistent_id(("inactive_device_disclosure",source,id));
+                let mut open=ui.ctx().data_mut(|data|data.get_persisted::<bool>(key)).unwrap_or(false);
+                let width=widgets::device_width(ui);
+                ui.horizontal(|ui| { widgets::device_disclosure(ui,device_summary(&model),width,&mut open); });
+                ui.ctx().data_mut(|data|data.insert_persisted(key,open));
+                if open {
                         ui.label(
                             RichText::new(
                                 "Stored only. Select this device in Settings to connect or use it in a run.",
@@ -1396,7 +1398,7 @@ impl IvApp {
                                     });
                             });
                         });
-                    });
+                }
             });
         frame
             .response
@@ -1443,6 +1445,7 @@ impl IvApp {
                 egui::FontId::proportional(10.0),
                 if connected { TEAL } else { MUTED },
             );
+            self.live_monitor(ui, source);
             let model = if source {
                 &self.settings.source_model
             } else {
@@ -1477,18 +1480,22 @@ impl IvApp {
                 self.source_compliance_control(ui);
                 self.dc_controls(ui, id);
             } else {
-                egui::CollapsingHeader::new(format!("Device  ·  {summary}"))
-                    .id_salt(("instrument_device_settings", source))
-                    .default_open(false)
-                    .show_background(true)
-                    .show_unindented(ui, |ui| {
-                        self.instrument_connection_controls(ui, source, connected)
-                    })
-                    .header_response
-                    .on_hover_text(hint);
+                let key =
+                    ui.make_persistent_id(("meter_device_disclosure", self.settings.meter_id));
+                let mut open = ui
+                    .ctx()
+                    .data_mut(|data| data.get_persisted::<bool>(key))
+                    .unwrap_or(false);
+                let width = widgets::device_width(ui);
+                ui.horizontal(|ui| {
+                    widgets::device_disclosure(ui, summary, width, &mut open).on_hover_text(&hint);
+                });
+                ui.ctx().data_mut(|data| data.insert_persisted(key, open));
+                if open {
+                    self.instrument_connection_controls(ui, false, connected);
+                }
                 self.meter_measurement_controls(ui);
             }
-            self.live_monitor(ui, source);
         });
     }
 
@@ -1981,47 +1988,12 @@ impl IvApp {
             Mode::Iv => self.settings.config.meter_current_range,
             Mode::Vi => self.settings.config.meter_voltage_range,
         };
-        if let Some(range) = fixed_range {
-            if let Some(resistance) = iv_core::meter_input_resistance(&meter_model, mode, range) {
-                let label = match resistance.kind {
-                    iv_core::MeterResistanceKind::Shunt => "Shunt resistance",
-                    iv_core::MeterResistanceKind::Terminal => "Input resistance",
-                };
-                ui.label(
-                    RichText::new(format!("{label}: {}", fmt_quantity(resistance.ohms, "ohm")))
-                        .small()
-                        .color(MUTED),
-                );
-            } else {
-                let note = if mode == Mode::Vi {
-                    "Input impedance depends on instrument setting"
-                } else if meter_model == "SIMULATED_METER" {
-                    "Simulation · no physical input"
-                } else if meter_model == "ADCMT_7461A" {
-                    "Range monitoring unavailable for this model"
-                } else {
-                    "Input resistance: not verified"
-                };
-                ui.label(RichText::new(note).small().color(MUTED));
-            }
-            let meter_limit = match mode {
-                Mode::Iv => self.settings.current_compliance,
-                Mode::Vi => self.settings.voltage_compliance,
-            };
-            if meter_limit > range {
-                ui.label(
-                    RichText::new("Meter limit exceeds fixed range; overload may stop first.")
-                        .small()
-                        .color(ORANGE),
-                );
-            }
-        } else {
-            let auto_note = if meter_model == "ADCMT_7461A" {
-                "Auto · range monitoring unavailable for this model"
-            } else {
-                "Auto · range monitoring on"
-            };
-            ui.label(RichText::new(auto_note).small().color(MUTED));
+        let meter_limit = match mode {
+            Mode::Iv => self.settings.current_compliance,
+            Mode::Vi => self.settings.voltage_compliance,
+        };
+        if fixed_range.is_some_and(|range| meter_limit > range) {
+            ui.response().on_hover_text("Limit exceeds the fixed range. Instrument overload may stop first; changing Limit does not change Range.");
         }
         self.settings.activate_mode_protection();
     }

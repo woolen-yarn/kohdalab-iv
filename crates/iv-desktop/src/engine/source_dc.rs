@@ -139,6 +139,7 @@ fn dc_plan(
     if secondary && mode != Mode::Iv {
         return Err("Source 2 manual DC supports voltage source mode only.".into());
     }
+    iv_core::manual_source_range(source_model, mode, value, compliance)?;
     let config = RunConfig {
         source_model: source_model.into(),
         mode,
@@ -398,7 +399,7 @@ pub(super) fn set(
             value,
             compliance,
             ramp_step,
-            false,
+            true,
         )?;
         let held = if output(state, secondary) == OutputState::On {
             let held = limits(state, secondary).ok_or_else(|| {
@@ -407,9 +408,13 @@ pub(super) fn set(
                     label(secondary)
                 )
             })?;
-            validate_held_value(held, value, "DC value")?;
-            validate_held_value(held, ramp_step, "DC ramp step")?;
-            held.clone()
+            if validate_held_value(held, value, "DC value").is_ok()
+                && validate_held_value(held, ramp_step, "DC ramp step").is_ok()
+            {
+                held.clone()
+            } else {
+                range_limits(source_model, mode, planned.source_range)?
+            }
         } else {
             range_limits(source_model, mode, planned.source_range)?
         };
@@ -451,6 +456,20 @@ pub(super) fn set(
     let operation = (|| -> Result<(), String> {
         ensure_not_cancelled(control)?;
         verify_identity(pair, secondary)?;
+        let mut was_on = was_on;
+        if was_on {
+            let held = limits(state, secondary)
+                .ok_or("DC range is unknown. Turn output off and reconnect.")?;
+            if validate_held_value(held, value, "DC value").is_err()
+                || validate_held_value(held, ramp_step, "DC ramp step").is_err()
+            {
+                // Range changes can reset the GS200 level and glitch. Verify the
+                // existing state, then use the normal verified OFF/zero startup.
+                verify_held_settings(pair, secondary, mode, held, planned.hardware_compliance)?;
+                force_off(Some(pair), state, secondary)?;
+                was_on = false;
+            }
+        }
         let resolution = if was_on {
             let previous = if secondary {
                 state.source2_dc.as_ref()
