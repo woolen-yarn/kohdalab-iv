@@ -1,11 +1,11 @@
 # Manual DC output
 
-Each Source card has a **DC** disclosure beside **Device**. Closed controls use
+Each Source card has a **DC output** disclosure beside **Device**. Closed controls use
 the existing header row; the measurement panel and Run / Save controls retain
 their layout. Opening DC reveals the level, unit, source compliance and ramp
 step. A DC ON badge identifies a fixed output independently of the sweep state.
 The editor has its own height-limited scroll viewport; Output ON/OFF stays
-outside it, and the live plots occupy separate layout space below the editor.
+outside it, and the live plots occupy separate layout space between Device and the settings.
 The active Meter card precedes additional fixed-bias cards, so opening a gate
 editor does not insert it between the main Source and Meter live monitors.
 
@@ -17,27 +17,52 @@ a valid digit adjustment is applied immediately using the configured ramp; no
 extra Apply click is required. While OFF, the same controls edit the requested
 level without turning output on. Output ON always remains explicit.
 
-The adjacent unit selector changes the display only. It never sends a new level
-to the instrument. Very large or small values use an explicit engineering
-exponent while retaining the selected unit. Decimal arithmetic prevents repeated
-small adjustments from accumulating binary rounding drift.
+Select a hardware range using the left/right buttons around its central display. The range is manual
+and remains fixed; entering a level never selects another range. The available ranges come from
+the selected instrument profile. GS200/GS210 voltage ranges are 10 mV, 100 mV,
+1 V, 10 V and 30 V; current ranges are 1 mA, 10 mA, 100 mA and 200 mA.
+Range, function and compliance changes are locked while output is ON.
 
-The enabled hardware range, function and compliance remain fixed while output
-is ON. Arrows outside that range or below its resolution are disabled. A lower
-level is allowed within that held range, without automatically selecting a new
-range. Turn output OFF before changing range, function or compliance.
+The digits use the selected range's maximum and resolution. For example, the
+10 mV range has 100 nV increments and four decimals in mV; 100 mV has 1 µV
+increments and three decimals in mV; 1 V has 10 µV increments and five decimals
+in V. The 1 mA range has 10 nA increments and five decimals in mA. The display unit is fixed by the selected range: voltage ranges below 1 V use
+mV, other voltage ranges use V, and the supported current ranges use mA.
+There is no independent unit dropdown. The layout stays fixed within a range and
+never switches to exponential notation. Out-of-range or sub-resolution values
+are rejected, not rounded into another output. If an OFF editor's level is
+incompatible with a newly selected range, it resets to zero.
+
+The 10/100 mV divider ranges have a fixed 200 mA current limit and approximately
+2 ohms output resistance. The app rejects enabling one of these ranges with a
+lower requested Compliance; select at least the 1 V range or explicitly choose
+200 mA. It never raises Compliance automatically.
+See [GS200 User’s Manual, sections 2.3, 5.2 and 5.3](https://cdn.tmi.yokogawa.com/1/6218/files/IMGS210-01EN.pdf).
+
+One **Output** toggle shows the verified ON/OFF state. It lights amber only when
+ON is confirmed. Unknown output is red and offers only OFF. Clicking ON enables
+the requested level; clicking the lit control requests priority OFF.
+**Zero**, alongside Output, ramps an enabled source to zero on the same range
+and keeps output ON. While OFF or disconnected it only zeros the editor and
+never enables output. It is locked during sweeps or pending DC operations.
+
+The optional JSON command field `range` is the native range command value, such
+as `1.0` for GS210's 1 V range. GUI requests always supply it. Existing API calls
+that omit it retain their previous automatic-planning behavior. An explicit
+range cannot be changed while output is ON.
 
 Click a digit or Type… for direct entry. Set validates the value against the
 source grid before committing. Digit actions are disabled while typing, and a
-verified level or display-unit change invalidates the old text buffer. During a
+verified level or selected range change invalidates the old text buffer. During a
 pending source update or sweep, setting changes remain locked; the application
 does not accumulate a queue of future levels. OFF retains its priority path.
 
 ## An IV source before a sweep
 
 Connect the selected source, open DC, set its function/level/protection and press
-**Output ON**. **Apply** ramps an already enabled output to the new level. Turn
-output OFF before changing function, compliance or output range. Source 1
+**Output OFF** control to switch it ON. Digit or typed commits ramp an enabled
+output directly; no Apply button is needed. Turn output OFF before changing
+range, function or compliance. Source 1
 supports voltage and current output through the existing instrument drivers;
 the second source in Dual V-I uses voltage output.
 
@@ -57,11 +82,11 @@ independent voltage-bias connection. There is one independent bias connection,
 in addition to the one or two IV sources. It is a separate instrument, not a
 second connection to a source already owned by the sweep.
 
-Press Output ON to enable the chosen gate voltage. Its card stays visibly active
+Click the Output toggle to enable the chosen gate voltage. Its card stays visibly active
 and shows the source level even when the DC disclosure is closed. The bias is
 held through successful IV sweeps and ordinary manual sweep Stop. Configuration
-changes are locked during measurement; change gate bias between runs. Use OFF
-or Disconnect explicitly when finished.
+changes are locked during measurement; change gate bias between runs. Click the
+lit Output toggle for OFF, or Disconnect explicitly when finished.
 
 ## Safety and saved settings
 

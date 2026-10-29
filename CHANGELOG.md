@@ -3,6 +3,19 @@
 > **Language navigation / 言語案内:** The English historical record appears first, followed by a complete Japanese counterpart. Versions, dates, API names, commands, compatibility wording, and historical claims are preserved in both languages.
 > 英語の履歴記録を先に置き、その後に完全な日本語対訳を掲載します。バージョン、日付、API 名、コマンド、互換性の表現、履歴上の主張は両言語で保持します。
 
+## 1.3.0-alpha.16 — 2026-10-29
+
+- Keep the central Measurement controls in two columns. Place Source compliance in the Source card, Meter limit/range in the Meter card, and Wait time in Settings → Timing; retain compact Run controls.
+- Show verified current-input shunt/terminal resistance for fixed ranges. Preserve independent Meter limit and Source compliance, including legacy profiles.
+- Guard Auto range changes across documented resistance groups, stopping conservatively on unknown loading changes. Verify the baseline before sweep/DC output ON and preserve it across held DC edits; request OFF before further acquisition/evidence and exclude the transition conversion from analysis CSV. ADCMT range monitoring remains unavailable pending verified commands.
+- 中央は2列を維持し、コンプライアンス・Meter limit／rangeを左の各カードへ、Wait timeをSettings内へ整理。Autoの抵抗変化を検出した場合は出力OFF・停止し、固定レンジでの再測定を案内します。
+- Replace automatic manual-DC range changes with an explicit documented native-range selector and left/right range arrows. A fixed DC request validates level and ramp step on that selected source grid; changing an explicit range while output is ON is rejected and handled fail-safe.
+- Keep range-derived V/mV/mA units and fixed decimal places in the Source DC display. Make Output and Zero equal-width controls, while retaining the compact Device → live → settings workflow for Source and Meter cards.
+- Preserve CSV formats, meter transition protection, source protection and existing GUI/API compatibility when no explicit DC range is supplied. Preview validation records automated mock/simulation coverage; publication proceeds without a new all-device physical retest at the user’s direction.
+- 手動DCの自動レンジ変更を、対応するネイティブレンジの明示選択と左右矢印へ置き換えました。固定DC要求は選択レンジのグリッドで値とランプを検証し、出力ON中の明示レンジ変更は拒否して安全側で処理します。
+- Source DC表示は選択レンジ由来のV/mV/mA単位と固定小数桁を維持します。OutputとZeroは同じ幅とし、Source／MeterカードのDevice → live → settingsのコンパクトな流れを維持します。
+- 明示レンジを指定しない既存GUI/APIでは互換性を維持し、CSV形式、メーター遷移保護、ソース保護も保持します。プレビューでは自動mock／simulationを検証し、利用者の指示により全装置の実機再試験を待たず公開します。新たな実機測定の記録を主張しません。
+
 ## 1.3.0-alpha.15 — 2026-10-29
 
 - Add independent Auto/fixed meter voltage and current ranges. Verify fixed settings before source ON and monitor actual range through return sweeps, repeated/settling conversions, idle live acquisition, and Dual; request OFF on mismatch. ADCMT 7461A remains Auto-only pending command verification.

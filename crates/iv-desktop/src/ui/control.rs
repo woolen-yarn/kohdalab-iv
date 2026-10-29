@@ -387,6 +387,7 @@ impl IvApp {
                 voltage: api_number(body, "voltage")?,
                 compliance: api_number(body, "compliance")?,
                 ramp_step: api_number(body, "ramp_step")?,
+                range: api_optional_number(body, "range")?,
             }],
             "disconnect_gate" => vec![Command::DisconnectGate],
             _ => return Err("Unknown GUI API method".into()),
@@ -446,6 +447,17 @@ fn api_number(body: &Value, key: &str) -> Result<f64, String> {
         .as_f64()
         .filter(|v| v.is_finite())
         .ok_or_else(|| format!("{key} must be a finite number"))
+}
+fn api_optional_number(body: &Value, key: &str) -> Result<Option<f64>, String> {
+    match body.get(key) {
+        None | Some(Value::Null) => Ok(None),
+        Some(Value::Number(value)) => value
+            .as_f64()
+            .filter(|value| value.is_finite())
+            .map(Some)
+            .ok_or_else(|| format!("{key} must be a finite number")),
+        _ => Err(format!("{key} must be a finite number")),
+    }
 }
 fn api_filename(name: &str) -> Result<String, String> {
     let name = name.trim();

@@ -59,7 +59,8 @@ def main() -> None:
             "Pinned Windows helpers, full native source, licenses and icons are included.\n"
             "Meter Auto/fixed range presets: specs/meters.toml. "
             "Usage: docs/reference/meter-ranging.md.\n"
-            "Manual DC controls: docs/reference/manual-dc-output.md. "
+            "Manual DC range selector, fixed range-derived digits, and Zero: "
+            "docs/reference/manual-dc-output.md. "
             "Shared GPIB service sources are development-only; see "
             "docs/guides/shared-instruments-development.md.\n"
             "Rust and platform compiler tools are needed only on the build PC.\n",

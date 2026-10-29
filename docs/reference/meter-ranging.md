@@ -1,8 +1,8 @@
 # Meter ranging
 
-Open **Settings… → Meter range** and choose **Auto** or a **Fixed** range for
+Use **Meter range** in the left-panel Meter card and choose **Auto** or a **Fixed** range for
 Voltage measurement and Current measurement. These selections are independent:
-V-I uses the current selection; I-V and Dual voltage drive use the voltage
+V-I and Dual V-I use the current selection; I-V uses the voltage
 selection. Changing mode preserves both selections. Save the configuration to
 keep them between sessions. Existing profiles default to Auto.
 
@@ -18,6 +18,59 @@ reading is not accepted into the analysis CSV. Dual requests both sources OFF.
 Existing overload, Source compliance, and Measurement limit protection remains
 in effect. A fixed measurement range is **not** a source current limit, nor does
 it remove a current meter's burden voltage. Select protection limits separately.
+
+## Auto range transitions
+
+For models with verified range readback, Auto records the initial range before
+source ON and checks every conversion, including repeated/settling conversions
+and Dual. Known changes within the same documented resistance group are allowed
+(for example, 34411A 100 µA to 1 mA, both with a 200 ohm shunt). A transition to
+a different resistance group stops and requests output OFF before further
+acquisition or evidence writes. The trigger remains in raw evidence and is not
+accepted into the analysis CSV. The popup recommends a fixed range and a new
+complete sweep. Manual DC live acquisition uses the same guard while the sweep sources
+are enabled, including the first ON and held-level edits; ordinary idle
+acquisition with sweep outputs OFF may autorange freely. A separate fixed gate
+bias retains its existing independent hold policy.
+
+If unchanged electrical loading is not established (including voltage input
+impedance that depends on High-Z settings and the 34465A's unspecified exact
+shunt values), any observed Auto range change stops conservatively. ADCMT 7461A
+has no verified range-readback command in this app, so its Auto display clearly
+states that transition monitoring is unavailable. Its documented terminal
+resistance values are retained as specification data, without enabling unverified
+range commands or pretending its Auto transitions can be guarded.
+
+Detection occurs **after a conversion**: Auto can briefly switch the physical
+input circuit before software sees the change. Only a fixed range prevents
+measurement-driven autoranging in the first place. An unchanged shunt does not
+guarantee zero switching transient or include all fuse/lead/contact resistance.
+
+## Limits and layout
+
+The left-panel Source card shows **Compliance**. The Meter card shows
+**Limit** and **Range**, each as a compact label/input/unit row above its live display. **Wait time** is in
+Settings → Timing. The central Measurement area retains its two-column layout:
+sweep controls on the left and Output/Run on the right. Device assignments,
+Dual split and less common acquisition settings stay in Settings. Fixed current ranges show verified shunt
+or terminal input resistance in the range menu and tooltip, distinguished by
+name; unknown values are labeled as unverified there. No permanent explanatory
+text sits below Range. Voltage input impedance depends on the instrument's setting.
+
+The units and range presets follow the active voltage/current function. Auto is labeled simply **Auto**; the live channel and limit unit identify the
+measured quantity. An open primary DC editor and a held DC output use
+the DC function; a running sweep uses its own mode. DC compliance uses the
+DC editor's value and is read-only while ON; it is not a second editable copy.
+Changing an idle DC function updates live channels only after verified OFF and
+never enables output. Closing DC or completing a sweep reconciles idle live
+channels with the selected context. The Meter Limit remains a sweep software
+threshold, not a replacement for DC hardware compliance.
+
+Meter limit is an independent software stop threshold, not a range selector or
+current limiter. If it exceeds a fixed range, the range tooltip explains that
+instrument overload may stop acquisition first. The app does not silently alter
+either setting. Editing Meter limit preserves the existing Source compliance,
+including when loading legacy profiles with coupled defaults.
 
 ## Supported presets
 

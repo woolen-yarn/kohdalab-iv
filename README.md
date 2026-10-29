@@ -28,6 +28,17 @@ Simulation example: instrument setup and live signals on the left, sweep and plo
 シミュレーション例です。左に計測器の設定とライブ信号、中央にスイープとプロット、右に保存値とログを表示します。
 
 <details>
+<summary>Manual DC output / 手動DC出力</summary>
+
+![Manual DC range selector and output controls](docs/images/manual-dc.png)
+
+Simulation example: centre the selected range between the previous/next buttons. The range fixes the level unit and precision. Output lights when ON is verified; Zero ramps to zero while keeping ON. Range changes require OFF.
+
+シミュレーション例です。中央のレンジを左右のボタンで選び、数値の単位と桁数はレンジに連動します。ONを確認したOutputは点灯し、ZeroはONを維持したままゼロへランプします。レンジ変更はOFF時のみ可能です。
+
+</details>
+
+<details>
 <summary>Compliance and measurement-limit alerts / 制限到達時の表示</summary>
 
 ![Limit-stop popup and fixed-height live indicator](docs/images/limit-stop.png)
@@ -43,14 +54,14 @@ A stopped simulation: the popup shows the threshold, trigger reading and verifie
 | Channel / 配布チャネル | Version / バージョン | Platforms / 対応プラットフォーム |
 | --- | --- | --- |
 | Stable / 安定版 | [1.2.0](https://github.com/woolen-yarn/kohdalab-iv/releases/tag/portable-v1.2.0) | Windows x64 Setup / portable ZIP; macOS Apple silicon portable ZIP / Windows x64 セットアップ・ポータブル ZIP、macOS Apple silicon ポータブル ZIP |
-| Preview / プレビュー | [1.3.0-alpha.15](https://github.com/woolen-yarn/kohdalab-iv/releases/tag/preview-v1.3.0-alpha.15) | Windows x64 Setup / preview ZIP; macOS Apple silicon preview ZIP / Windows x64 セットアップ・プレビュー ZIP、macOS Apple silicon プレビュー ZIP |
+| Preview / プレビュー | [1.3.0-alpha.16](https://github.com/woolen-yarn/kohdalab-iv/releases/tag/preview-v1.3.0-alpha.16) | Windows x64 Setup / preview ZIP; macOS Apple silicon preview ZIP / Windows x64 セットアップ・プレビュー ZIP、macOS Apple silicon プレビュー ZIP |
 
 | Preview package / プレビューパッケージ | Kohdalab | Personal / 個人ミラー |
 | --- | --- | --- |
-| Windows Setup | [Download](https://github.com/Kohdalab/kohdalab-iv/releases/download/preview-v1.3.0-alpha.15/kohdalab-iv-1.3.0-alpha.15-windows-x64-Setup.exe) | [Download](https://github.com/woolen-yarn/kohdalab-iv/releases/download/preview-v1.3.0-alpha.15/kohdalab-iv-1.3.0-alpha.15-windows-x64-Setup.exe) |
-| Windows portable | [Download](https://github.com/Kohdalab/kohdalab-iv/releases/download/preview-v1.3.0-alpha.15/kohdalab-iv-1.3.0-alpha.15-windows-x64-preview.zip) | [Download](https://github.com/woolen-yarn/kohdalab-iv/releases/download/preview-v1.3.0-alpha.15/kohdalab-iv-1.3.0-alpha.15-windows-x64-preview.zip) |
-| Mac portable (Apple silicon) | [Download](https://github.com/Kohdalab/kohdalab-iv/releases/download/preview-v1.3.0-alpha.15/kohdalab-iv-1.3.0-alpha.15-macos-arm64-preview.zip) | [Download](https://github.com/woolen-yarn/kohdalab-iv/releases/download/preview-v1.3.0-alpha.15/kohdalab-iv-1.3.0-alpha.15-macos-arm64-preview.zip) |
-| Source build kit / ソースビルドキット | [Download](https://github.com/Kohdalab/kohdalab-iv/releases/download/preview-v1.3.0-alpha.15/kohdalab-iv-1.3.0-alpha.15-build-kit.zip) | [Download](https://github.com/woolen-yarn/kohdalab-iv/releases/download/preview-v1.3.0-alpha.15/kohdalab-iv-1.3.0-alpha.15-build-kit.zip) |
+| Windows Setup | [Download](https://github.com/Kohdalab/kohdalab-iv/releases/download/preview-v1.3.0-alpha.16/kohdalab-iv-1.3.0-alpha.16-windows-x64-Setup.exe) | [Download](https://github.com/woolen-yarn/kohdalab-iv/releases/download/preview-v1.3.0-alpha.16/kohdalab-iv-1.3.0-alpha.16-windows-x64-Setup.exe) |
+| Windows portable | [Download](https://github.com/Kohdalab/kohdalab-iv/releases/download/preview-v1.3.0-alpha.16/kohdalab-iv-1.3.0-alpha.16-windows-x64-preview.zip) | [Download](https://github.com/woolen-yarn/kohdalab-iv/releases/download/preview-v1.3.0-alpha.16/kohdalab-iv-1.3.0-alpha.16-windows-x64-preview.zip) |
+| Mac portable (Apple silicon) | [Download](https://github.com/Kohdalab/kohdalab-iv/releases/download/preview-v1.3.0-alpha.16/kohdalab-iv-1.3.0-alpha.16-macos-arm64-preview.zip) | [Download](https://github.com/woolen-yarn/kohdalab-iv/releases/download/preview-v1.3.0-alpha.16/kohdalab-iv-1.3.0-alpha.16-macos-arm64-preview.zip) |
+| Source build kit / ソースビルドキット | [Download](https://github.com/Kohdalab/kohdalab-iv/releases/download/preview-v1.3.0-alpha.16/kohdalab-iv-1.3.0-alpha.16-build-kit.zip) | [Download](https://github.com/woolen-yarn/kohdalab-iv/releases/download/preview-v1.3.0-alpha.16/kohdalab-iv-1.3.0-alpha.16-build-kit.zip) |
 
 Rust and Python are not required to run the packaged application. Current Windows
 artifacts are unsigned; download packages and checksums together from Releases.
@@ -58,9 +69,9 @@ macOS bundles use ad hoc signing and are not Apple-notarized.
 
 配布アプリケーションの実行に Rust や Python は不要です。現在の Windows 配布物は未署名です。Releases からパッケージとチェックサムを必ず一緒に取得してください。macOS バンドルは ad hoc 署名であり、Apple の公証は受けていません。
 
-Preview 1.3.0-alpha.15 adds independent Auto/fixed voltage and current meter ranges, verified before output and held through return sweeps, and manual DC source cards with per-digit level adjustment. Existing CSV columns and protection remain unchanged. ADCMT 7461A remains Auto-only. See [meter ranging](docs/reference/meter-ranging.md), [manual DC operation](docs/reference/manual-dc-output.md), and the [GUI API reference](docs/reference/gui-api.md). The shared GPIB service is an explicit development option, not the default connection route.
+Preview 1.3.0-alpha.16 makes manual DC range selection explicit: use the central range selector and its left/right arrows to choose a documented native range before Output. The Source card then keeps a fixed, range-derived V/mV/mA display unit and precision; Output and Zero are equal-width controls. Device → live → settings remains the compact Source/Meter workflow. Meter transition protection, CSV columns, and existing output safety remain unchanged. See [manual DC operation](docs/reference/manual-dc-output.md), [meter ranging](docs/reference/meter-ranging.md), and [alpha.16 validation](docs/validation/manual-dc-alpha16.md).
 
-Preview 1.3.0-alpha.15では、電圧・電流ごとのAuto／固定メーターレンジ、出力前の設定確認、往復掃引全体のレンジ維持、桁ごとに値を調整できる手動DC出力を追加しました。CSVの列と既存の保護は維持します。ADCMT 7461AはAutoのみです。[メーターレンジ](docs/reference/meter-ranging.md)、[手動DC操作](docs/reference/manual-dc-output.md)、[GUI API仕様](docs/reference/gui-api.md)を参照してください。GPIB共有サービスは明示的に選択する開発機能で、通常接続には影響しません。
+Preview 1.3.0-alpha.16では、手動DCのレンジを明示的に選択します。中央のレンジ選択と左右矢印で、出力前に対応するネイティブレンジを選びます。Sourceカードは選択レンジに基づく固定のV/mV/mA表示と桁数を維持し、OutputとZeroは同じ幅です。Source／MeterはDevice → live → settingsのコンパクトな流れを維持します。メーターのレンジ遷移保護、CSV列、既存の出力安全機能は変更しません。[手動DC操作](docs/reference/manual-dc-output.md)、[メーターレンジ](docs/reference/meter-ranging.md)、[alpha.16検証](docs/validation/manual-dc-alpha16.md)を参照してください。
 
 ## Supported hardware / 対応機器
 
@@ -122,9 +133,9 @@ requested before further instrument queries or saving; protection cleanup does
 not ramp with output enabled. Normal Stop still returns to zero before OFF.
 GS210 hardware H/L protection is checked separately from the external Meter
 software stop, including zero-wait ramps; a limited target is kept as raw evidence
-and excluded from analysis. **Settings…** separates Source compliance
-from Measurement limit and shows the effective source range/protection.
-**Settings… → Meter range** selects Auto or a fixed voltage/current range,
+and excluded from analysis. The Source and Meter cards separate Source compliance
+from Meter limit; the Source compliance tooltip shows effective hardware protection.
+The left-panel Meter card’s **Meter range** control selects Auto or a fixed voltage/current range,
 held through the whole return sweep. See [meter ranging](docs/reference/meter-ranging.md)
 for supported models and protection behavior.
 Before enabling output, the engine verifies source function, programmed range,

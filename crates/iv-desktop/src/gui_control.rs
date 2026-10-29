@@ -1055,6 +1055,7 @@ mod tests {
                         voltage: 0.01,
                         compliance: 0.001,
                         ramp_step: 0.001,
+                        range: None,
                     }],
                     &state,
                     &json!({}),

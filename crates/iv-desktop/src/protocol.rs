@@ -58,6 +58,10 @@ pub enum Command {
         voltage: f64,
         compliance: f64,
         ramp_step: f64,
+        /// Native source range command selected by the caller. `None` keeps
+        /// the existing automatic/manual planner behaviour.
+        #[serde(default)]
+        range: Option<f64>,
     },
     GateOutputOff,
     /// Enable one of the ordinary source roles at a fixed, verified level.
@@ -69,6 +73,10 @@ pub enum Command {
         value: f64,
         compliance: f64,
         ramp_step: f64,
+        /// Native source range command selected by the caller. `None` keeps
+        /// the existing automatic/manual planner behaviour.
+        #[serde(default)]
+        range: Option<f64>,
     },
     /// Immediate, source-specific emergency OFF. This is intentionally not a
     /// GUI job because it must bypass the bounded normal command queue.
@@ -176,6 +184,9 @@ pub struct DcOutputState {
     pub value: f64,
     pub compliance: f64,
     pub ramp_step: f64,
+    /// Explicit native source range, when the caller selected one.
+    #[serde(default)]
+    pub range: Option<f64>,
 }
 
 /// The verified hardware range held by an enabled fixed DC output.  The
@@ -389,6 +400,7 @@ mod tests {
                     value: 1e-3,
                     compliance: 1e-3,
                     ramp_step: 1e-4,
+                    range: None,
                 },
             )
             .is_ok()
@@ -412,5 +424,22 @@ mod tests {
             }),
         };
         assert!(unwrap_gui_job(nested).is_err());
+    }
+
+    #[test]
+    fn legacy_dc_commands_deserialize_without_an_explicit_range() {
+        let command: Command = serde_json::from_str(
+            r#"{"command":"set_source_dc","mode":"dc_iv","value":0.001,"compliance":0.2,"ramp_step":0.0001}"#,
+        )
+        .unwrap();
+        assert!(matches!(command, Command::SetSourceDc { range: None, .. }));
+        let command: Command = serde_json::from_str(
+            r#"{"command":"set_gate_voltage","voltage":0.001,"compliance":0.2,"ramp_step":0.0001}"#,
+        )
+        .unwrap();
+        assert!(matches!(
+            command,
+            Command::SetGateVoltage { range: None, .. }
+        ));
     }
 }

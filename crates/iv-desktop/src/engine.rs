@@ -321,6 +321,7 @@ pub fn serve() -> Result<(), String> {
     let monitor_begin = Instant::now();
     let mut last_monitor = Instant::now();
     let mut monitor_mode = None;
+    let mut monitor_guard = None;
     let mut monitor_ranges = [None, None];
     let mut simulation_mode = Mode::Iv;
     publish(&latest, &state);
@@ -454,6 +455,7 @@ pub fn serve() -> Result<(), String> {
                             &control,
                             &mut state,
                             monitor_ranges,
+                            &mut monitor_guard,
                         )
                     };
                     match result {
@@ -471,6 +473,9 @@ pub fn serve() -> Result<(), String> {
                                     .into();
                             state.phase = Phase::Failed;
                             clean_output(pair.as_mut(), &mut state, None, &control);
+                            // Cleanup publishes its own transient phase. Keep the
+                            // completed live fault terminal and visible afterward.
+                            state.phase = Phase::Failed;
                         }
                     }
                     publish(&latest, &state);
@@ -479,7 +484,21 @@ pub fn serve() -> Result<(), String> {
             }
             Err(_) => break,
         };
-        monitor_mode = None;
+        // Preserve meter configuration and the baseline across held DC edits.
+        if matches!(
+            &command,
+            Command::Connect { .. }
+                | Command::ConnectSource { .. }
+                | Command::ConnectMeter { .. }
+                | Command::DisconnectSource
+                | Command::DisconnectMeter
+                | Command::Disconnect
+                | Command::SetLiveMode { .. }
+                | Command::Run { .. }
+        ) {
+            monitor_mode = None;
+            monitor_guard = None;
+        }
         let owns_output = output_operation(&command);
         let safety_intent = safety_bit(&command);
         let result = match command {
@@ -501,7 +520,13 @@ pub fn serve() -> Result<(), String> {
                 let ranges = [meter_voltage_range, meter_current_range];
                 if ranges.iter().flatten().any(|v| !v.is_finite() || *v <= 0.0) {
                     Err("Fixed Meter ranges must be finite and positive.".into())
+                } else if ranges != monitor_ranges && !sweep_outputs_off(&state) {
+                    Err("Turn all source outputs OFF before changing Meter range.".into())
                 } else {
+                    if ranges != monitor_ranges {
+                        monitor_mode = None;
+                        monitor_guard = None;
+                    }
                     monitor_ranges = ranges;
                     Ok(())
                 }
@@ -582,12 +607,14 @@ pub fn serve() -> Result<(), String> {
                 voltage,
                 compliance,
                 ramp_step,
+                range,
             } => gate::set_voltage(
                 pair.as_mut(),
                 &mut state,
                 voltage,
                 compliance,
                 ramp_step,
+                range,
                 &control,
             ),
             Command::GateOutputOff => {
@@ -600,18 +627,43 @@ pub fn serve() -> Result<(), String> {
                 value,
                 compliance,
                 ramp_step,
-            } => source_dc::set(
-                pair.as_mut(),
-                &mut state,
-                secondary,
-                crate::protocol::DcOutputState {
-                    mode,
-                    value,
-                    compliance,
-                    ramp_step,
-                },
-                &control,
-            ),
+                range,
+            } => {
+                let prepared = if control.cancelled() {
+                    Ok(())
+                } else if state.source_connected && state.meter_connected && !state.simulation {
+                    pair.as_mut()
+                        .ok_or_else(|| "Live meter transport missing".to_owned())
+                        .and_then(|device| {
+                            prepare_live_meter(
+                                device,
+                                &state,
+                                mode,
+                                monitor_ranges,
+                                &mut monitor_mode,
+                                &mut monitor_guard,
+                                &control,
+                            )
+                        })
+                } else {
+                    Ok(())
+                };
+                prepared.and_then(|()| {
+                    source_dc::set(
+                        pair.as_mut(),
+                        &mut state,
+                        secondary,
+                        crate::protocol::DcOutputState {
+                            mode,
+                            value,
+                            compliance,
+                            ramp_step,
+                            range,
+                        },
+                        &control,
+                    )
+                })
+            }
             Command::SourceDcOff { secondary } => {
                 state.safety_revision = state.safety_revision.wrapping_add(1);
                 source_dc::output_off(pair.as_mut(), &mut state, secondary)
@@ -1624,6 +1676,65 @@ fn set_live_mode(
     Ok(())
 }
 
+fn sweep_outputs_off(state: &Snapshot) -> bool {
+    (!state.source_connected || state.output == OutputState::Off)
+        && (!state.source2_connected || state.source2_output == OutputState::Off)
+}
+
+/// Establish the loading baseline while outputs are OFF, before even the
+/// first manual DC ON. Held DC edits never reconfigure or re-prime the meter.
+fn prepare_live_meter(
+    pair: &mut DevicePair,
+    state: &Snapshot,
+    mode: Mode,
+    ranges: [Option<f64>; 2],
+    configured: &mut Option<Mode>,
+    guard: &mut Option<meter::RangeGuard>,
+    control: &Control,
+) -> Result<(), String> {
+    if *configured == Some(mode) && guard.is_some() {
+        return Ok(());
+    }
+    let output = monitor_query(pair, Role::Source, ":OUTP?", control)?;
+    if safety::output_state(&output)? != OutputState::Off || state.source2_output == OutputState::On
+    {
+        return Err(
+            "Turn all source outputs OFF before initializing Meter range monitoring.".into(),
+        );
+    }
+    let config = RunConfig {
+        mode,
+        meter_model: pair.meter_model.clone(),
+        meter_voltage_range: ranges[0],
+        meter_current_range: ranges[1],
+        ..Default::default()
+    };
+    let measure = iv_core::measurement_definition(mode).meter_function;
+    let commands = meter::commands(&config)?;
+    pair.write(Role::Meter, &format!("CONF:{measure}:DC"))?;
+    for command in commands {
+        pair.write(Role::Meter, &command)?;
+    }
+    pair.write(Role::Meter, &format!("SENS:{measure}:DC:NPLC 1"))?;
+    pair.write(Role::Meter, "TRIG:SOUR IMM")?;
+    meter::verify(&config, |cmd| {
+        monitor_query(pair, Role::Meter, cmd, control)
+    })?;
+    let mut ready = meter::RangeGuard::new(&config);
+    if meter::monitored(&config) {
+        let range = positive_reading(&monitor_query(
+            pair,
+            Role::Meter,
+            &format!("SENS:{measure}:DC:RANG?"),
+            control,
+        )?);
+        ready.check(&config, range)?;
+    }
+    *guard = Some(ready);
+    *configured = Some(mode);
+    Ok(())
+}
+
 fn monitor_reading(
     pair: &mut DevicePair,
     configured: &mut Option<Mode>,
@@ -1631,6 +1742,7 @@ fn monitor_reading(
     control: &Control,
     state: &mut Snapshot,
     ranges: [Option<f64>; 2],
+    guard: &mut Option<meter::RangeGuard>,
 ) -> Result<Record, String> {
     let function = monitor_query(pair, Role::Source, ":SOUR:FUNC?", control)?;
     let mode = match function
@@ -1643,7 +1755,6 @@ fn monitor_reading(
         "CURR" | "CURRENT" => Mode::Vi,
         _ => return Err(format!("Unknown source function: {function}")),
     };
-    let measure = if mode == Mode::Iv { "CURR" } else { "VOLT" };
     let config = RunConfig {
         mode,
         meter_model: pair.meter_model.clone(),
@@ -1651,22 +1762,17 @@ fn monitor_reading(
         meter_current_range: ranges[1],
         ..Default::default()
     };
-    if *configured != Some(mode) {
-        let range_commands = meter::commands(&config)?;
-        pair.write(Role::Meter, &format!("CONF:{measure}:DC"))?;
-        for command in range_commands {
-            pair.write(Role::Meter, &command)?;
-        }
-        pair.write(Role::Meter, &format!("SENS:{measure}:DC:NPLC 1"))?;
-        pair.write(Role::Meter, "TRIG:SOUR IMM")?;
-        meter::verify(&config, |command| {
-            monitor_query(pair, Role::Meter, command, control)
-        })?;
-        *configured = Some(mode);
-    }
+    prepare_live_meter(pair, state, mode, ranges, configured, guard, control)?;
     if control.closed.load(Ordering::Acquire) || control.off.load(Ordering::Acquire) {
         return Err("Live acquisition interrupted by output-off/shutdown".into());
     }
+    // Confirm OFF in this cycle before allowing unguarded idle autoranging.
+    let raw_output = monitor_query(pair, Role::Source, ":OUTP?", control)?;
+    state.output = match raw_output.trim() {
+        "0" | "+0" | "OFF" => OutputState::Off,
+        "1" | "+1" | "ON" => OutputState::On,
+        _ => return Err("Unknown source output state".into()),
+    };
     let measured = monitor_query(pair, Role::Meter, "READ?", control)?
         .trim()
         .parse::<f64>()
@@ -1674,22 +1780,23 @@ fn monitor_reading(
     if !measured.is_finite() || measured.abs() > 1e30 {
         return Err("Live meter overload".into());
     }
-    let raw_source = monitor_query(pair, Role::Source, ":SOUR:LEV?", control)?;
-    let source = raw_source
-        .trim()
-        .parse::<f64>()
-        .map_err(|_| "Live source level unavailable")?;
-    if !source.is_finite() {
-        return Err("Invalid live source level".into());
-    }
-    // The transport translates this canonical range query for legacy models.
-    let range_query = iv_core::source_range_query(&pair.source_model)?.unwrap_or(":SOUR:RANG?");
-    let range = monitor_query(pair, Role::Source, range_query, control)?;
     let (meter_range, meter_resolution) = if let Some((range_query, resolution_query)) =
         iv_core::meter_display_queries(&pair.meter_model, mode)?
     {
         let range = positive_reading(&monitor_query(pair, Role::Meter, range_query, control)?);
-        if let Err(error) = meter::check(&config, range) {
+        // Idle OFF readings may autorange freely. Once any source is ON,
+        // retain the baseline and enforce the same loading policy as a sweep.
+        if state.output == OutputState::Off && state.source2_output != OutputState::On {
+            guard
+                .as_mut()
+                .ok_or("Missing live meter range guard")?
+                .reset_baseline();
+        }
+        let checked = guard
+            .as_mut()
+            .ok_or("Missing live meter range guard")?
+            .check(&config, range);
+        if let Err(error) = checked {
             let off = protection_output_off(Some(pair), state).err();
             return Err(off.map_or(error.clone(), |e| format!("{error} · {e}")));
         }
@@ -1707,12 +1814,17 @@ fn monitor_reading(
         // a range or resolution from a different instrument family.
         (None, None)
     };
-    let raw_output = monitor_query(pair, Role::Source, ":OUTP?", control)?;
-    state.output = match raw_output.trim() {
-        "0" | "+0" | "OFF" => OutputState::Off,
-        "1" | "+1" | "ON" => OutputState::On,
-        _ => return Err("Unknown source output state".into()),
-    };
+    let raw_source = monitor_query(pair, Role::Source, ":SOUR:LEV?", control)?;
+    let source = raw_source
+        .trim()
+        .parse::<f64>()
+        .map_err(|_| "Live source level unavailable")?;
+    if !source.is_finite() {
+        return Err("Invalid live source level".into());
+    }
+    // The transport translates this canonical range query for legacy models.
+    let range_query = iv_core::source_range_query(&pair.source_model)?.unwrap_or(":SOUR:RANG?");
+    let range = monitor_query(pair, Role::Source, range_query, control)?;
     meter::check(&config, meter_range)?;
     let point = iv_core::SweepPoint {
         target: source,
@@ -2138,6 +2250,7 @@ struct SweepMonitor<'a> {
     last: Instant,
     source_resolution: Option<f64>,
     meter_resolution: MeterResolutionCache,
+    meter_guard: meter::RangeGuard,
     compliance_stop: Option<Record>,
     compliance_evidence: Option<DeferredMeterEvidence>,
     source_stop: Option<SourceProtectionStop>,
@@ -2242,7 +2355,7 @@ impl SweepMonitor<'_> {
                 });
                 return Ok(record);
             }
-            let fixed = iv_core::selected_meter_range(self.config).is_some();
+            let fixed = meter::monitored(self.config);
             let mut evidence = Some(DeferredMeterEvidence {
                 reply: Some(reply),
                 query_error: None,
@@ -2286,14 +2399,13 @@ impl SweepMonitor<'_> {
                 return Ok(record);
             }
             let fixed_range = if let Some(reading) = evidence.as_ref() {
-                Some(meter::conversion(
+                Some(self.meter_guard.conversion(
                     device,
                     self.config,
                     state,
                     audit,
                     (point_index, None),
-                    self.begin,
-                    reading,
+                    (self.begin, reading),
                 )?)
             } else {
                 None
@@ -2311,7 +2423,7 @@ impl SweepMonitor<'_> {
             if let Some((range, resolution)) =
                 iv_core::meter_display_queries(&device.meter_model, self.config.mode)?
             {
-                record.meter_range = if iv_core::selected_meter_range(self.config).is_some() {
+                record.meter_range = if meter::monitored(self.config) {
                     positive_reading(
                         &fixed_range
                             .as_ref()
@@ -2687,6 +2799,7 @@ fn execute(
         last: Instant::now(),
         source_resolution: None,
         meter_resolution: MeterResolutionCache::default(),
+        meter_guard: meter::RangeGuard::new(config),
         compliance_stop: None,
         compliance_evidence: None,
         source_stop: None,
@@ -2706,6 +2819,10 @@ fn execute(
                 &mut audit,
                 begin,
             )?;
+            if meter::monitored(config) && iv_core::selected_meter_range(config).is_none() {
+                live.meter_guard
+                    .observed(device, config, state, &mut audit, (0, None), begin)?;
+            }
             audit.append(&serde_json::json!({
                 "event":"configuration_applied", "point_index":0,
                 "result":"unverified", "details":{
@@ -3002,7 +3119,7 @@ fn execute(
                         break;
                     }
                     gate::check(Some(device), state)?;
-                    let fixed = iv_core::selected_meter_range(config).is_some();
+                    let fixed = meter::monitored(config);
                     let mut evidence = Some(DeferredMeterEvidence {
                         reply: Some(text),
                         query_error: None,
@@ -3047,14 +3164,13 @@ fn execute(
                         break;
                     }
                     let fixed_range = if let Some(reading) = evidence.as_ref() {
-                        Some(meter::conversion(
+                        Some(live.meter_guard.conversion(
                             device,
                             config,
                             state,
                             &mut audit,
                             (point.point_index, Some(reading_index)),
-                            begin,
-                            reading,
+                            (begin, reading),
                         )?)
                     } else {
                         None
@@ -3064,7 +3180,7 @@ fn execute(
                     let (range, resolution) = if let Some((range_query, resolution_query)) =
                         display_queries
                     {
-                        let range_text = if iv_core::selected_meter_range(config).is_some() {
+                        let range_text = if meter::monitored(config) {
                             fixed_range.ok_or("Missing fixed meter observation")?
                         } else {
                             query_with_audit(
@@ -3670,6 +3786,7 @@ mod tests {
             last: Instant::now() - Duration::from_secs(1),
             source_resolution: None,
             meter_resolution: MeterResolutionCache::default(),
+            meter_guard: meter::RangeGuard::new(&config),
             compliance_stop: None,
             compliance_evidence: None,
             source_stop: None,

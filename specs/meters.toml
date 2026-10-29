@@ -13,6 +13,15 @@ manual_range_reference_sections = ["Chapter 8, DC Characteristics: DC Voltage", 
 voltage_ranges = [0.1, 1.0, 10.0, 100.0, 1000.0]
 current_ranges = [0.01, 0.1, 1.0, 3.0]
 
+# DC current electrical loading. Terminal resistance includes the input path;
+# shunt resistance alone does not include leads, contacts or fuse resistance.
+current_input_resistances = [
+    { range = 0.01, ohms = 5, kind = "shunt" },
+    { range = 0.1, ohms = 5, kind = "shunt" },
+    { range = 1, ohms = 0.1, kind = "shunt" },
+    { range = 3, ohms = 0.1, kind = "shunt" },
+]
+
 [AGILENT_34411A]
 display_name = "Agilent 34411A"
 roles = ["meter"]
@@ -28,6 +37,17 @@ manual_range_reference_sections = ["Making Basic Measurements: To Measure DC Vol
 voltage_ranges = [0.1, 1.0, 10.0, 100.0, 1000.0]
 current_ranges = [0.0001, 0.001, 0.01, 0.1, 1.0, 3.0]
 
+# DC current electrical loading. Terminal resistance includes the input path;
+# shunt resistance alone does not include leads, contacts or fuse resistance.
+current_input_resistances = [
+    { range = 0.0001, ohms = 200, kind = "shunt" },
+    { range = 0.001, ohms = 200, kind = "shunt" },
+    { range = 0.01, ohms = 2, kind = "shunt" },
+    { range = 0.1, ohms = 2, kind = "shunt" },
+    { range = 1, ohms = 0.1, kind = "shunt" },
+    { range = 3, ohms = 0.1, kind = "shunt" },
+]
+
 [KEYSIGHT_34411A]
 display_name = "Keysight 34411A"
 roles = ["meter"]
@@ -41,6 +61,17 @@ manual_range_reference = "https://www.keysight.com/us/en/assets/9018-05591/servi
 manual_range_reference_sections = ["Making Basic Measurements: To Measure DC Voltage", "Chapter 1, DC Characteristics: DC Current"]
 voltage_ranges = [0.1, 1.0, 10.0, 100.0, 1000.0]
 current_ranges = [0.0001, 0.001, 0.01, 0.1, 1.0, 3.0]
+
+# DC current electrical loading. Terminal resistance includes the input path;
+# shunt resistance alone does not include leads, contacts or fuse resistance.
+current_input_resistances = [
+    { range = 0.0001, ohms = 200, kind = "shunt" },
+    { range = 0.001, ohms = 200, kind = "shunt" },
+    { range = 0.01, ohms = 2, kind = "shunt" },
+    { range = 0.1, ohms = 2, kind = "shunt" },
+    { range = 1, ohms = 0.1, kind = "shunt" },
+    { range = 3, ohms = 0.1, kind = "shunt" },
+]
 
 [KEYSIGHT_34465A]
 display_name = "Keysight 34465A"
@@ -70,6 +101,18 @@ nplc_max = 100.0
 # No verified public programming-manual range command/range table has been
 # incorporated. Fixed range selection must reject rather than fall back to Auto.
 manual_range_status = "unsupported_pending_official_programming_manual"
+resistance_reference = "https://www.adcmt.com/__/download/612c7d3fd5a43b06d08b2e3a/catalog-7461A-7461P-7451A-21.pdf"
+resistance_reference_section = "Page 9, DC current, terminal resistance"
+
+# DC current electrical loading. Terminal resistance includes the input path;
+# shunt resistance alone does not include leads, contacts or fuse resistance.
+current_input_resistances = [
+    { range = 0.001, ohms = 103, kind = "terminal" },
+    { range = 0.01, ohms = 10.5, kind = "terminal" },
+    { range = 0.1, ohms = 1.5, kind = "terminal" },
+    { range = 1, ohms = 0.5, kind = "terminal" },
+    { range = 3, ohms = 0.5, kind = "terminal" },
+]
 
 [SIMULATED_METER]
 display_name = "Simulated meter"

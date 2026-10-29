@@ -131,13 +131,23 @@ fn dc_plan(
     value: f64,
     compliance: f64,
     ramp_step: f64,
-    enforce_protection: bool,
+    requested_range: Option<f64>,
 ) -> Result<(RunConfig, iv_core::Plan), String> {
     finite(value, &format!("{} DC value", label(secondary)))?;
     positive(compliance, "Source protection limit")?;
     positive(ramp_step, "DC ramp step")?;
     if secondary && mode != Mode::Iv {
         return Err("Source 2 manual DC supports voltage source mode only.".into());
+    }
+    let fixed_range = requested_range
+        .map(|range| {
+            iv_core::fixed_manual_source_range(source_model, mode, value, compliance, range)
+        })
+        .transpose()?;
+    if let Some(range) = &fixed_range {
+        iv_core::nudge_source_value(0.0, ramp_step, range.resolution, range.maximum)?;
+    } else {
+        iv_core::manual_source_range(source_model, mode, value, compliance)?;
     }
     let config = RunConfig {
         source_model: source_model.into(),
@@ -150,7 +160,7 @@ fn dc_plan(
         // There is no meter acquisition for DC mode. This satisfies shared
         // planner validation without changing the source protection request.
         compliance,
-        source_compliance: enforce_protection.then_some(compliance),
+        source_compliance: Some(compliance),
         ramp_step,
         ..RunConfig::default()
     };
@@ -162,8 +172,11 @@ fn dc_plan(
             prepared.step.abs()
         ));
     }
-    let planned = plan(&config)?;
-    if enforce_protection && planned.hardware_compliance > compliance + f64::EPSILON {
+    let mut planned = plan(&config)?;
+    if let Some(range) = fixed_range {
+        planned.source_range = range.command_value;
+    }
+    if planned.hardware_compliance > compliance + f64::EPSILON {
         return Err(format!(
             "Source protection limit {compliance:e} cannot be represented without increasing protection on {}.",
             source_model
@@ -369,6 +382,7 @@ pub(super) fn set(
         value,
         compliance,
         ramp_step,
+        range: requested_range,
     } = request;
     if !connected(state, secondary) {
         return Err(format!(
@@ -398,7 +412,7 @@ pub(super) fn set(
             value,
             compliance,
             ramp_step,
-            false,
+            requested_range,
         )?;
         let held = if output(state, secondary) == OutputState::On {
             let held = limits(state, secondary).ok_or_else(|| {
@@ -407,9 +421,25 @@ pub(super) fn set(
                     label(secondary)
                 )
             })?;
-            validate_held_value(held, value, "DC value")?;
-            validate_held_value(held, ramp_step, "DC ramp step")?;
-            held.clone()
+            if validate_held_value(held, value, "DC value").is_ok()
+                && validate_held_value(held, ramp_step, "DC ramp step").is_ok()
+                && requested_range.is_none_or(|range| same(range, held.range))
+            {
+                held.clone()
+            } else {
+                if requested_range.is_some() && output(state, secondary) == OutputState::On {
+                    return fail_closed(
+                        None,
+                        state,
+                        secondary,
+                        format!(
+                            "Changing {} DC range while output is on is unsafe. Turn DC output off first.",
+                            label(secondary)
+                        ),
+                    );
+                }
+                range_limits(source_model, mode, planned.source_range)?
+            }
         } else {
             range_limits(source_model, mode, planned.source_range)?
         };
@@ -423,6 +453,7 @@ pub(super) fn set(
                 value,
                 compliance,
                 ramp_step,
+                range: requested_range,
             }),
         );
         set_limits(state, secondary, Some(held));
@@ -442,7 +473,7 @@ pub(super) fn set(
         value,
         compliance,
         ramp_step,
-        true,
+        requested_range,
     ) {
         Ok(value) => value,
         Err(error) => return fail_closed(Some(pair), state, secondary, error),
@@ -451,6 +482,27 @@ pub(super) fn set(
     let operation = (|| -> Result<(), String> {
         ensure_not_cancelled(control)?;
         verify_identity(pair, secondary)?;
+        let mut was_on = was_on;
+        if was_on {
+            let held = limits(state, secondary)
+                .ok_or("DC range is unknown. Turn output off and reconnect.")?;
+            if validate_held_value(held, value, "DC value").is_err()
+                || validate_held_value(held, ramp_step, "DC ramp step").is_err()
+                || requested_range.is_some_and(|range| !same(range, held.range))
+            {
+                if requested_range.is_some() {
+                    return Err(format!(
+                        "Changing {} DC range while output is on is unsafe. Turn DC output off first.",
+                        label(secondary)
+                    ));
+                }
+                // Range changes can reset the GS200 level and glitch. Verify the
+                // existing state, then use the normal verified OFF/zero startup.
+                verify_held_settings(pair, secondary, mode, held, planned.hardware_compliance)?;
+                force_off(Some(pair), state, secondary)?;
+                was_on = false;
+            }
+        }
         let resolution = if was_on {
             let previous = if secondary {
                 state.source2_dc.as_ref()
@@ -580,6 +632,7 @@ pub(super) fn set(
                     value,
                     compliance: planned.hardware_compliance,
                     ramp_step,
+                    range: requested_range,
                 }),
             );
             if !was_on && limits(state, secondary).is_none() {
