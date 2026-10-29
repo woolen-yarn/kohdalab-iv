@@ -14,6 +14,18 @@ pub(super) const PURPLE: Color32 = Color32::from_rgb(179, 155, 248);
 pub(super) const TEAL: Color32 = Color32::from_rgb(63, 215, 194);
 pub(super) const MUTED: Color32 = Color32::from_rgb(160, 163, 176);
 pub(super) const RED: Color32 = Color32::from_rgb(255, 123, 130);
+
+/// Bound expanding DC controls without borrowing the live monitor's space.
+/// Output ON/OFF actions deliberately stay outside this clipped viewport.
+pub(super) fn dc_editor<R>(ui: &mut egui::Ui, id: u64, add: impl FnOnce(&mut egui::Ui) -> R) -> R {
+    egui::ScrollArea::vertical()
+        .id_salt(("dc_editor", id))
+        .max_height(190.0)
+        .auto_shrink([false, true])
+        .show(ui, add)
+        .inner
+}
+
 // Preserve the original density while placing headings inside quiet cards.
 pub(super) fn section(ui: &mut egui::Ui, title: &str, add: impl FnOnce(&mut egui::Ui)) {
     let nested = matches!(title, "Output" | "Run");
@@ -270,6 +282,44 @@ pub(super) fn quantity(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn expanded_dc_editor_reserves_space_for_actions_and_following_meter() {
+        let context = egui::Context::default();
+        for width in [230.0, 280.0] {
+            let mut editor_clip = egui::Rect::NOTHING;
+            let mut actions = egui::Rect::NOTHING;
+            let mut source_monitor = egui::Rect::NOTHING;
+            let mut meter_monitor = egui::Rect::NOTHING;
+            let _ = context.run(Default::default(), |ctx| {
+                egui::CentralPanel::default().show(ctx, |ui| {
+                    ui.set_width(width);
+                    section(ui, "Source 1", |ui| {
+                        dc_editor(ui, 1, |ui| {
+                            editor_clip = ui.clip_rect();
+                            for _ in 0..40 {
+                                ui.label("Expanded device and typed DC settings");
+                            }
+                        });
+                        actions = button(ui, "OFF", 80.0, true).rect;
+                        source_monitor = ui
+                            .allocate_exact_size(egui::vec2(width, 110.0), egui::Sense::hover())
+                            .0;
+                    });
+                    section(ui, "Meter 1", |ui| {
+                        meter_monitor = ui
+                            .allocate_exact_size(egui::vec2(width, 110.0), egui::Sense::hover())
+                            .0;
+                    });
+                });
+            });
+            // Egui includes a small clip margin for strokes, not extra content.
+            assert!(editor_clip.height() <= 200.0, "{editor_clip:?}");
+            assert!(actions.top() >= editor_clip.bottom() - 4.0);
+            assert!(source_monitor.top() >= actions.bottom());
+            assert!(meter_monitor.top() > source_monitor.bottom());
+        }
+    }
 
     #[test]
     fn timing_inputs_clamp_negative_values_but_accept_zero() {

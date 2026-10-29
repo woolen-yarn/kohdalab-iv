@@ -636,19 +636,14 @@ impl IvApp {
                                         })
                                         .map(|entry| entry.id)
                                         .collect::<Vec<_>>();
-                                    for &id in &inactive_sources {
-                                        if self.dc_gate_matches(id) {
-                                            ui.add_space(4.0);
-                                            self.inactive_instrument(ui, true, id);
-                                        }
-                                    }
+                                    // Keep the active meter next to the sweep
+                                    // sources. An expanded fixed-bias card must
+                                    // not displace its live monitor below gates.
                                     ui.add_space(4.0);
                                     self.instrument(ui, false);
                                     for id in inactive_sources {
-                                        if !self.dc_gate_matches(id) {
-                                            ui.add_space(4.0);
-                                            self.inactive_instrument(ui, true, id);
-                                        }
+                                        ui.add_space(4.0);
+                                        self.inactive_instrument(ui, true, id);
                                     }
                                     let inactive_meters = self
                                         .settings

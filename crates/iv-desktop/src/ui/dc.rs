@@ -258,111 +258,124 @@ impl IvApp {
                     .small()
                     .color(if self.busy() { ORANGE } else { MUTED }),
                 );
-                ui.add_enabled_ui(editable, |ui| {
-                    if role == CardRole::Source {
-                        ui.add_enabled_ui(!on, |ui| {
-                            let before = settings.mode;
-                            egui::ComboBox::from_id_salt(("dc_mode", id))
-                                .width(ui.available_width())
-                                .selected_text(if settings.mode == Mode::Iv {
-                                    "Voltage"
-                                } else {
-                                    "Current"
-                                })
-                                .show_ui(ui, |ui| {
-                                    ui.selectable_value(&mut settings.mode, Mode::Iv, "Voltage");
-                                    ui.selectable_value(&mut settings.mode, Mode::Vi, "Current");
-                                });
-                            if settings.mode != before {
-                                settings.value = 0.0;
-                                settings.compliance = if settings.mode == Mode::Iv {
-                                    0.001
-                                } else {
-                                    1.0
-                                };
-                                settings.ramp_step = if settings.mode == Mode::Iv {
-                                    0.001
-                                } else {
-                                    1e-6
-                                };
-                                settings.units = if settings.mode == Mode::Iv {
-                                    [1, 1, 1]
-                                } else {
-                                    [2, 0, 2]
-                                };
-                            }
-                        });
-                    } else {
-                        settings.mode = Mode::Iv;
-                    }
-                    let (unit, limit_unit) = if settings.mode == Mode::Iv {
-                        ("V", "A")
-                    } else {
-                        ("A", "V")
-                    };
-                    if let Some(limits) =
-                        self.dc_digit_limits(id, settings.mode, settings.value, on)
-                    {
-                        let ramp_valid = iv_core::nudge_source_value(
-                            settings.ramp_step,
-                            0.0,
-                            limits.resolution,
-                            limits.maximum,
-                        )
-                        .is_ok()
-                            && settings.ramp_step > 0.0;
-                        let config = super::digits::DigitControl {
-                            value: settings.value,
-                            unit: &mut settings.units[0],
-                            base: unit,
-                            limits,
-                            enabled: editable && ramp_valid,
-                            fixed_range: on,
-                        };
-                        if let Some(value) = super::digits::output_digits(ui, id, config) {
-                            settings.value = value;
-                            digit_change = true;
+                // Only the editor scrolls. The output actions below it and
+                // the live monitor after this frame keep their own layout
+                // space, even when typing or device settings add rows.
+                super::widgets::dc_editor(ui, id, |ui| {
+                    ui.add_enabled_ui(editable, |ui| {
+                        if role == CardRole::Source {
+                            ui.add_enabled_ui(!on, |ui| {
+                                let before = settings.mode;
+                                egui::ComboBox::from_id_salt(("dc_mode", id))
+                                    .width(ui.available_width())
+                                    .selected_text(if settings.mode == Mode::Iv {
+                                        "Voltage"
+                                    } else {
+                                        "Current"
+                                    })
+                                    .show_ui(ui, |ui| {
+                                        ui.selectable_value(
+                                            &mut settings.mode,
+                                            Mode::Iv,
+                                            "Voltage",
+                                        );
+                                        ui.selectable_value(
+                                            &mut settings.mode,
+                                            Mode::Vi,
+                                            "Current",
+                                        );
+                                    });
+                                if settings.mode != before {
+                                    settings.value = 0.0;
+                                    settings.compliance = if settings.mode == Mode::Iv {
+                                        0.001
+                                    } else {
+                                        1.0
+                                    };
+                                    settings.ramp_step = if settings.mode == Mode::Iv {
+                                        0.001
+                                    } else {
+                                        1e-6
+                                    };
+                                    settings.units = if settings.mode == Mode::Iv {
+                                        [1, 1, 1]
+                                    } else {
+                                        [2, 0, 2]
+                                    };
+                                }
+                            });
+                        } else {
+                            settings.mode = Mode::Iv;
                         }
-                    } else {
-                        ui.label(
+                        let (unit, limit_unit) = if settings.mode == Mode::Iv {
+                            ("V", "A")
+                        } else {
+                            ("A", "V")
+                        };
+                        if let Some(limits) =
+                            self.dc_digit_limits(id, settings.mode, settings.value, on)
+                        {
+                            let ramp_valid = iv_core::nudge_source_value(
+                                settings.ramp_step,
+                                0.0,
+                                limits.resolution,
+                                limits.maximum,
+                            )
+                            .is_ok()
+                                && settings.ramp_step > 0.0;
+                            let config = super::digits::DigitControl {
+                                value: settings.value,
+                                unit: &mut settings.units[0],
+                                base: unit,
+                                limits,
+                                enabled: editable && ramp_valid,
+                                fixed_range: on,
+                            };
+                            if let Some(value) = super::digits::output_digits(ui, id, config) {
+                                settings.value = value;
+                                digit_change = true;
+                            }
+                        } else {
+                            ui.label(
                             RichText::new(
                                 "Verified source range unavailable. Turn output OFF and reconnect.",
                             )
                             .small()
                             .color(RED),
                         );
-                    }
-                    ui.add_space(3.0);
-                    let field_width = (ui.available_width() - 74.0).max(125.0);
-                    egui::Grid::new(("manual_dc_fields", id))
-                        .num_columns(2)
-                        .spacing([5.0, 5.0])
-                        .show(ui, |ui| {
-                            for (label, index, value, unit, nonnegative) in [
-                                ("Compliance", 1, &mut settings.compliance, limit_unit, true),
-                                ("Ramp step", 2, &mut settings.ramp_step, unit, true),
-                            ] {
-                                form_label(ui, label, 62.0);
-                                ui.add_enabled_ui(!on || index != 1, |ui| {
-                                    quantity(
-                                        ui,
-                                        ("dc_value", id, index),
-                                        value,
-                                        &mut settings.units[index],
-                                        unit,
-                                        field_width,
-                                        nonnegative,
-                                    );
-                                });
-                                ui.end_row();
-                            }
-                        });
+                        }
+                        ui.add_space(3.0);
+                        let field_width = (ui.available_width() - 74.0).max(125.0);
+                        egui::Grid::new(("manual_dc_fields", id))
+                            .num_columns(2)
+                            .spacing([5.0, 5.0])
+                            .show(ui, |ui| {
+                                for (label, index, value, unit, nonnegative) in [
+                                    ("Compliance", 1, &mut settings.compliance, limit_unit, true),
+                                    ("Ramp step", 2, &mut settings.ramp_step, unit, true),
+                                ] {
+                                    form_label(ui, label, 62.0);
+                                    ui.add_enabled_ui(!on || index != 1, |ui| {
+                                        quantity(
+                                            ui,
+                                            ("dc_value", id, index),
+                                            value,
+                                            &mut settings.units[index],
+                                            unit,
+                                            field_width,
+                                            nonnegative,
+                                        );
+                                    });
+                                    ui.end_row();
+                                }
+                            });
+                    });
+                    ui.label(
+                        RichText::new("OFF before function or compliance changes.")
+                            .small()
+                            .color(MUTED),
+                    );
                 });
-                ui.label(
-                    RichText::new("OFF before function or compliance changes.")
-                        .small()
-                        .color(MUTED),
-                );
                 let valid = settings.value.is_finite()
                     && settings.compliance.is_finite()
                     && settings.compliance > 0.0

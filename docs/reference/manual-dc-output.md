@@ -4,6 +4,10 @@ Each Source card has a **DC** disclosure beside **Device**. Closed controls use
 the existing header row; the measurement panel and Run / Save controls retain
 their layout. Opening DC reveals the level, unit, source compliance and ramp
 step. A DC ON badge identifies a fixed output independently of the sweep state.
+The editor has its own height-limited scroll viewport; Output ON/OFF stays
+outside it, and the live plots occupy separate layout space below the editor.
+The active Meter card precedes additional fixed-bias cards, so opening a gate
+editor does not insert it between the main Source and Meter live monitors.
 
 ## Per-digit adjustment
 
