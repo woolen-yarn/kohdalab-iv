@@ -17,8 +17,8 @@ a valid digit adjustment is applied immediately using the configured ramp; no
 extra Apply click is required. While OFF, the same controls edit the requested
 level without turning output on. Output ON always remains explicit.
 
-Select a hardware range using the tabs above the digits. The range is manual
-and remains fixed; entering a level never selects another range. Tabs come from
+Select a hardware range using the left/right buttons around its central display. The range is manual
+and remains fixed; entering a level never selects another range. The available ranges come from
 the selected instrument profile. GS200/GS210 voltage ranges are 10 mV, 100 mV,
 1 V, 10 V and 30 V; current ranges are 1 mA, 10 mA, 100 mA and 200 mA.
 Range, function and compliance changes are locked while output is ON.
@@ -26,9 +26,9 @@ Range, function and compliance changes are locked while output is ON.
 The digits use the selected range's maximum and resolution. For example, the
 10 mV range has 100 nV increments and four decimals in mV; 100 mV has 1 µV
 increments and three decimals in mV; 1 V has 10 µV increments and five decimals
-in V. The 1 mA range has 10 nA increments and five decimals in mA. Changing the
-display unit changes these decimal positions without changing the programmed
-level or hardware range. The layout stays fixed within a range/unit pair and
+in V. The 1 mA range has 10 nA increments and five decimals in mA. The display unit is fixed by the selected range: voltage ranges below 1 V use
+mV, other voltage ranges use V, and the supported current ranges use mA.
+There is no independent unit dropdown. The layout stays fixed within a range and
 never switches to exponential notation. Out-of-range or sub-resolution values
 are rejected, not rounded into another output. If an OFF editor's level is
 incompatible with a newly selected range, it resets to zero.
@@ -53,7 +53,7 @@ range cannot be changed while output is ON.
 
 Click a digit or Type… for direct entry. Set validates the value against the
 source grid before committing. Digit actions are disabled while typing, and a
-verified level or display-unit change invalidates the old text buffer. During a
+verified level or selected range change invalidates the old text buffer. During a
 pending source update or sweep, setting changes remain locked; the application
 does not accumulate a queue of future levels. OFF retains its priority path.
 

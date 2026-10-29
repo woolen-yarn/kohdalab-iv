@@ -175,11 +175,9 @@ pub(super) fn output_digits(ui: &mut egui::Ui, id: u64, control: DigitControl<'_
         .data_mut(|data| data.get_temp::<bool>(edit_id))
         .unwrap_or(false);
     let mut candidate = None;
-    // Keep the unit chooser pinned on the right.  Very small display units can
-    // require many fixed leading digits, so their digit strip scrolls instead
-    // of shrinking controls or changing the selected unit.
+    // Keep the range-derived unit pinned on the right; it cannot change
+    // independently from the hardware range.
     let columns = layout.text.chars().filter(char::is_ascii_digit).count();
-    let mut unit_changed = false;
     let previous_spacing = ui.spacing().item_spacing.x;
     ui.spacing_mut().item_spacing.x = 2.0;
     ui.horizontal_top(|ui| {
@@ -302,16 +300,12 @@ pub(super) fn output_digits(ui: &mut egui::Ui, id: u64, control: DigitControl<'_
                     format!("n{base}"),
                     format!("p{base}"),
                 ];
-                egui::ComboBox::from_id_salt(("dc_digit_unit", id))
-                    .width(51.0)
-                    .selected_text(&names[*unit])
-                    .show_ui(ui, |ui| {
-                        for (index, name) in names.iter().enumerate() {
-                            unit_changed |= ui.selectable_value(unit, index, name).changed();
-                        }
-                    })
-                    .response
-                    .on_hover_text("Display unit only; changing it does not change output.");
+                ui.add_sized(
+                    [51.0, 26.0],
+                    egui::Label::new(RichText::new(&names[*unit]).strong())
+                        .halign(egui::Align::Center),
+                )
+                .on_hover_text("Unit is fixed by the selected source range.");
             },
         );
     });
@@ -369,7 +363,7 @@ pub(super) fn output_digits(ui: &mut egui::Ui, id: u64, control: DigitControl<'_
     }
     ui.ctx().data_mut(|data| data.insert_temp(edit_id, edit));
     ui.spacing_mut().item_spacing.x = previous_spacing;
-    if enabled && !unit_changed && !edit {
+    if enabled && !edit {
         candidate.filter(|next| *next != value)
     } else {
         None
@@ -554,7 +548,7 @@ mod tests {
         assert!((layout.text.parse::<f64>().unwrap() * layout.scale - 0.2).abs() < 1e-15);
     }
     #[test]
-    fn drawing_and_unit_selection_do_not_request_any_output_change() {
+    fn drawing_the_fixed_unit_does_not_request_any_output_change() {
         let context = egui::Context::default();
         for initial_unit in 0..5 {
             let mut unit = initial_unit;

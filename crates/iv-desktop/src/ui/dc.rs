@@ -75,40 +75,56 @@ fn select_dc_range(settings: &mut settings::DcSettings, range: &iv_core::SourceR
     };
 }
 
-fn range_tabs(
+fn range_selector(
     ui: &mut egui::Ui,
     ranges: &[iv_core::SourceRangeProfile],
     selected: Option<f64>,
     unit: &str,
 ) -> Option<f64> {
-    let available = ui.available_width();
     let mut clicked = None;
-    ui.scope(|ui| {
-        ui.spacing_mut().item_spacing.x = 2.0;
-        ui.spacing_mut().button_padding.x = 2.0;
-        let count = ranges.len().max(1) as f32;
-        let width = ((available - 2.0 * (count - 1.0)) / count).floor().max(1.0);
-        ui.horizontal(|ui| {
-            for range in ranges {
-                if ui
-                    .add_sized(
-                        [width, 24.0],
-                        egui::Button::new(RichText::new(&range.name).size(10.0))
-                            .truncate()
-                            .selected(selected == Some(range.command_value)),
-                    )
-                    .on_hover_text(format!(
-                        "{} · ±{} · increment {}",
-                        range.name,
-                        fmt_quantity(range.maximum, unit),
-                        fmt_quantity(range.resolution, unit)
-                    ))
-                    .clicked()
-                {
-                    clicked = Some(range.command_value);
-                }
-            }
-        });
+    let index = ranges
+        .iter()
+        .position(|range| Some(range.command_value) == selected);
+    let spacing = ui.spacing().item_spacing.x;
+    let center_width = (ui.available_width() - 2.0 * 30.0 - 2.0 * spacing).max(1.0);
+    ui.horizontal(|ui| {
+        if ui
+            .add_enabled(
+                index.is_some_and(|index| index > 0),
+                egui::Button::new("<").min_size(egui::vec2(30.0, 26.0)),
+            )
+            .on_hover_text("Previous source range")
+            .clicked()
+        {
+            clicked = index
+                .and_then(|index| index.checked_sub(1))
+                .map(|index| ranges[index].command_value);
+        }
+        let range = index.and_then(|index| ranges.get(index));
+        let response = ui.add_sized(
+            [center_width, 26.0],
+            egui::Label::new(
+                RichText::new(range.map_or("Select range", |range| range.name.as_str())).strong(),
+            )
+            .halign(egui::Align::Center),
+        );
+        if let Some(range) = range {
+            response.on_hover_text(format!(
+                "±{} · increment {}",
+                fmt_quantity(range.maximum, unit),
+                fmt_quantity(range.resolution, unit)
+            ));
+        }
+        if ui
+            .add_enabled(
+                index.is_some_and(|index| index + 1 < ranges.len()),
+                egui::Button::new(">").min_size(egui::vec2(30.0, 26.0)),
+            )
+            .on_hover_text("Next source range")
+            .clicked()
+        {
+            clicked = index.map(|index| ranges[index + 1].command_value);
+        }
     });
     clicked
 }
@@ -402,7 +418,7 @@ impl IvApp {
                         };
                         let ranges = dc_ranges(&entry.model, settings.mode);
                         ui.add_enabled_ui(!on, |ui| {
-                            if let Some(command) = range_tabs(ui, &ranges, settings.range, unit)
+                            if let Some(command) = range_selector(ui, &ranges, settings.range, unit)
                                 && let Some(range) = ranges.iter().find(|range| range.command_value == command) {
                                 select_dc_range(&mut settings, range);
                                 super::digits::reset_editor(ui.ctx(), id);
@@ -410,6 +426,7 @@ impl IvApp {
                         }).response.on_disabled_hover_text("Turn output OFF before changing range.");
                         if let Some(range) = ranges.iter().find(|range| Some(range.command_value) == settings.range) {
                             let limits = crate::protocol::DcLimits { range: range.command_value, maximum: range.maximum, resolution: range.resolution };
+                            settings.units[0] = if settings.mode == Mode::Vi || range.name.contains("mV") { 1 } else { 0 };
                             let config = super::digits::DigitControl {
                                 value: settings.value,
                                 unit: &mut settings.units[0],
@@ -477,6 +494,7 @@ impl IvApp {
                         }
                     }
                 }
+                let action_width = (ui.available_width() - ui.spacing().item_spacing.x) / 2.0;
                 ui.horizontal(|ui| {
                     let state = self.dc_output(id);
                     let can_turn_off = connected && state != OutputState::Off;
@@ -486,7 +504,7 @@ impl IvApp {
                         OutputState::Unknown => ("Output ?", RED, Color32::WHITE),
                         OutputState::Off => ("Output OFF", INPUT, MUTED),
                     };
-                    if ui.add_enabled(can_turn_off || can_turn_on, egui::Button::new(RichText::new(text).color(color)).fill(fill).min_size(egui::vec2(113.0, 26.0)))
+                    if ui.add_enabled(can_turn_off || can_turn_on, egui::Button::new(RichText::new(text).color(color)).fill(fill).min_size(egui::vec2(action_width, 26.0)))
                         .on_hover_text(if can_turn_off { "Turn output OFF immediately. Stops an active sweep." } else { "Enable the selected DC level. Range stays fixed while ON." }).clicked() {
                         if can_turn_off {
                             off_requested = true;
@@ -503,7 +521,7 @@ impl IvApp {
                             self.send_dc_job(command);
                         }
                     }
-                    if button(ui, "Zero", 60.0, editable && settings.range.is_some() && (!on || validation.is_ok()) && (!connected || state != OutputState::Unknown))
+                    if ui.add_enabled(editable && settings.range.is_some() && (!on || validation.is_ok()) && (!connected || state != OutputState::Unknown), egui::Button::new("Zero").fill(BUTTON).min_size(egui::vec2(action_width, 26.0)))
                         .on_hover_text("Ramp to zero within the selected range. Output stays ON if already ON; while OFF this only edits the level.").clicked() {
                         settings.value = 0.0;
                         super::digits::reset_editor(ui.ctx(), id);
@@ -907,7 +925,7 @@ mod tests {
     use super::*;
     use crate::protocol::GuiJobCompletion;
     #[test]
-    fn all_manual_range_tabs_fit_one_row_in_a_compact_card() {
+    fn manual_range_selector_fits_one_row_in_a_compact_card() {
         let context = egui::Context::default();
         let ranges = dc_ranges("YOKOGAWA_GS210", Mode::Iv);
         let _ = context.run(
@@ -922,11 +940,11 @@ mod tests {
                 egui::CentralPanel::default().show(ctx, |ui| {
                     ui.set_width(224.0);
                     let before = ui.cursor().min.y;
-                    assert_eq!(range_tabs(ui, &ranges, Some(1.0), "V"), None);
+                    assert_eq!(range_selector(ui, &ranges, Some(1.0), "V"), None);
                     assert!(ui.cursor().min.y - before < 35.0);
                     assert!(
                         ui.min_rect().width() <= 224.1,
-                        "tab row width {}",
+                        "range selector width {}",
                         ui.min_rect().width()
                     );
                 });
