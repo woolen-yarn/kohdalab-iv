@@ -5,7 +5,7 @@
 
 ## Unreleased
 
-- Separate IV settings into `~/.kohdalab/iv/config.json`. Import valid legacy Rust `config/iv-next.json` once without removing the original. Reject foreign application identities, unidentified JSON and newer schemas before loading or replacing settings; save atomically and report autosave failures.
+- Separate IV settings into `~/.kohdalab/iv/config.json`. Use only the application-owned default; remove automatic legacy/preview profile discovery. Standardize Windows install working data under `.kohdalab/iv` and default measurements under `iv/results`. Reject foreign application identities, unidentified JSON and newer schemas before loading or replacing settings; save atomically and report autosave failures.
 - IV設定をアプリ専用フォルダーへ分離し、旧Rust版設定は元ファイルを残して初回に引き継ぎます。別アプリ・未識別JSON・未対応の新版設定は読み込みと上書きを拒否し、安全な保存とエラー表示を行います。
 
 ## 1.3.0-alpha.16 — 2026-10-29

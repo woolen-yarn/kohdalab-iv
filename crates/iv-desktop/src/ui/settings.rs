@@ -171,7 +171,7 @@ impl Default for Settings {
             meter_id: 3,
             dc_gate_id: 0,
             next_inventory_id: 4,
-            output_dir: user_dir().join("results").display().to_string(),
+            output_dir: user_dir().join("iv").join("results").display().to_string(),
             filename: "iv_run".into(),
             simulation: false,
             source_model: "YOKOGAWA_GS210".into(),
@@ -386,8 +386,8 @@ fn settings_path_in(root: &Path) -> PathBuf {
     root.join("iv").join("config.json")
 }
 
-/// Migrate only native Rust IV settings. The Python iv.json and TRKR files
-/// remain untouched; they use different schemas and must not become defaults.
+/// Read only the application-owned default. Old shared profiles are not
+/// discovered or migrated automatically.
 pub(super) fn load_startup_settings() -> Result<(Settings, String), String> {
     load_startup_settings_in(&user_dir())
 }
@@ -395,52 +395,11 @@ pub(super) fn load_startup_settings() -> Result<(Settings, String), String> {
 fn load_startup_settings_in(root: &Path) -> Result<(Settings, String), String> {
     let destination = settings_path_in(root);
     match std::fs::read(&destination) {
-        Ok(bytes) => return load_settings(&bytes).map(|settings| (settings, String::new())),
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
-        Err(error) => return Err(format!("Read {}: {error}", destination.display())),
-    }
-    let legacy = root.join("config").join("iv-next.json");
-    let bytes = match std::fs::read(&legacy) {
-        Ok(bytes) => bytes,
+        Ok(bytes) => load_settings(&bytes).map(|settings| (settings, String::new())),
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
-            return Ok((Settings::default(), String::new()));
+            Ok((Settings::default(), String::new()))
         }
-        Err(error) => {
-            return Err(format!(
-                "Read legacy IV settings {}: {error}",
-                legacy.display()
-            ));
-        }
-    };
-    let settings = load_settings(&bytes)
-        .map_err(|error| format!("Legacy IV settings {}: {error}", legacy.display()))?;
-    let parent = destination
-        .parent()
-        .ok_or("Missing IV settings directory")?;
-    std::fs::create_dir_all(parent).map_err(|error| error.to_string())?;
-    let mut temporary =
-        tempfile::NamedTempFile::new_in(parent).map_err(|error| error.to_string())?;
-    use std::io::Write;
-    temporary
-        .write_all(&serde_json::to_vec_pretty(&settings).map_err(|error| error.to_string())?)
-        .map_err(|error| error.to_string())?;
-    temporary
-        .as_file()
-        .sync_all()
-        .map_err(|error| error.to_string())?;
-    match temporary.persist_noclobber(&destination) {
-        Ok(_) => Ok((
-            settings,
-            format!(
-                "Imported IV settings from {}. Original file preserved.",
-                legacy.display()
-            ),
-        )),
-        Err(error) if error.error.kind() == std::io::ErrorKind::AlreadyExists => {
-            let bytes = std::fs::read(&destination).map_err(|error| error.to_string())?;
-            load_settings(&bytes).map(|settings| (settings, String::new()))
-        }
-        Err(error) => Err(format!("Import IV settings: {}", error.error)),
+        Err(error) => Err(format!("Read {}: {error}", destination.display())),
     }
 }
 
@@ -588,43 +547,23 @@ mod tests {
     }
 
     #[test]
-    fn first_launch_migrates_native_iv_without_modifying_original_or_other_apps() {
+    fn default_is_app_owned_and_shared_legacy_files_are_ignored() {
         let root = tempfile::tempdir().unwrap();
-        let old = root.path().join("config/iv-next.json");
-        std::fs::create_dir_all(old.parent().unwrap()).unwrap();
-        let mut settings = Settings {
-            filename: "experiment".into(),
-            simulation: true,
-            ..Default::default()
-        };
-        settings.config.start = -0.003;
-        settings.config.stop = 0.004;
-        settings.sources[0].dc.value = 0.001;
-        let mut legacy = serde_json::to_value(settings.clone()).unwrap();
-        legacy.as_object_mut().unwrap().remove("application");
-        let bytes = serde_json::to_vec(&legacy).unwrap();
-        std::fs::write(&old, &bytes).unwrap();
-        let trkr = root.path().join("config/trkr-next.json");
-        std::fs::write(&trkr, br#"{"application":"kohdalab-trkr"}"#).unwrap();
-        let (migrated, notice) = load_startup_settings_in(root.path()).unwrap();
+        std::fs::create_dir_all(root.path().join("config")).unwrap();
+        for name in ["iv-next.json", "iv.json", "trkr-next.json", "default.json"] {
+            let old = root.path().join("config").join(name);
+            let bytes = br#"{"filename":"old-shared-profile"}"#;
+            std::fs::write(&old, bytes).unwrap();
+            let (settings, notice) = load_startup_settings_in(root.path()).unwrap();
+            assert_ne!(settings.filename, "old-shared-profile");
+            assert!(notice.is_empty());
+            assert!(!settings_path_in(root.path()).exists());
+            assert_eq!(std::fs::read(old).unwrap(), bytes);
+        }
         assert_eq!(
             settings_path_in(root.path()),
             root.path().join("iv/config.json")
         );
-        assert_eq!(migrated.filename, settings.filename);
-        assert_eq!(migrated.config.start, settings.config.start);
-        assert_eq!(migrated.config.stop, settings.config.stop);
-        assert_eq!(migrated.sources[0].dc.value, settings.sources[0].dc.value);
-        assert_eq!(std::fs::read(old).unwrap(), bytes);
-        assert_eq!(
-            std::fs::read(trkr).unwrap(),
-            br#"{"application":"kohdalab-trkr"}"#
-        );
-        let new = settings_path_in(root.path());
-        let saved: serde_json::Value =
-            serde_json::from_slice(&std::fs::read(new).unwrap()).unwrap();
-        assert_eq!(saved["application"], APPLICATION_ID);
-        assert!(notice.contains("Original file preserved"));
     }
 
     #[test]
@@ -651,27 +590,6 @@ mod tests {
             std::fs::write(&new, bytes).unwrap();
             assert!(load_startup_settings_in(root.path()).is_err());
             assert_eq!(std::fs::read(&new).unwrap(), bytes);
-        }
-    }
-
-    #[test]
-    fn invalid_native_legacy_and_python_profiles_are_not_silently_migrated() {
-        let root = tempfile::tempdir().unwrap();
-        std::fs::create_dir_all(root.path().join("config")).unwrap();
-        let python = root.path().join("config/iv.json");
-        std::fs::write(&python, br#"{"instruments":{},"measurements":{}}"#).unwrap();
-        assert!(load_startup_settings_in(root.path()).is_ok());
-        assert!(!settings_path_in(root.path()).exists());
-        let old = root.path().join("config/iv-next.json");
-        for bytes in [
-            b"broken".as_slice(),
-            br#"{"application":"kohdalab-trkr"}"#,
-            br#"{"schema_version":4}"#,
-        ] {
-            std::fs::write(&old, bytes).unwrap();
-            assert!(load_startup_settings_in(root.path()).is_err());
-            assert!(!settings_path_in(root.path()).exists());
-            assert_eq!(std::fs::read(&old).unwrap(), bytes);
         }
     }
 

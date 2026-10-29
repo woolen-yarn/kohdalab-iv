@@ -1,48 +1,36 @@
-# Application-specific settings
+# Application directories
 
-Each application owns its own directory beneath the user's `.kohdalab` folder.
-On Windows the base is `%USERPROFILE%\.kohdalab`; on macOS/Linux it is
-`~/.kohdalab`.
+Each application owns its installation and its user configuration. Windows
+installers require administrator approval and use separate directories beneath
+`C:\Program Files\Kohdalab`. macOS applications belong in `/Applications`.
+Portable packages remain independent of installation.
 
-| Application | Default configuration | Identity |
-| --- | --- | --- |
-| KohdaLab IV | `iv/config.json` | `kohdalab-iv` |
-| KohdaLab TRKR | `trkr/config.json` | `kohdalab-trkr` |
-| TRKR demo | `trkr/demo.json` | `kohdalab-trkr` |
+| Application | Windows installation directory | macOS application | User configuration |
+| --- | --- | --- | --- |
+| Camera | `KohdaLab Camera` | `KohdaLab Camera.app` | `camera/config.json` |
+| IV | `KohdaLab IV` | `KohdaLab IV.app` | `iv/config.json` |
+| TRKR | `KohdaLab TRKR` | `KohdaLab TRKR.app` | `trkr/config.json` |
+| PLE | `KohdaLab PLE` | `KohdaLab PLE.app` | `ple/config.json` |
+| Shutter | `KohdaLab Shutter` | `KohdaLab Shutter.app` | `shutter/config.json` (desktop preferences only) |
 
-New saves contain an `application` field. A different explicit application
-identity is rejected when loading and before replacing an existing file on Save.
-Recognized markerless foreign profile structures are also rejected. Markerless
-native legacy profiles remain readable for compatibility.
+Configuration paths are relative to `~/.kohdalab` on macOS/Linux and
+`%USERPROFILE%\.kohdalab` on Windows. TRKR Demo uses `trkr/demo.json`.
+The suite's shared API discovery/coordination directories are intentionally
+shared; they are not application configuration files.
 
-## IV migration
+New saves identify their owner with `application: "kohdalab-<app>"`.
+Foreign, damaged, unidentified, or newer unsupported IV settings are rejected
+before replacement. Saves use a temporary file and atomic replacement.
 
-On a normal first launch, IV prefers `iv/config.json`. If it does not exist,
-a valid native Rust `config/iv-next.json` is imported into the new location.
-The old file remains byte-for-byte intact. A temporary file is validated and
-published without replacing a concurrently created destination. A later launch
-always prefers the new file, even when the old configuration still exists.
+IV and TRKR read only their dedicated defaults. Files such as
+`config/iv-next.json`, `config/trkr-next.json`, `config/default.json`, and the old
+Python `config/iv.json` are no longer discovered or migrated automatically.
+Existing originals are not deleted. Browse/Load/Save and explicit `--config`
+profiles can still select a valid application-specific experiment profile.
+No device connection or output enable is performed by loading settings.
 
-An invalid or newer-schema configuration is reported rather than silently
-falling back to an older configuration or overwriting that file with defaults.
-Explicit `--config` launches and GUI simulation checks do not migrate the user's
-default configuration. Migration only reads and writes settings; it never
-connects a device or enables output.
+IV's new default results directory is `iv/results` beneath the same base.
+An explicitly saved experiment output directory remains unchanged. Updates and
+uninstall preserve user settings and measurement data.
 
-The old Python IV `config/iv.json` and TRKR's `config/default.json` have different
-schemas and are not imported by IV. Keep those originals when using old software.
-
-## TRKR migration
-
-The TRKR implementation imports its native `config/trkr-next.json` first, then
-its legacy `config/default.json` when the new default is absent. Demo settings
-belong to `trkr/demo.json` and do not replace production settings. Follow the
-TRKR repository's configuration documentation for that application's migration
-and validation details.
-
-## Manual profiles
-
-Browse/Load/Save can still select an explicit profile path for an experiment.
-Use a separate file per application; an identity marker does not convert one
-application's profile into another format. Existing experiment data and selected
-output directories are independent from the default configuration location.
+Shutter keeps calibration/network settings and shared device/channel names on the Pico; its local file stores desktop preferences only.
