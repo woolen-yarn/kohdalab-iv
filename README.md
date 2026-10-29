@@ -43,14 +43,14 @@ A stopped simulation: the popup shows the threshold, trigger reading and verifie
 | Channel / 配布チャネル | Version / バージョン | Platforms / 対応プラットフォーム |
 | --- | --- | --- |
 | Stable / 安定版 | [1.2.0](https://github.com/woolen-yarn/kohdalab-iv/releases/tag/portable-v1.2.0) | Windows x64 Setup / portable ZIP; macOS Apple silicon portable ZIP / Windows x64 セットアップ・ポータブル ZIP、macOS Apple silicon ポータブル ZIP |
-| Preview / プレビュー | [1.3.0-alpha.14](https://github.com/woolen-yarn/kohdalab-iv/releases/tag/preview-v1.3.0-alpha.14) | Windows x64 Setup / preview ZIP; macOS Apple silicon preview ZIP / Windows x64 セットアップ・プレビュー ZIP、macOS Apple silicon プレビュー ZIP |
+| Preview / プレビュー | [1.3.0-alpha.15](https://github.com/woolen-yarn/kohdalab-iv/releases/tag/preview-v1.3.0-alpha.15) | Windows x64 Setup / preview ZIP; macOS Apple silicon preview ZIP / Windows x64 セットアップ・プレビュー ZIP、macOS Apple silicon プレビュー ZIP |
 
 | Preview package / プレビューパッケージ | Kohdalab | Personal / 個人ミラー |
 | --- | --- | --- |
-| Windows Setup | [Download](https://github.com/Kohdalab/kohdalab-iv/releases/download/preview-v1.3.0-alpha.14/kohdalab-iv-1.3.0-alpha.14-windows-x64-Setup.exe) | [Download](https://github.com/woolen-yarn/kohdalab-iv/releases/download/preview-v1.3.0-alpha.14/kohdalab-iv-1.3.0-alpha.14-windows-x64-Setup.exe) |
-| Windows portable | [Download](https://github.com/Kohdalab/kohdalab-iv/releases/download/preview-v1.3.0-alpha.14/kohdalab-iv-1.3.0-alpha.14-windows-x64-preview.zip) | [Download](https://github.com/woolen-yarn/kohdalab-iv/releases/download/preview-v1.3.0-alpha.14/kohdalab-iv-1.3.0-alpha.14-windows-x64-preview.zip) |
-| Mac portable (Apple silicon) | [Download](https://github.com/Kohdalab/kohdalab-iv/releases/download/preview-v1.3.0-alpha.14/kohdalab-iv-1.3.0-alpha.14-macos-arm64-preview.zip) | [Download](https://github.com/woolen-yarn/kohdalab-iv/releases/download/preview-v1.3.0-alpha.14/kohdalab-iv-1.3.0-alpha.14-macos-arm64-preview.zip) |
-| Source build kit / ソースビルドキット | [Download](https://github.com/Kohdalab/kohdalab-iv/releases/download/preview-v1.3.0-alpha.14/kohdalab-iv-1.3.0-alpha.14-build-kit.zip) | [Download](https://github.com/woolen-yarn/kohdalab-iv/releases/download/preview-v1.3.0-alpha.14/kohdalab-iv-1.3.0-alpha.14-build-kit.zip) |
+| Windows Setup | [Download](https://github.com/Kohdalab/kohdalab-iv/releases/download/preview-v1.3.0-alpha.15/kohdalab-iv-1.3.0-alpha.15-windows-x64-Setup.exe) | [Download](https://github.com/woolen-yarn/kohdalab-iv/releases/download/preview-v1.3.0-alpha.15/kohdalab-iv-1.3.0-alpha.15-windows-x64-Setup.exe) |
+| Windows portable | [Download](https://github.com/Kohdalab/kohdalab-iv/releases/download/preview-v1.3.0-alpha.15/kohdalab-iv-1.3.0-alpha.15-windows-x64-preview.zip) | [Download](https://github.com/woolen-yarn/kohdalab-iv/releases/download/preview-v1.3.0-alpha.15/kohdalab-iv-1.3.0-alpha.15-windows-x64-preview.zip) |
+| Mac portable (Apple silicon) | [Download](https://github.com/Kohdalab/kohdalab-iv/releases/download/preview-v1.3.0-alpha.15/kohdalab-iv-1.3.0-alpha.15-macos-arm64-preview.zip) | [Download](https://github.com/woolen-yarn/kohdalab-iv/releases/download/preview-v1.3.0-alpha.15/kohdalab-iv-1.3.0-alpha.15-macos-arm64-preview.zip) |
+| Source build kit / ソースビルドキット | [Download](https://github.com/Kohdalab/kohdalab-iv/releases/download/preview-v1.3.0-alpha.15/kohdalab-iv-1.3.0-alpha.15-build-kit.zip) | [Download](https://github.com/woolen-yarn/kohdalab-iv/releases/download/preview-v1.3.0-alpha.15/kohdalab-iv-1.3.0-alpha.15-build-kit.zip) |
 
 Rust and Python are not required to run the packaged application. Current Windows
 artifacts are unsigned; download packages and checksums together from Releases.
@@ -58,9 +58,9 @@ macOS bundles use ad hoc signing and are not Apple-notarized.
 
 配布アプリケーションの実行に Rust や Python は不要です。現在の Windows 配布物は未署名です。Releases からパッケージとチェックサムを必ず一緒に取得してください。macOS バンドルは ad hoc 署名であり、Apple の公証は受けていません。
 
-Preview 1.3.0-alpha.14 adds configurable GUI automation stop conditions and verified stop completion. It includes dual voltage-source V-I sweeps with integer source ratios, a left-panel multi-instrument inventory, and the shared GUI API v2 for Python/Jupyter control of an open GUI. See [dual-source operation](docs/reference/dual-source-and-gui-control.md) and the [GUI API reference](docs/reference/gui-api.md).
+Preview 1.3.0-alpha.15 adds independent Auto/fixed voltage and current meter ranges, verified before output and held through return sweeps, and manual DC source cards with per-digit level adjustment. Existing CSV columns and protection remain unchanged. ADCMT 7461A remains Auto-only. See [meter ranging](docs/reference/meter-ranging.md), [manual DC operation](docs/reference/manual-dc-output.md), and the [GUI API reference](docs/reference/gui-api.md). The shared GPIB service is an explicit development option, not the default connection route.
 
-Preview 1.3.0-alpha.14では、GUI外部制御の停止条件選択・停止完了確認を追加しました。整数比で配分する2台の電圧Source V-I測定、左パネルの複数機器インベントリ、起動済みGUIをPython/Jupyterから操作する共通GUI API v2も含みます。[Dual Source操作](docs/reference/dual-source-and-gui-control.md)と[GUI API仕様](docs/reference/gui-api.md)を参照してください。
+Preview 1.3.0-alpha.15では、電圧・電流ごとのAuto／固定メーターレンジ、出力前の設定確認、往復掃引全体のレンジ維持、桁ごとに値を調整できる手動DC出力を追加しました。CSVの列と既存の保護は維持します。ADCMT 7461AはAutoのみです。[メーターレンジ](docs/reference/meter-ranging.md)、[手動DC操作](docs/reference/manual-dc-output.md)、[GUI API仕様](docs/reference/gui-api.md)を参照してください。GPIB共有サービスは明示的に選択する開発機能で、通常接続には影響しません。
 
 ## Supported hardware / 対応機器
 
@@ -89,6 +89,8 @@ USB/USBTMC/GPIB、公式 VISA、アダプター要件、モデルごとの制約
 2. まずシミュレーションのソースとメーターで、インターフェースを確認します。
 3. 負荷を接続する前に、ソース／メーターの識別、接続経路、レンジ、保護設定を確認します。
 4. スイープと出力先を選んで Start を押します。監視とモード選択だけではソース出力は有効になりません。
+
+Manual fixed output: [DC source controls](docs/reference/manual-dc-output.md).
 
 Python/Jupyter access: [client guide](bindings/python/README.md). Detailed measurement semantics: [application guide](docs/guides/application-guide.md).
 
@@ -122,6 +124,9 @@ GS210 hardware H/L protection is checked separately from the external Meter
 software stop, including zero-wait ramps; a limited target is kept as raw evidence
 and excluded from analysis. **Settings…** separates Source compliance
 from Measurement limit and shows the effective source range/protection.
+**Settings… → Meter range** selects Auto or a fixed voltage/current range,
+held through the whole return sweep. See [meter ranging](docs/reference/meter-ranging.md)
+for supported models and protection behavior.
 Before enabling output, the engine verifies source function, programmed range,
 zero setting and output ON. This common policy covers both supported sources
 and every supported meter. See [safety notes](SAFETY.md) for limits.

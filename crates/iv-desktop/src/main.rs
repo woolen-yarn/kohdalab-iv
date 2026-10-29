@@ -116,6 +116,7 @@ fn run() -> Result<(), String> {
                 || a == "--gui-limit-smoke"
                 || a == "--gui-balanced-smoke"
                 || a == "--gui-control-smoke"
+                || a == "--gui-dc-smoke"
         });
     let screenshot = argument(&args, "--screenshot").map(std::path::PathBuf::from);
     let icon =
@@ -125,7 +126,11 @@ fn run() -> Result<(), String> {
         vsync: false,
         viewport: eframe::egui::ViewportBuilder::default()
             .with_icon(icon)
-            .with_inner_size([1240.0, 760.0])
+            .with_inner_size(if args.iter().any(|a| a == "--gui-dc-smoke") {
+                [1240.0, 1000.0]
+            } else {
+                [1240.0, 760.0]
+            })
             .with_min_inner_size([1080.0, 650.0]),
         ..Default::default()
     };

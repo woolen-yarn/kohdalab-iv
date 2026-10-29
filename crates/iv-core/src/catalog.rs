@@ -207,6 +207,12 @@ pub struct MeterProfile {
     pub maximum_input_voltage: f64,
     pub maximum_input_current: f64,
     pub auto_range_required: bool,
+    /// Documented manual DC-voltage ranges in V. An empty list means manual
+    /// range selection is not supported by this application profile.
+    pub voltage_ranges: Vec<f64>,
+    /// Documented manual DC-current ranges in A. An empty list means manual
+    /// range selection is not supported by this application profile.
+    pub current_ranges: Vec<f64>,
     pub nplc: NplcProfile,
 }
 
@@ -327,8 +333,32 @@ fn meter_profile(id: &str, table: &toml::Value) -> Result<MeterProfile, String> 
         maximum_input_voltage: required_number(table, "max_input_V", id)?,
         maximum_input_current: required_number(table, "max_input_A", id)?,
         auto_range_required: required_bool(table, "auto_range_required", id)?,
+        voltage_ranges: optional_ranges(table, id, "voltage_ranges")?,
+        current_ranges: optional_ranges(table, id, "current_ranges")?,
         nplc,
     })
+}
+
+fn optional_ranges(table: &toml::Value, id: &str, key: &str) -> Result<Vec<f64>, String> {
+    table
+        .get(key)
+        .map(|value| {
+            value
+                .as_array()
+                .ok_or_else(|| format!("Embedded profile {id} has non-array {key}."))?
+                .iter()
+                .map(|value| {
+                    let value = number(value).ok_or_else(|| {
+                        format!("Embedded profile {id} has a non-numeric {key} entry.")
+                    })?;
+                    if !value.is_finite() || value <= 0.0 {
+                        return Err(format!("Embedded profile {id} has an invalid {key} entry."));
+                    }
+                    Ok(value)
+                })
+                .collect()
+        })
+        .unwrap_or_else(|| Ok(Vec::new()))
 }
 
 /// Load a registered instrument's numeric profile. Unknown model ids return `Ok(None)`.

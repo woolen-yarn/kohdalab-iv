@@ -3,9 +3,11 @@
 //! gate fault is handled locally and fails closed.
 
 use super::{Control, safety, workflow};
-use crate::protocol::Snapshot;
+use crate::protocol::{DcLimits, Snapshot};
 use crate::state::OutputState;
-use iv_core::{Mode, Pattern, RunConfig, plan, prepare_config, source_protection_profile};
+use iv_core::{
+    InstrumentProfile, Mode, Pattern, RunConfig, plan, prepare_config, source_protection_profile,
+};
 use iv_transport::{DevicePair, Role};
 
 fn finite(value: f64, name: &str) -> Result<(), String> {
@@ -29,6 +31,32 @@ fn same_setting(left: f64, right: f64) -> bool {
     (left - right).abs() <= left.abs().max(right.abs()).max(1.0) * 1e-9
 }
 
+fn range_limits(model: &str, range: f64) -> Result<DcLimits, String> {
+    let Some(InstrumentProfile::Source(profile)) = iv_core::instrument_profile(model)? else {
+        return Err(format!("No source range profile is available for {model}."));
+    };
+    let Some(range) = profile
+        .voltage_ranges
+        .iter()
+        .find(|candidate| same_setting(candidate.command_value, range))
+    else {
+        return Err(format!("Unrecognized source range {range:e} for {model}."));
+    };
+    Ok(DcLimits {
+        range: range.command_value,
+        maximum: range.maximum,
+        resolution: range.resolution,
+    })
+}
+
+fn validate_held_value(limits: &DcLimits, value: f64, name: &str) -> Result<(), String> {
+    iv_core::nudge_source_value(value, 0.0, limits.resolution, limits.maximum)
+        .map(|_| ())
+        .map_err(|error| {
+            format!("Gate {name}: {error} Turn Gate Output Off before changing range.")
+        })
+}
+
 fn ensure_not_cancelled(control: &Control) -> Result<(), String> {
     if control.cancelled() {
         Err("Gate operation cancelled before changing output.".into())
@@ -40,16 +68,17 @@ fn ensure_not_cancelled(control: &Control) -> Result<(), String> {
 /// Validate a gate setting through the ordinary single-source planner.  The
 /// meter values are placeholders only; no meter is contacted by this module.
 fn gate_plan(
-    pair: &DevicePair,
+    model: &str,
     voltage: f64,
     compliance: f64,
     ramp_step: f64,
+    enforce_protection: bool,
 ) -> Result<(RunConfig, iv_core::Plan), String> {
     finite(voltage, "voltage")?;
     finite_positive(compliance, "compliance")?;
     finite_positive(ramp_step, "ramp step")?;
     let config = RunConfig {
-        source_model: pair.gate_model.clone(),
+        source_model: model.into(),
         mode: Mode::Iv,
         pattern: Pattern::Linear,
         start: 0.0,
@@ -60,7 +89,7 @@ fn gate_plan(
         // validation; the target itself is never rounded.
         source_limit: voltage.abs().max(f64::MIN_POSITIVE),
         compliance: 1e-3,
-        source_compliance: Some(compliance),
+        source_compliance: enforce_protection.then_some(compliance),
         ramp_step,
         ..RunConfig::default()
     };
@@ -68,15 +97,15 @@ fn gate_plan(
     if !same_setting(prepared.step.abs(), ramp_step) {
         return Err(format!(
             "Gate ramp step {ramp_step:e} V is not on the selected {} range grid. Choose {:.12e} V or another exact grid increment.",
-            pair.gate_model,
+            model,
             prepared.step.abs()
         ));
     }
     let planned = plan(&config)?;
-    if planned.hardware_compliance > compliance + f64::EPSILON {
+    if enforce_protection && planned.hardware_compliance > compliance + f64::EPSILON {
         return Err(format!(
             "Gate compliance {compliance:e} A cannot be represented without increasing protection on {}. Choose the reported hardware increment before enabling output.",
-            pair.gate_model
+            model
         ));
     }
     Ok((prepared, planned))
@@ -86,6 +115,7 @@ fn force_off(pair: Option<&mut DevicePair>, state: &mut Snapshot) -> Result<(), 
     if state.gate_simulation {
         state.gate_output = OutputState::Off;
         state.gate_voltage = Some(0.0);
+        state.gate_dc_limits = None;
         state.gate_revision = state.gate_revision.wrapping_add(1);
         return Ok(());
     }
@@ -93,10 +123,12 @@ fn force_off(pair: Option<&mut DevicePair>, state: &mut Snapshot) -> Result<(), 
     let report = pair.force_output_off_role(Role::Gate)?;
     if !report.output_off_verified {
         state.gate_output = OutputState::Unknown;
+        state.gate_dc_limits = None;
         return Err("Gate output OFF could not be verified.".into());
     }
     state.gate_output = OutputState::Off;
     state.gate_voltage = Some(0.0);
+    state.gate_dc_limits = None;
     state.gate_revision = state.gate_revision.wrapping_add(1);
     if let Some(warning) = report.zeroing_warning {
         state
@@ -115,6 +147,7 @@ fn fail_closed(
         Ok(()) => Err(error),
         Err(off_error) => {
             state.gate_output = OutputState::Unknown;
+            state.gate_dc_limits = None;
             Err(format!("{error} Gate output OFF also failed: {off_error}"))
         }
     }
@@ -143,6 +176,26 @@ fn verify_existing_settings(pair: &mut DevicePair, planned: &iv_core::Plan) -> R
         )?;
     }
     Ok(resolution)
+}
+
+fn verify_held_settings(
+    pair: &mut DevicePair,
+    held: &DcLimits,
+    compliance: f64,
+) -> Result<(), String> {
+    safety::verify_function(&pair.query(Role::Gate, ":SOUR:FUNC?")?, Mode::Iv)?;
+    let model = pair.gate_model.clone();
+    let range_query = iv_core::source_range_query(&model)?.unwrap_or(":SOUR:RANG?");
+    safety::verify_range(
+        &model,
+        Mode::Iv,
+        held.range,
+        &pair.query(Role::Gate, range_query)?,
+    )?;
+    if source_protection_profile(&model)?.is_some() {
+        safety::verify_hardware_limit(compliance, &pair.query(Role::Gate, ":SOUR:PROT:CURR?")?)?;
+    }
+    Ok(())
 }
 
 fn check_limiter(pair: &mut DevicePair) -> Result<(), String> {
@@ -233,23 +286,38 @@ pub(super) fn set_voltage(
         );
     }
     if state.gate_simulation {
-        finite(voltage, "voltage")?;
-        finite_positive(compliance, "compliance")?;
-        finite_positive(ramp_step, "ramp step")?;
+        let model = pair
+            .as_deref()
+            .map(|pair| pair.gate_model.as_str())
+            .unwrap_or("YOKOGAWA_GS210");
+        let (_prepared, planned) = gate_plan(model, voltage, compliance, ramp_step, false)?;
+        let held = if state.gate_output == OutputState::On {
+            let held = state
+                .gate_dc_limits
+                .as_ref()
+                .ok_or("Gate DC range is unknown. Turn Gate Output Off before changing it.")?;
+            validate_held_value(held, voltage, "voltage")?;
+            validate_held_value(held, ramp_step, "ramp step")?;
+            held.clone()
+        } else {
+            range_limits(model, planned.source_range)?
+        };
         ensure_not_cancelled(control)?;
         state.gate_output = OutputState::On;
         state.gate_voltage = Some(voltage);
         state.gate_compliance = Some(compliance);
+        state.gate_dc_limits = Some(held);
         state.gate_revision = state.gate_revision.wrapping_add(1);
         return Ok(());
     }
 
     let pair = pair.ok_or("Gate transport is unavailable.")?;
     ensure_gate(pair, state)?;
-    let (_prepared, planned) = match gate_plan(pair, voltage, compliance, ramp_step) {
-        Ok(value) => value,
-        Err(error) => return fail_closed(Some(pair), state, error),
-    };
+    let (_prepared, planned) =
+        match gate_plan(&pair.gate_model, voltage, compliance, ramp_step, true) {
+            Ok(value) => value,
+            Err(error) => return fail_closed(Some(pair), state, error),
+        };
     let was_on = state.gate_output == OutputState::On;
     let operation = (|| -> Result<(), String> {
         ensure_not_cancelled(control)?;
@@ -261,7 +329,14 @@ pub(super) fn set_voltage(
             {
                 return Err("Changing gate compliance while output is on is unsafe. Turn Gate Output Off before changing compliance or range.".into());
             }
-            verify_existing_settings(pair, &planned)?
+            let held = state
+                .gate_dc_limits
+                .as_ref()
+                .ok_or("Gate DC range is unknown. Turn Gate Output Off before changing it.")?;
+            validate_held_value(held, voltage, "voltage")?;
+            validate_held_value(held, ramp_step, "ramp step")?;
+            verify_held_settings(pair, held, planned.hardware_compliance)?;
+            held.resolution
         } else {
             // This verifies OFF + zero before configuration and output ON.
             force_off(Some(pair), state)?;
@@ -283,6 +358,7 @@ pub(super) fn set_voltage(
             pair.write(Role::Gate, ":SOUR:LEV:FIX 0")?;
             ensure_not_cancelled(control)?;
             let resolution = verify_existing_settings(pair, &planned)?;
+            let held = range_limits(&pair.gate_model, planned.source_range)?;
             let zero = pair.query(Role::Gate, ":SOUR:LEV?")?;
             let zero = zero
                 .trim()
@@ -296,6 +372,7 @@ pub(super) fn set_voltage(
             if safety::output_state(&pair.query(Role::Gate, ":OUTP?")?)? != OutputState::On {
                 return Err("Gate did not confirm output ON.".into());
             }
+            state.gate_dc_limits = Some(held);
             resolution
         };
 

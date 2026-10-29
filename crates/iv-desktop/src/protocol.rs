@@ -6,6 +6,9 @@ use serde::{Deserialize, Serialize};
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(tag = "command", rename_all = "snake_case")]
+// Commands are low-frequency control messages. Keep RunConfig inline to avoid
+// changing all command producers for a small, bounded queue-size difference.
+#[allow(clippy::large_enum_variant)]
 pub enum Command {
     /// Correlates one finite, non-safety command with the state published
     /// after that command has completed.
@@ -18,6 +21,11 @@ pub enum Command {
     Discover,
     SetLiveMode {
         mode: Mode,
+    },
+    /// Idle acquisition uses the same independent range choices as sweeps.
+    SetMeterRanges {
+        meter_voltage_range: Option<f64>,
+        meter_current_range: Option<f64>,
     },
     Connect {
         simulation: bool,
@@ -52,6 +60,22 @@ pub enum Command {
         ramp_step: f64,
     },
     GateOutputOff,
+    /// Enable one of the ordinary source roles at a fixed, verified level.
+    /// `secondary` selects Source 2; it is false for the primary Source.
+    SetSourceDc {
+        #[serde(default)]
+        secondary: bool,
+        mode: Mode,
+        value: f64,
+        compliance: f64,
+        ramp_step: f64,
+    },
+    /// Immediate, source-specific emergency OFF. This is intentionally not a
+    /// GUI job because it must bypass the bounded normal command queue.
+    SourceDcOff {
+        #[serde(default)]
+        secondary: bool,
+    },
     ConnectMeter {
         #[serde(default = "default_meter_model")]
         model: String,
@@ -121,6 +145,7 @@ fn is_gui_job_command(command: &Command) -> bool {
             | Command::Disconnect
             | Command::Run { .. }
             | Command::SetGateVoltage { .. }
+            | Command::SetSourceDc { .. }
     )
 }
 
@@ -141,6 +166,26 @@ pub struct ProtectionAlert {
     pub indicator: String,
     #[serde(default)]
     pub source_index: Option<u8>,
+}
+
+/// Last successfully verified manual DC setting for an ordinary source role.
+/// It is state only: reconnecting or editing the mode never re-applies it.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct DcOutputState {
+    pub mode: Mode,
+    pub value: f64,
+    pub compliance: f64,
+    pub ramp_step: f64,
+}
+
+/// The verified hardware range held by an enabled fixed DC output.  The
+/// command value intentionally uses the instrument's native range units
+/// (including 7651 range codes); maximum and resolution are SI values.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct DcLimits {
+    pub range: f64,
+    pub maximum: f64,
+    pub resolution: f64,
 }
 
 /// The final state belonging to the last tagged GUI operation.  The embedded
@@ -174,6 +219,14 @@ pub struct Snapshot {
     #[serde(default)]
     pub safety_revision: u64,
     #[serde(default)]
+    pub source_dc: Option<DcOutputState>,
+    #[serde(default)]
+    pub source_dc_limits: Option<DcLimits>,
+    #[serde(default)]
+    pub source2_dc: Option<DcOutputState>,
+    #[serde(default)]
+    pub source2_dc_limits: Option<DcLimits>,
+    #[serde(default)]
     pub source2_connected: bool,
     #[serde(default)]
     pub source2_simulation: bool,
@@ -205,6 +258,8 @@ pub struct Snapshot {
     pub gate_compliance: Option<f64>,
     #[serde(default)]
     pub gate_revision: u64,
+    #[serde(default)]
+    pub gate_dc_limits: Option<DcLimits>,
     pub phase: Phase,
     pub message: String,
     pub connected: bool,
@@ -247,6 +302,10 @@ impl Default for Snapshot {
             gui_job: None,
             gui_jobs: Vec::new(),
             safety_revision: 0,
+            source_dc: None,
+            source_dc_limits: None,
+            source2_dc: None,
+            source2_dc_limits: None,
             source2_connected: false,
             source2_simulation: false,
             source2_identity: String::new(),
@@ -263,6 +322,7 @@ impl Default for Snapshot {
             gate_voltage: None,
             gate_compliance: None,
             gate_revision: 0,
+            gate_dc_limits: None,
             phase: Phase::Idle,
             message: "Choose your instruments or explore Simulation.".into(),
             connected: false,
@@ -320,10 +380,25 @@ mod tests {
         assert_eq!(id.as_deref(), Some("job-1"));
         assert!(matches!(inner, Command::Discover));
 
+        assert!(
+            gui_job(
+                "dc-1".into(),
+                Command::SetSourceDc {
+                    secondary: false,
+                    mode: Mode::Iv,
+                    value: 1e-3,
+                    compliance: 1e-3,
+                    ramp_step: 1e-4,
+                },
+            )
+            .is_ok()
+        );
+
         for command in [
             Command::Heartbeat,
             Command::Stop,
             Command::GateOutputOff,
+            Command::SourceDcOff { secondary: false },
             Command::OutputOff,
             Command::Shutdown,
         ] {

@@ -169,6 +169,35 @@ for line in sys.stdin:
         self.dir.path().join(format!("{name}.csv"))
     }
 }
+
+/// Per-test manual-range fault injection. The normal bridge keeps its original
+/// Auto behavior unless this helper is called.
+fn install_fixed_meter_range_drift_after_energized_read(bridge: &Bridge) {
+    let arm = bridge.dir.path().join("arm-fixed-meter-range-drift");
+    let tripped = bridge.dir.path().join("fixed-meter-range-drifted");
+    for name in ["kohdalab-gpib-helper", "kohdalab-usbtmc-helper"] {
+        let path = bridge.dir.path().join(name);
+        let script = std::fs::read_to_string(&path).unwrap();
+        let script = script.replace(
+            "  elif cmd=='READ?':\n   if state['3']['on'] and (root/'fail-meter-read').exists():reply('injected meter read failure',True);continue\n   response=repr((state['3']['level']-state['4']['level'])/1000.)\n  elif 'RANG?' in cmd:response='0.001'",
+            &format!(
+                "  elif cmd=='READ?':\n   if state['3']['on'] and (root/'fail-meter-read').exists():reply('injected meter read failure',True);continue\n   response=repr((state['3']['level']-state['4']['level'])/1000.)\n   if (state['3']['on'] or state['4']['on']) and (root/'{}').exists():(root/'{}').touch()\n  elif 'AUTO?' in cmd:response='0'\n  elif 'RANG?' in cmd:response='0.01' if (root/'{}').exists() else '0.001'",
+                arm.file_name().unwrap().to_str().unwrap(),
+                tripped.file_name().unwrap().to_str().unwrap(),
+                tripped.file_name().unwrap().to_str().unwrap(),
+            ),
+        );
+        assert!(
+            script.contains("'AUTO?' in cmd"),
+            "balanced fake range hook was not installed"
+        );
+        std::fs::write(path, script).unwrap();
+    }
+}
+
+fn trigger_fixed_meter_range_drift(bridge: &Bridge) {
+    std::fs::write(bridge.dir.path().join("arm-fixed-meter-range-drift"), "").unwrap();
+}
 fn config() -> iv_core::RunConfig {
     iv_core::RunConfig {
         pattern: iv_core::Pattern::Linear,
@@ -364,6 +393,67 @@ fn meter_limit_dispatches_off_to_both_before_other_queries() {
             .unwrap();
     assert_both_off_before_queries(&log, read);
 }
+
+#[test]
+fn fixed_meter_range_drift_during_balanced_repeated_read_stops_both_before_saving() {
+    let bridge = Bridge::new();
+    install_fixed_meter_range_drift_after_energized_read(&bridge);
+    let mut engine = Engine::new(bridge.dir.path());
+    engine.connect(false);
+    let path = bridge.path("fixed-range-repeat-drift");
+    let mut c = config();
+    c.start = 0.0;
+    c.stop = 0.0;
+    c.repeat = 2;
+    c.meter_current_range = Some(0.001);
+    trigger_fixed_meter_range_drift(&bridge);
+    engine.send(json!({"command":"run","config":c,"path":path}));
+    let state = engine.wait(terminal);
+    assert_eq!(state["phase"], "Failed", "{state}");
+    assert_eq!(state["output"], "Off");
+    assert_eq!(state["source2_output"], "Off");
+    assert_eq!(state["points"], 0);
+    let log = bridge.log();
+    let range = log
+        .iter()
+        .rposition(|entry| entry["address"] == "7" && entry["command"] == "SENS:CURR:DC:RANG?")
+        .expect("fixed meter range must be checked after the read");
+    assert_both_off_before_queries(&log, range);
+    assert_eq!(
+        csv::Reader::from_path(&path).unwrap().records().count(),
+        0,
+        "the range-changed repeated reading must not create a main CSV point"
+    );
+}
+
+#[test]
+fn fixed_meter_range_drift_during_balanced_settling_stops_both_before_follow_up_queries() {
+    let bridge = Bridge::new();
+    install_fixed_meter_range_drift_after_energized_read(&bridge);
+    let mut engine = Engine::new(bridge.dir.path());
+    engine.connect(false);
+    let path = bridge.path("fixed-range-settle-drift");
+    let mut c = config();
+    c.start = 0.0;
+    c.stop = 0.0;
+    c.start_settle_s = 0.25;
+    c.settle_s = 0.25;
+    c.meter_current_range = Some(0.001);
+    trigger_fixed_meter_range_drift(&bridge);
+    engine.send(json!({"command":"run","config":c,"path":path}));
+    let state = engine.wait(terminal);
+    assert_eq!(state["phase"], "Failed", "{state}");
+    assert_eq!(state["output"], "Off");
+    assert_eq!(state["source2_output"], "Off");
+    assert_eq!(state["points"], 0);
+    let log = bridge.log();
+    let range = log
+        .iter()
+        .rposition(|entry| entry["address"] == "7" && entry["command"] == "SENS:CURR:DC:RANG?")
+        .expect("settling conversion must re-check its fixed range");
+    assert_both_off_before_queries(&log, range);
+}
+
 #[test]
 fn failed_secondary_enable_or_status_never_leaves_the_primary_on() {
     for fault in ["refuse-on-4", "status-error-4"] {

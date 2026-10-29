@@ -9,6 +9,7 @@
 - [Portable guide / portable版ガイド](guides/portable-guide.md)
 - [Product details / 製品詳細](guides/product-details.md)
 - [Quick start / はじめに](guides/quick-start.md)
+- [Shared instruments (development) / 複数アプリのGPIB共有・開発版](guides/shared-instruments-development.md)
 
 ## Development / 開発
 
@@ -16,6 +17,7 @@
 - [Repository layout / 構成](development/repository-layout.md)
 - [Rust optimization / Rust最適化](development/rust-optimization.md)
 - [Windows signing / Windows署名](development/windows-signing.md)
+- [Shared instrument service proposal / アプリ間の機器共有設計](development/shared-instrument-service.md)
 
 ## Reference / 仕様・対応情報
 
@@ -25,12 +27,14 @@
 - [Instrument precision / 機器精度と表示](reference/instrument-precision.md)
 - [Legacy instruments / 旧機器の移植](reference/legacy-instruments.md)
 - [Measurement spec / 測定仕様](reference/measurement-spec.md)
+- [Meter ranging / メーターのAuto・固定レンジ](reference/meter-ranging.md)
 - [Redistribution audit / 再配布監査](reference/redistribution-audit.md)
 
 ## Validation and evidence / 検証記録
 
 - [Performance comparison / 性能比較](validation/performance-comparison.md)
 - [Sweep latency / スイープ遅延](validation/sweep-latency.md)
+- [Shared instrument service (development) / 機器共有の模擬検証](validation/shared-instruments.md)
 
 - [Historical release records / 過去のリリース記録](validation/releases/): preserved snapshots and checksums. / 当時の記録とチェックサムを保持。
 

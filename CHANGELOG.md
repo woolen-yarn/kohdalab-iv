@@ -3,6 +3,17 @@
 > **Language navigation / 言語案内:** The English historical record appears first, followed by a complete Japanese counterpart. Versions, dates, API names, commands, compatibility wording, and historical claims are preserved in both languages.
 > 英語の履歴記録を先に置き、その後に完全な日本語対訳を掲載します。バージョン、日付、API 名、コマンド、互換性の表現、履歴上の主張は両言語で保持します。
 
+## 1.3.0-alpha.15 — 2026-10-29
+
+- Add independent Auto/fixed meter voltage and current ranges. Verify fixed settings before source ON and monitor actual range through return sweeps, repeated/settling conversions, idle live acquisition, and Dual; request OFF on mismatch. ADCMT 7461A remains Auto-only pending command verification.
+- Add manual DC source cards, per-digit adjustments within a verified source range, and sweep ownership handoff without overlapping the Meter live monitor.
+- Preserve analysis/raw CSV columns, retain requested ranges in run configuration, and reject fixed requests to incompatible older engines/GUI clients.
+- Include the authenticated shared GPIB service source as an explicit development option; default direct transport is unchanged. No new physical hardware qualification is claimed.
+- Update both repositories' download links, corresponding source/build kit, Windows Setup/portable and macOS ARM64 portable packages.
+- 電圧・電流ごとのAuto／固定レンジ、出力前の設定確認と測定中のレンジ監視を追加。ADCMT 7461Aは通信仕様確認までAutoのみです。
+- 手動DCカードと桁ごとの調整を追加し、測定との制御競合を防止。CSV列は維持し、旧エンジンへの固定指定は拒否します。
+- GPIB共有サービスは開発用ソースとして同梱し、通常接続は変更しません。今回の実機適合確認を意味しません。
+
 ## 1.3.0-alpha.14 — 2026-10-28
 
 - Align GUI automation stop options, typed errors and terminal receipt semantics with TRKR, retaining IV's fail-safe defaults and verified normal Output OFF cleanup.

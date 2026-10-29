@@ -282,6 +282,24 @@ impl Run<'_> {
             } else {
                 self.check(point)
             };
+            let fixed_range = if safe.as_ref().is_ok_and(|safe| *safe)
+                && iv_core::selected_meter_range(&self.planned.config1).is_some()
+            {
+                meter::observed(
+                    self.pair
+                        .as_deref_mut()
+                        .ok_or("Missing dual-source transport")?,
+                    &self.planned.config1,
+                    self.state,
+                    self.audit,
+                    point,
+                    None,
+                    self.begin,
+                )
+                .map(|observation| positive_reading(&observation.reply))
+            } else {
+                Ok(None)
+            };
             append_meter_reading_audit(
                 self.audit,
                 point,
@@ -297,10 +315,14 @@ impl Run<'_> {
             if !safe? {
                 return Ok(false);
             }
+            record.meter_range = fixed_range?;
             if let Some((range, resolution)) =
                 iv_core::meter_display_queries(&self.planned.config1.meter_model, Mode::Iv)?
             {
-                record.meter_range = positive_reading(&self.query(Role::Meter, range, point)?);
+                if iv_core::selected_meter_range(&self.planned.config1).is_none() {
+                    record.meter_range =
+                        positive_reading(&self.query(Role::Meter, range, point)?);
+                }
                 let mut precision = std::mem::take(&mut self.meter_precision);
                 let actual = precision.read(record.meter_range, || {
                     self.query(Role::Meter, resolution, point)
@@ -418,20 +440,21 @@ impl Run<'_> {
             if identity.trim() != self.state.meter_identity.trim() {
                 return Err("Meter identity changed before balanced sweep".into());
             }
-            for command in [
-                "*CLS".to_owned(),
-                "CONF:CURR:DC".to_owned(),
-                "SENS:CURR:DC:RANG:AUTO ON".into(),
+            let mut commands = vec!["*CLS".to_owned(), "CONF:CURR:DC".to_owned()];
+            commands.extend(meter::commands(config)?);
+            commands.extend([
                 format!("SENS:CURR:DC:NPLC {:.12e}", config.nplc),
                 "SENS:CURR:DC:ZERO:AUTO ON".into(),
                 "TRIG:SOUR IMM".into(),
-            ] {
+            ]);
+            for command in commands {
                 self.write(Role::Meter, &command)?;
             }
             let error = self.query(Role::Meter, "SYST:ERR?", 0)?;
             if !error.trim_start().starts_with("0,") && !error.trim_start().starts_with("+0,") {
                 return Err(format!("Meter configuration: {error}"));
             }
+            meter::verify(config, |command| self.query(Role::Meter, command, 0))?;
         }
         if self.control.cancelled() {
             return Ok(());
@@ -514,6 +537,26 @@ impl Run<'_> {
                 } else {
                     self.check(point.point_index)
                 };
+                let fixed_range = if check.as_ref().is_ok_and(|safe| *safe)
+                    && !limited
+                    && parsed.is_ok()
+                    && iv_core::selected_meter_range(config).is_some()
+                {
+                    meter::observed(
+                        self.pair
+                            .as_deref_mut()
+                            .ok_or("Missing dual-source transport")?,
+                        config,
+                        self.state,
+                        self.audit,
+                        point.point_index,
+                        Some(reading_index),
+                        self.begin,
+                    )
+                    .map(|observation| positive_reading(&observation.reply))
+                } else {
+                    Ok(None)
+                };
                 // Keep the triggering READ even when subsequent status/OFF fails.
                 append_meter_reading_audit(
                     self.audit,
@@ -527,6 +570,9 @@ impl Run<'_> {
                 last_timing = Some(timing);
                 if !check? {
                     return Ok(None);
+                }
+                if iv_core::selected_meter_range(config).is_some() {
+                    record.meter_range = fixed_range?;
                 }
                 parsed?
             } else {
@@ -592,8 +638,10 @@ impl Run<'_> {
             if let Some((range, resolution)) =
                 iv_core::meter_display_queries(&config.meter_model, Mode::Iv)?
             {
-                record.meter_range =
-                    positive_reading(&self.query(Role::Meter, range, point.point_index)?);
+                if iv_core::selected_meter_range(config).is_none() {
+                    record.meter_range =
+                        positive_reading(&self.query(Role::Meter, range, point.point_index)?);
+                }
                 record.meter_resolution =
                     positive_reading(&self.query(Role::Meter, resolution, point.point_index)?);
             }
@@ -851,7 +899,8 @@ pub(super) fn execute(
             .error
             .push_str(&format!(" Metadata save failed: {error}"));
     }
-    publish(latest, runner.state);
+    // Terminal publication is owned by the outer engine after it releases
+    // the output-operation reservation; progress above remains streamed.
     Ok(())
 }
 

@@ -9,3 +9,5 @@ rust-version.workspace = true
 fs2 = "0.4"
 iv-core.workspace = true
 serde.workspace = true
+serde_json.workspace = true
+instrument-protocol.workspace = true

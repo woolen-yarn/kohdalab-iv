@@ -1,6 +1,8 @@
 mod balanced;
 mod gate;
+mod meter;
 mod safety;
+mod source_dc;
 mod workflow;
 use crate::compatibility::{CSV_SCHEMA, RUN_METADATA_SCHEMA_VERSION};
 use crate::protocol::{
@@ -14,11 +16,17 @@ use std::io::{BufRead, Read, Write};
 use std::path::Path;
 use std::sync::{
     Arc, Condvar, Mutex,
-    atomic::{AtomicBool, Ordering},
+    atomic::{AtomicBool, AtomicU8, Ordering},
     mpsc,
 };
 use std::time::{Duration, Instant};
 use workflow::{RampPolicy, completion_phase};
+
+const SAFETY_STOP: u8 = 1;
+const SAFETY_GATE_OFF: u8 = 2;
+const SAFETY_SOURCE_OFF: u8 = 4;
+const SAFETY_SOURCE2_OFF: u8 = 8;
+const SAFETY_ALL_OFF: u8 = 16;
 
 struct Control {
     stop: AtomicBool,
@@ -26,9 +34,18 @@ struct Control {
     /// Set by the input reader when a gate update arrives during an IV run.
     /// The engine consumes it after the run has made every output safe.
     gate_request_rejected: Mutex<Option<Option<String>>>,
-    /// True for the complete synchronous sweep execution window.  This is
-    /// deliberately separate from `stop`: a queued gate set must never clear
-    /// a requested stop while a sweep owns the outputs.
+    /// As for gate updates: a DC request received after Run admission is
+    /// discarded, never replayed after the sweep owns the source outputs.
+    source_dc_request_rejected: Mutex<Option<Option<String>>>,
+    /// A second Run must not clear a pending safety latch or queue behind an
+    /// already-reserved sweep owner.
+    run_request_rejected: Mutex<Option<Option<String>>>,
+    /// A reader-side safety request remains latched until the engine owner
+    /// has processed its matching OFF/Stop command. Later ON requests never
+    /// clear this bitmask.
+    pending_safety: AtomicU8,
+    /// True from admission until the complete synchronous output operation
+    /// finishes (Run, Gate DC, or Source DC).
     running: AtomicBool,
     closed: AtomicBool,
     heartbeat: Mutex<Instant>,
@@ -86,6 +103,7 @@ fn write_events<W: Write>(
 impl Control {
     fn cancelled(&self) -> bool {
         self.stop.load(Ordering::Acquire)
+            || self.pending_safety.load(Ordering::Acquire) != 0
             || self.closed.load(Ordering::Acquire)
             || self
                 .heartbeat
@@ -94,11 +112,45 @@ impl Control {
     }
 }
 
+fn safety_bit(command: &Command) -> u8 {
+    match command {
+        Command::Stop => SAFETY_STOP,
+        Command::GateOutputOff => SAFETY_GATE_OFF,
+        Command::SourceDcOff { secondary: false } => SAFETY_SOURCE_OFF,
+        Command::SourceDcOff { secondary: true } => SAFETY_SOURCE2_OFF,
+        Command::OutputOff => SAFETY_ALL_OFF,
+        _ => 0,
+    }
+}
+
+fn output_operation(command: &Command) -> bool {
+    matches!(
+        command,
+        Command::Run { .. } | Command::SetGateVoltage { .. } | Command::SetSourceDc { .. }
+    )
+}
+
+/// Clear only the safety intent whose owner command has completed.  A later
+/// ON request cannot acknowledge an OFF request it did not execute.
+fn acknowledge_safety(control: &Control, bit: u8) {
+    if bit == 0 {
+        return;
+    }
+    control.pending_safety.fetch_and(!bit, Ordering::AcqRel);
+    if control.pending_safety.load(Ordering::Acquire) == 0 {
+        control.stop.store(false, Ordering::Release);
+        control.off.store(false, Ordering::Release);
+    }
+}
+
 pub fn serve() -> Result<(), String> {
     let control = Arc::new(Control {
         stop: AtomicBool::new(false),
         off: AtomicBool::new(false),
         gate_request_rejected: Mutex::new(None),
+        source_dc_request_rejected: Mutex::new(None),
+        run_request_rejected: Mutex::new(None),
+        pending_safety: AtomicU8::new(0),
         running: AtomicBool::new(false),
         closed: AtomicBool::new(false),
         heartbeat: Mutex::new(Instant::now()),
@@ -131,52 +183,96 @@ pub fn serve() -> Result<(), String> {
             match command {
                 Command::Heartbeat => {}
                 Command::Stop => {
+                    reader_control
+                        .pending_safety
+                        .fetch_or(SAFETY_STOP, Ordering::AcqRel);
                     reader_control.stop.store(true, Ordering::Release);
                     if tx.try_send((None, Command::Stop)).is_err() {
+                        reader_control.closed.store(true, Ordering::Release);
                         break;
                     }
                 }
                 Command::GateOutputOff => {
+                    reader_control
+                        .pending_safety
+                        .fetch_or(SAFETY_GATE_OFF, Ordering::AcqRel);
                     reader_control.off.store(true, Ordering::Release);
                     reader_control.stop.store(true, Ordering::Release);
-                    let _ = tx.try_send((None, Command::GateOutputOff));
+                    if tx.try_send((None, Command::GateOutputOff)).is_err() {
+                        reader_control.closed.store(true, Ordering::Release);
+                    }
+                }
+                Command::SourceDcOff { secondary } => {
+                    // Latch cancellation before enqueueing so an active run
+                    // fails closed even when its normal queue is saturated.
+                    reader_control.pending_safety.fetch_or(
+                        if secondary {
+                            SAFETY_SOURCE2_OFF
+                        } else {
+                            SAFETY_SOURCE_OFF
+                        },
+                        Ordering::AcqRel,
+                    );
+                    reader_control.off.store(true, Ordering::Release);
+                    reader_control.stop.store(true, Ordering::Release);
+                    if tx
+                        .try_send((None, Command::SourceDcOff { secondary }))
+                        .is_err()
+                    {
+                        // A full normal queue must never turn an OFF request
+                        // into a delayed ON-capable operation. Closing makes
+                        // the owner leave its loop and execute its existing
+                        // all-source verified-OFF cleanup path.
+                        reader_control.closed.store(true, Ordering::Release);
+                    }
                 }
                 Command::OutputOff => {
+                    reader_control
+                        .pending_safety
+                        .fetch_or(SAFETY_ALL_OFF, Ordering::AcqRel);
                     reader_control.off.store(true, Ordering::Release);
                     reader_control.stop.store(true, Ordering::Release);
-                    let _ = tx.try_send((None, Command::OutputOff));
+                    if tx.try_send((None, Command::OutputOff)).is_err() {
+                        reader_control.closed.store(true, Ordering::Release);
+                    }
                 }
                 Command::Shutdown => break,
                 other => {
-                    if matches!(other, Command::SetGateVoltage { .. })
-                        && reader_control.running.load(Ordering::Acquire)
+                    let output_operation = matches!(
+                        other,
+                        Command::Run { .. }
+                            | Command::SetGateVoltage { .. }
+                            | Command::SetSourceDc { .. }
+                    );
+                    if output_operation
+                        && (reader_control.running.load(Ordering::Acquire)
+                            || reader_control.pending_safety.load(Ordering::Acquire) != 0)
                     {
-                        // Do not queue a voltage change behind a run: by the
-                        // time it could execute the sample conditions would
-                        // be different.  The engine reports this after it has
-                        // completed its fail-safe cleanup.
-                        if let Ok(mut rejected) = reader_control.gate_request_rejected.lock() {
+                        let rejected_slot = if matches!(other, Command::Run { .. }) {
+                            &reader_control.run_request_rejected
+                        } else if matches!(other, Command::SetSourceDc { .. }) {
+                            &reader_control.source_dc_request_rejected
+                        } else {
+                            &reader_control.gate_request_rejected
+                        };
+                        if let Ok(mut rejected) = rejected_slot.lock() {
                             if rejected.is_some() {
-                                // A second out-of-contract request cannot grow
-                                // memory during a long sweep. Lost producer
-                                // ownership triggers the existing safe shutdown.
                                 break;
                             }
                             *rejected = Some(gui_job);
                         }
                         continue;
                     }
-                    if matches!(other, Command::Run { .. }) {
-                        // Reserve ownership at admission, before the owner
-                        // thread dequeues Run, so Gate changes cannot slip
-                        // into the queue in that scheduling gap.
+                    if output_operation {
+                        // Reserve ownership at admission so no second ON
+                        // request can slip into a ramp/configuration gap.
                         reader_control.running.store(true, Ordering::Release);
                     }
-                    if matches!(other, Command::Run { .. } | Command::SetGateVoltage { .. }) {
-                        reader_control.stop.store(false, Ordering::Release);
-                        reader_control.off.store(false, Ordering::Release);
-                    }
                     if tx.try_send((gui_job, other)).is_err() {
+                        if output_operation {
+                            reader_control.running.store(false, Ordering::Release);
+                        }
+                        reader_control.closed.store(true, Ordering::Release);
                         break;
                     }
                 }
@@ -225,6 +321,7 @@ pub fn serve() -> Result<(), String> {
     let monitor_begin = Instant::now();
     let mut last_monitor = Instant::now();
     let mut monitor_mode = None;
+    let mut monitor_ranges = [None, None];
     let mut simulation_mode = Mode::Iv;
     publish(&latest, &state);
     while !control.closed.load(Ordering::Acquire) {
@@ -273,13 +370,38 @@ pub fn serve() -> Result<(), String> {
                     publish(&latest, &state);
                     continue;
                 }
+                let mut dc_fault = false;
+                for secondary in [false, true] {
+                    if let Err(error) = source_dc::check(pair.as_mut(), &mut state, secondary) {
+                        // A DC limiter/query fault shares the IV safety
+                        // domain: close both ordinary outputs and any held
+                        // gate before reporting the latched failure.
+                        clean_output(pair.as_mut(), &mut state, None, &control);
+                        let gate_error = shutdown_gate(pair.as_mut(), &mut state).err();
+                        state.phase = Phase::Failed;
+                        state.error = gate_error
+                            .map_or(error.clone(), |other| format!("{error} · {other}"))
+                            .into();
+                        publish(&latest, &state);
+                        dc_fault = true;
+                        break;
+                    }
+                }
+                if dc_fault {
+                    continue;
+                }
 
                 if monitor_ready && last_monitor.elapsed() >= monitor_interval {
                     last_monitor = Instant::now();
                     state.balanced_active = false;
                     if state.source2_connected {
                         if state.source2_simulation {
-                            state.source2_level = Some(0.0);
+                            state.source2_level = state
+                                .source2_dc
+                                .as_ref()
+                                .filter(|_| state.source2_output == OutputState::On)
+                                .map(|dc| dc.value)
+                                .or(Some(0.0));
                         } else if let Some(device) = pair.as_mut() {
                             match device.query(Role::Source2, ":SOUR:LEV?") {
                                 Ok(reply) => {
@@ -304,12 +426,16 @@ pub fn serve() -> Result<(), String> {
                         }
                     }
                     let result = if state.simulation {
+                        let dc = state
+                            .source_dc
+                            .as_ref()
+                            .filter(|_| state.output == OutputState::On);
                         let config = RunConfig {
-                            mode: simulation_mode,
+                            mode: dc.map_or(simulation_mode, |dc| dc.mode),
                             ..Default::default()
                         };
                         let point = iv_core::SweepPoint {
-                            target: 0.0,
+                            target: dc.map_or(0.0, |dc| dc.value),
                             direction: "monitor".into(),
                             repeat_index: 0,
                             sweep_index: 0,
@@ -326,7 +452,8 @@ pub fn serve() -> Result<(), String> {
                             &mut monitor_mode,
                             monitor_begin.elapsed().as_secs_f64(),
                             &control,
-                            &mut state.output,
+                            &mut state,
+                            monitor_ranges,
                         )
                     };
                     match result {
@@ -353,27 +480,31 @@ pub fn serve() -> Result<(), String> {
             Err(_) => break,
         };
         monitor_mode = None;
-        let resume_monitor = matches!(
-            &command,
-            Command::OutputOff
-                | Command::Connect { .. }
-                | Command::ConnectSource { .. }
-                | Command::ConnectMeter { .. }
-                | Command::ConnectSource2 { .. }
-                | Command::ConnectGate { .. }
-                | Command::SetLiveMode { .. }
-        );
+        let owns_output = output_operation(&command);
+        let safety_intent = safety_bit(&command);
         let result = match command {
             Command::Discover => discover(pair.as_mut(), &mut state, &latest),
             Command::SetLiveMode { mode } => {
                 state.phase = Phase::SwitchingMode;
                 state.message = "Verifying output off before switching live channels…".into();
                 publish(&latest, &state);
-                let result = set_live_mode(pair.as_mut(), &mut state, mode);
+                let result = set_live_mode(pair.as_mut(), &mut state, mode, monitor_ranges);
                 if result.is_ok() {
                     simulation_mode = mode;
                 }
                 result
+            }
+            Command::SetMeterRanges {
+                meter_voltage_range,
+                meter_current_range,
+            } => {
+                let ranges = [meter_voltage_range, meter_current_range];
+                if ranges.iter().flatten().any(|v| !v.is_finite() || *v <= 0.0) {
+                    Err("Fixed Meter ranges must be finite and positive.".into())
+                } else {
+                    monitor_ranges = ranges;
+                    Ok(())
+                }
             }
             Command::Connect {
                 simulation,
@@ -463,6 +594,28 @@ pub fn serve() -> Result<(), String> {
                 state.safety_revision = state.safety_revision.wrapping_add(1);
                 gate::output_off(pair.as_mut(), &mut state)
             }
+            Command::SetSourceDc {
+                secondary,
+                mode,
+                value,
+                compliance,
+                ramp_step,
+            } => source_dc::set(
+                pair.as_mut(),
+                &mut state,
+                secondary,
+                crate::protocol::DcOutputState {
+                    mode,
+                    value,
+                    compliance,
+                    ramp_step,
+                },
+                &control,
+            ),
+            Command::SourceDcOff { secondary } => {
+                state.safety_revision = state.safety_revision.wrapping_add(1);
+                source_dc::output_off(pair.as_mut(), &mut state, secondary)
+            }
             Command::DisconnectSource2 => {
                 disconnect_role(&mut pair, &mut state, Role::Source2, &control)
             }
@@ -490,8 +643,8 @@ pub fn serve() -> Result<(), String> {
             }
             Command::Run { config, path } => {
                 simulation_mode = config.mode;
-                control.running.store(true, Ordering::Release);
-                let result = execute(
+                monitor_ranges = [config.meter_voltage_range, config.meter_current_range];
+                execute(
                     &config,
                     Path::new(&path),
                     if state.simulation {
@@ -503,9 +656,7 @@ pub fn serve() -> Result<(), String> {
                     &mut state,
                     &latest,
                     &points_tx,
-                );
-                control.running.store(false, Ordering::Release);
-                result
+                )
             }
             Command::Stop => {
                 state.safety_revision = state.safety_revision.wrapping_add(1);
@@ -549,9 +700,6 @@ pub fn serve() -> Result<(), String> {
             }
             _ => Ok(()),
         };
-        if result.is_ok() && resume_monitor && state.output == OutputState::Off {
-            control.off.store(false, Ordering::Release);
-        }
         if let Err(error) = result {
             if state.source2_connected && state.output != OutputState::Off {
                 clean_output(pair.as_mut(), &mut state, None, &control);
@@ -565,8 +713,22 @@ pub fn serve() -> Result<(), String> {
             .into();
             state.message = "Review the error and reconnect if needed.".into();
         }
+        acknowledge_safety(&control, safety_intent);
+        if owns_output {
+            control.running.store(false, Ordering::Release);
+        }
         let rejected_gate_job = control
             .gate_request_rejected
+            .lock()
+            .ok()
+            .and_then(|mut rejected| rejected.take());
+        let rejected_source_dc_job = control
+            .source_dc_request_rejected
+            .lock()
+            .ok()
+            .and_then(|mut rejected| rejected.take());
+        let rejected_run_job = control
+            .run_request_rejected
             .lock()
             .ok()
             .and_then(|mut rejected| rejected.take());
@@ -578,6 +740,16 @@ pub fn serve() -> Result<(), String> {
             state.error = "Gate voltage changes are rejected while an IV run is active. Wait for the run to finish, then set the gate voltage.".into();
             state.message = "Gate voltage was not changed during the IV run.".into();
         }
+        if rejected_source_dc_job.is_some() {
+            state.phase = Phase::Failed;
+            state.error = "Source DC changes are rejected while an IV run is active. Wait for the run to finish, then enable DC output.".into();
+            state.message = "Source DC output was not changed during the IV run.".into();
+        }
+        if rejected_run_job.is_some() {
+            state.phase = Phase::Failed;
+            state.error = "A measurement is already active or queued. Wait for it to finish before starting another run.".into();
+            state.message = "The second Start request was not queued.".into();
+        }
         if let Some(id) = gui_job_id {
             complete_gui_job(&mut state, id);
         }
@@ -585,6 +757,12 @@ pub fn serve() -> Result<(), String> {
         // queued command to complete.  Record its final admission error only
         // after the run's cleanup and error handling have finished.
         if let Some(Some(id)) = rejected_gate_job {
+            complete_gui_job(&mut state, id);
+        }
+        if let Some(Some(id)) = rejected_source_dc_job {
+            complete_gui_job(&mut state, id);
+        }
+        if let Some(Some(id)) = rejected_run_job {
             complete_gui_job(&mut state, id);
         }
         publish(&latest, &state);
@@ -616,6 +794,11 @@ fn clear_connections(state: &mut Snapshot) {
     state.gate_connected = false;
     state.meter_connected = false;
     state.connected = false;
+    state.source_dc = None;
+    state.source2_dc = None;
+    state.source_dc_limits = None;
+    state.source2_dc_limits = None;
+    state.gate_dc_limits = None;
 }
 
 fn refresh_connections(state: &mut Snapshot) {
@@ -1267,13 +1450,9 @@ fn configure(
         audit,
         begin,
     )?;
-    write_with_audit(
-        pair,
-        Role::Meter,
-        &format!("SENS:{measure}:DC:RANG:AUTO ON"),
-        audit,
-        begin,
-    )?;
+    for command in meter::commands(config)? {
+        write_with_audit(pair, Role::Meter, &command, audit, begin)?;
+    }
     write_with_audit(
         pair,
         Role::Meter,
@@ -1295,6 +1474,9 @@ fn configure(
             return Err(format!("Instrument configuration failed: {response}"));
         }
     }
+    meter::verify(config, |command| {
+        Ok(query_with_audit(pair, Role::Meter, command, audit, 0, None, begin)?.reply)
+    })?;
     Ok(())
 }
 
@@ -1351,6 +1533,7 @@ fn set_live_mode(
     pair: Option<&mut DevicePair>,
     state: &mut Snapshot,
     mode: Mode,
+    ranges: [Option<f64>; 2],
 ) -> Result<(), String> {
     if state.source2_connected && mode != Mode::Iv {
         return Err("Balanced dual-source requires voltage-source mode. Disconnect Source 2 before using current-source mode.".into());
@@ -1372,6 +1555,8 @@ fn set_live_mode(
             return Err("Output OFF was not verified; live mode unchanged".into());
         }
         state.output = OutputState::Off;
+        state.source_dc = None;
+        state.source_dc_limits = None;
         device.write(Role::Source, ":SOUR:LEV:FIX 0")?;
         let zero = device
             .query(Role::Source, ":SOUR:LEV?")?
@@ -1403,10 +1588,21 @@ fn set_live_mode(
         }
         if state.meter_connected {
             let measure = if mode == Mode::Iv { "CURR" } else { "VOLT" };
+            let config = RunConfig {
+                mode,
+                meter_model: device.meter_model.clone(),
+                meter_voltage_range: ranges[0],
+                meter_current_range: ranges[1],
+                ..Default::default()
+            };
+            let range_commands = meter::commands(&config)?;
             device.write(Role::Meter, &format!("CONF:{measure}:DC"))?;
-            device.write(Role::Meter, &format!("SENS:{measure}:DC:RANG:AUTO ON"))?;
+            for command in range_commands {
+                device.write(Role::Meter, &command)?;
+            }
             device.write(Role::Meter, &format!("SENS:{measure}:DC:NPLC 1"))?;
             device.write(Role::Meter, "TRIG:SOUR IMM")?;
+            meter::verify(&config, |command| device.query(Role::Meter, command))?;
         }
         for role in [Role::Source, Role::Meter] {
             if role == Role::Meter && !state.meter_connected {
@@ -1418,6 +1614,9 @@ fn set_live_mode(
             }
         }
     }
+    // A mode edit never preserves or recreates a manual DC output.
+    state.source_dc = None;
+    state.source_dc_limits = None;
     state.output = OutputState::Off;
     state.live_error.clear();
     state.phase = Phase::Ready;
@@ -1430,7 +1629,8 @@ fn monitor_reading(
     configured: &mut Option<Mode>,
     elapsed: f64,
     control: &Control,
-    output: &mut OutputState,
+    state: &mut Snapshot,
+    ranges: [Option<f64>; 2],
 ) -> Result<Record, String> {
     let function = monitor_query(pair, Role::Source, ":SOUR:FUNC?", control)?;
     let mode = match function
@@ -1444,11 +1644,24 @@ fn monitor_reading(
         _ => return Err(format!("Unknown source function: {function}")),
     };
     let measure = if mode == Mode::Iv { "CURR" } else { "VOLT" };
+    let config = RunConfig {
+        mode,
+        meter_model: pair.meter_model.clone(),
+        meter_voltage_range: ranges[0],
+        meter_current_range: ranges[1],
+        ..Default::default()
+    };
     if *configured != Some(mode) {
+        let range_commands = meter::commands(&config)?;
         pair.write(Role::Meter, &format!("CONF:{measure}:DC"))?;
-        pair.write(Role::Meter, &format!("SENS:{measure}:DC:RANG:AUTO ON"))?;
+        for command in range_commands {
+            pair.write(Role::Meter, &command)?;
+        }
         pair.write(Role::Meter, &format!("SENS:{measure}:DC:NPLC 1"))?;
         pair.write(Role::Meter, "TRIG:SOUR IMM")?;
+        meter::verify(&config, |command| {
+            monitor_query(pair, Role::Meter, command, control)
+        })?;
         *configured = Some(mode);
     }
     if control.closed.load(Ordering::Acquire) || control.off.load(Ordering::Acquire) {
@@ -1475,8 +1688,13 @@ fn monitor_reading(
     let (meter_range, meter_resolution) = if let Some((range_query, resolution_query)) =
         iv_core::meter_display_queries(&pair.meter_model, mode)?
     {
+        let range = positive_reading(&monitor_query(pair, Role::Meter, range_query, control)?);
+        if let Err(error) = meter::check(&config, range) {
+            let off = protection_output_off(Some(pair), state).err();
+            return Err(off.map_or(error.clone(), |e| format!("{error} · {e}")));
+        }
         (
-            positive_reading(&monitor_query(pair, Role::Meter, range_query, control)?),
+            range,
             positive_reading(&monitor_query(
                 pair,
                 Role::Meter,
@@ -1490,15 +1708,12 @@ fn monitor_reading(
         (None, None)
     };
     let raw_output = monitor_query(pair, Role::Source, ":OUTP?", control)?;
-    *output = match raw_output.trim() {
+    state.output = match raw_output.trim() {
         "0" | "+0" | "OFF" => OutputState::Off,
         "1" | "+1" | "ON" => OutputState::On,
         _ => return Err("Unknown source output state".into()),
     };
-    let config = RunConfig {
-        mode,
-        ..Default::default()
-    };
+    meter::check(&config, meter_range)?;
     let point = iv_core::SweepPoint {
         target: source,
         direction: "monitor".into(),
@@ -1629,6 +1844,10 @@ fn shutdown_sweep_sources(
     if verified.into_iter().all(|v| v) {
         state.output = OutputState::Off;
         state.source2_level = Some(0.0);
+        state.source_dc = None;
+        state.source2_dc = None;
+        state.source_dc_limits = None;
+        state.source2_dc_limits = None;
     } else if errors.is_empty() {
         errors.push("Not all sweep sources could be verified OFF. Check both instruments.".into());
     }
@@ -1655,6 +1874,8 @@ fn clean_output(
     }
     if state.source_simulation && state.source_connected {
         state.output = OutputState::Off;
+        state.source_dc = None;
+        state.source_dc_limits = None;
         return;
     }
     if !state.source_connected {
@@ -1696,6 +1917,8 @@ fn clean_output(
     match pair.force_output_off() {
         Ok(report) if report.output_off_verified => {
             state.output = OutputState::Off;
+            state.source_dc = None;
+            state.source_dc_limits = None;
             if let Some(warning) = report.zeroing_warning {
                 state.warnings.push(format!(
                     "Output off was verified; resetting the source level to zero failed: {warning}"
@@ -2019,23 +2242,40 @@ impl SweepMonitor<'_> {
                 });
                 return Ok(record);
             }
-            self.source_stop = check_source_protection(
+            let fixed = iv_core::selected_meter_range(self.config).is_some();
+            let mut evidence = Some(DeferredMeterEvidence {
+                reply: Some(reply),
+                query_error: None,
+                timing,
+                exchanges,
+            });
+            let source_check = check_source_protection(
                 device,
                 state,
                 audit,
                 self.begin,
                 point_index,
                 level,
-                Some((
+                if fixed {
+                    None
+                } else {
+                    Some((None, evidence.take().unwrap()))
+                },
+            );
+            if !source_check.as_ref().is_ok_and(|stop| stop.is_none())
+                && let Some(reading) = evidence.take()
+            {
+                append_meter_reading_audit(
+                    audit,
+                    point_index,
                     None,
-                    DeferredMeterEvidence {
-                        reply: Some(reply),
-                        query_error: None,
-                        timing,
-                        exchanges,
-                    },
-                )),
-            )?;
+                    reading.reply.as_deref(),
+                    reading.query_error.as_deref(),
+                    &reading.exchanges,
+                    &reading.timing,
+                )?;
+            }
+            self.source_stop = source_check?;
             self.last_source_check = Instant::now();
             if let Some(stop) = &self.source_stop {
                 record.status = "source_limit".into();
@@ -2045,6 +2285,19 @@ impl SweepMonitor<'_> {
                 record.source_readback = None;
                 return Ok(record);
             }
+            let fixed_range = if let Some(reading) = evidence.as_ref() {
+                Some(meter::conversion(
+                    device,
+                    self.config,
+                    state,
+                    audit,
+                    (point_index, None),
+                    self.begin,
+                    reading,
+                )?)
+            } else {
+                None
+            };
             let readback = monitor_query(device, Role::Source, ":SOUR:LEV?", self.control)?;
             let readback = readback
                 .trim()
@@ -2058,8 +2311,16 @@ impl SweepMonitor<'_> {
             if let Some((range, resolution)) =
                 iv_core::meter_display_queries(&device.meter_model, self.config.mode)?
             {
-                record.meter_range =
-                    positive_reading(&monitor_query(device, Role::Meter, range, self.control)?);
+                record.meter_range = if iv_core::selected_meter_range(self.config).is_some() {
+                    positive_reading(
+                        &fixed_range
+                            .as_ref()
+                            .ok_or("Missing fixed meter observation")?
+                            .reply,
+                    )
+                } else {
+                    positive_reading(&monitor_query(device, Role::Meter, range, self.control)?)
+                };
                 record.meter_resolution = self.meter_resolution.read(record.meter_range, || {
                     monitor_query(device, Role::Meter, resolution, self.control)
                 })?;
@@ -2287,6 +2548,12 @@ fn execute(
                 config.source_model, config.meter_model, device.source_model, device.meter_model
             ));
         }
+    } else if state.source_dc.is_some() {
+        // Simulation follows the same ownership transition without creating
+        // a synthetic ON/OFF transport exchange.
+        state.output = OutputState::Off;
+        state.source_dc = None;
+        state.source_dc_limits = None;
     }
     state.activity = Activity::Preflight;
     let requested_config = config;
@@ -2313,6 +2580,10 @@ fn execute(
             "result": "ok",
         }));
         state.output = OutputState::Off;
+        // The source has now been physically verified OFF, so this manual
+        // setting cannot survive into the sweep's reconfiguration sequence.
+        state.source_dc = None;
+        state.source_dc_limits = None;
         if let Some(warning) = report.zeroing_warning {
             return Err(format!(
                 "Cannot start: output OFF was verified, but resetting the source level to zero failed. Reconnect before measuring. {warning}"
@@ -2731,23 +3002,41 @@ fn execute(
                         break;
                     }
                     gate::check(Some(device), state)?;
-                    live.source_stop = check_source_protection(
+                    let fixed = iv_core::selected_meter_range(config).is_some();
+                    let mut evidence = Some(DeferredMeterEvidence {
+                        reply: Some(text),
+                        query_error: None,
+                        exchanges,
+                        timing,
+                    });
+                    let source_check = check_source_protection(
                         device,
                         state,
                         &mut audit,
                         begin,
                         point.point_index,
                         level,
-                        Some((
+                        if fixed {
+                            None
+                        } else {
+                            Some((Some(reading_index), evidence.take().unwrap()))
+                        },
+                    );
+                    if (!source_check.as_ref().is_ok_and(|stop| stop.is_none())
+                        || control.cancelled())
+                        && let Some(reading) = evidence.take()
+                    {
+                        append_meter_reading_audit(
+                            &mut audit,
+                            point.point_index,
                             Some(reading_index),
-                            DeferredMeterEvidence {
-                                reply: Some(text),
-                                query_error: None,
-                                exchanges,
-                                timing,
-                            },
-                        )),
-                    )?;
+                            reading.reply.as_deref(),
+                            reading.query_error.as_deref(),
+                            &reading.exchanges,
+                            &reading.timing,
+                        )?;
+                    }
+                    live.source_stop = source_check?;
                     live.last_source_check = Instant::now();
                     if live.source_stop.is_some() {
                         stopped = true;
@@ -2757,20 +3046,37 @@ fn execute(
                         stopped = true;
                         break;
                     }
+                    let fixed_range = if let Some(reading) = evidence.as_ref() {
+                        Some(meter::conversion(
+                            device,
+                            config,
+                            state,
+                            &mut audit,
+                            (point.point_index, Some(reading_index)),
+                            begin,
+                            reading,
+                        )?)
+                    } else {
+                        None
+                    };
                     // Query the range/resolution after READ? so autoranging is
                     // reflected. Preserve the coarsest resolution when averaging.
                     let (range, resolution) = if let Some((range_query, resolution_query)) =
                         display_queries
                     {
-                        let range_text = query_with_audit(
-                            device,
-                            Role::Meter,
-                            range_query,
-                            &mut audit,
-                            point.point_index,
-                            Some(reading_index),
-                            begin,
-                        )?;
+                        let range_text = if iv_core::selected_meter_range(config).is_some() {
+                            fixed_range.ok_or("Missing fixed meter observation")?
+                        } else {
+                            query_with_audit(
+                                device,
+                                Role::Meter,
+                                range_query,
+                                &mut audit,
+                                point.point_index,
+                                Some(reading_index),
+                                begin,
+                            )?
+                        };
                         if control.cancelled() {
                             stopped = true;
                             break;
@@ -3180,7 +3486,9 @@ fn execute(
         );
         shutdown_gate_for_recording_failure(pair, state);
     }
-    publish(latest, state);
+    // The owner loop publishes the terminal state after releasing its output
+    // reservation. Publishing it here would let a client submit its next Run
+    // while reader admission still sees the prior operation as busy.
     Ok(())
 }
 
@@ -3290,6 +3598,9 @@ mod tests {
             stop: AtomicBool::new(false),
             off: AtomicBool::new(false),
             gate_request_rejected: Mutex::new(None),
+            source_dc_request_rejected: Mutex::new(None),
+            run_request_rejected: Mutex::new(None),
+            pending_safety: AtomicU8::new(0),
             running: AtomicBool::new(false),
             closed: AtomicBool::new(false),
             heartbeat: Mutex::new(Instant::now()),
@@ -3589,6 +3900,9 @@ mod tests {
             stop: AtomicBool::new(false),
             off: AtomicBool::new(false),
             gate_request_rejected: Mutex::new(None),
+            source_dc_request_rejected: Mutex::new(None),
+            run_request_rejected: Mutex::new(None),
+            pending_safety: AtomicU8::new(0),
             running: AtomicBool::new(false),
             closed: AtomicBool::new(false),
             heartbeat: Mutex::new(Instant::now() - Duration::from_secs(3)),

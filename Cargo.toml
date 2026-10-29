@@ -1,9 +1,9 @@
 [workspace]
-members = ["crates/iv-core", "crates/iv-transport", "crates/iv-desktop"]
+members = ["crates/iv-core", "crates/iv-transport", "crates/iv-desktop", "crates/instrument-protocol", "crates/instrument-hub"]
 resolver = "3"
 
 [workspace.package]
-version = "1.3.0-alpha.14"
+version = "1.3.0-alpha.15"
 edition = "2024"
 license = "MIT"
 rust-version = "1.99"
@@ -16,6 +16,7 @@ sha2 = "0.10"
 uuid = { version = "1", features = ["v4"] }
 iv-core = { path = "crates/iv-core" }
 iv-transport = { path = "crates/iv-transport" }
+instrument-protocol = { path = "crates/instrument-protocol" }
 
 [profile.release]
 opt-level = 3
