@@ -48,13 +48,22 @@ guarantee zero switching transient or include all fuse/lead/contact resistance.
 
 ## Limits and layout
 
-The left-panel Source card shows **Source compliance**. The Meter card shows
-**Meter limit** and **Meter range**, above its live display. **Wait time** is in
+The left-panel Source card shows **Compliance**. The Meter card shows
+**Limit** and **Range**, each as a compact label/input/unit row above its live display. **Wait time** is in
 Settings → Timing. The central Measurement area retains its two-column layout:
 sweep controls on the left and Output/Run on the right. Device assignments,
 Dual split and less common acquisition settings stay in Settings. Fixed current ranges show verified shunt
 or terminal input resistance, distinguished by name; unknown values are labeled
 as unverified. Voltage input impedance depends on the instrument's setting.
+
+The units and range presets follow the active voltage/current function. Auto
+explicitly shows I or V. An open primary DC editor and a held DC output use
+the DC function; a running sweep uses its own mode. DC compliance uses the
+DC editor's value and is read-only while ON; it is not a second editable copy.
+Changing an idle DC function updates live channels only after verified OFF and
+never enables output. Closing DC or completing a sweep reconciles idle live
+channels with the selected context. The Meter Limit remains a sweep software
+threshold, not a replacement for DC hardware compliance.
 
 Meter limit is an independent software stop threshold, not a range selector or
 current limiter. If it exceeds a fixed range, a nonblocking notice explains that

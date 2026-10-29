@@ -149,6 +149,16 @@ impl IvApp {
                 } else {
                     self.dc_open.insert(id);
                 }
+                let mode = if open {
+                    self.settings.config.mode
+                } else {
+                    self.settings
+                        .sources
+                        .iter()
+                        .find(|entry| entry.id == id)
+                        .map_or(self.settings.config.mode, |entry| entry.dc.mode)
+                };
+                self.request_dc_live_mode(id, mode);
             }
         });
         ui.ctx()
@@ -214,6 +224,20 @@ impl IvApp {
                 .gate_voltage
                 .zip(self.state.gate_compliance)
                 .map(|(value, compliance)| (Mode::Iv, value, compliance)),
+        }
+    }
+
+    /// Change only the idle live function; this never enables an output.
+    fn request_dc_live_mode(&mut self, id: u64, mode: Mode) {
+        if id == self.settings.source1_id
+            && self.state.source_connected
+            && self.state.output == OutputState::Off
+            && !self.busy()
+            && !self.python_locked()
+        {
+            self.live_samples.clear();
+            self.live_reading = None;
+            self.send(Command::SetLiveMode { mode });
         }
     }
 
@@ -286,22 +310,7 @@ impl IvApp {
                                         );
                                     });
                                 if settings.mode != before {
-                                    settings.value = 0.0;
-                                    settings.compliance = if settings.mode == Mode::Iv {
-                                        0.001
-                                    } else {
-                                        1.0
-                                    };
-                                    settings.ramp_step = if settings.mode == Mode::Iv {
-                                        0.001
-                                    } else {
-                                        1e-6
-                                    };
-                                    settings.units = if settings.mode == Mode::Iv {
-                                        [1, 1, 1]
-                                    } else {
-                                        [2, 0, 2]
-                                    };
+                                    settings.reset_function(settings.mode);
                                 }
                             });
                         } else {
@@ -354,6 +363,10 @@ impl IvApp {
                                     ("Compliance", 1, &mut settings.compliance, limit_unit, true),
                                     ("Ramp step", 2, &mut settings.ramp_step, unit, true),
                                 ] {
+                                    // Primary compliance is the single compact row on its card.
+                                    if role == CardRole::Source && index == 1 {
+                                        continue;
+                                    }
                                     form_label(ui, label, 62.0);
                                     ui.add_enabled_ui(!on || index != 1, |ui| {
                                         quantity(
@@ -519,6 +532,8 @@ impl IvApp {
             };
             self.send_dc_job(command);
         }
+        let next_mode = settings.mode;
+        let mode_changed = next_mode != entry.dc.mode;
         if editable
             && let Some(entry) = self
                 .settings
@@ -527,6 +542,9 @@ impl IvApp {
                 .find(|entry| entry.id == id)
         {
             entry.dc = settings;
+        }
+        if editable && mode_changed {
+            self.request_dc_live_mode(id, next_mode);
         }
     }
 

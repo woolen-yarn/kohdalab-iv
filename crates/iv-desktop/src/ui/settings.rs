@@ -39,6 +39,29 @@ pub(super) struct DcSettings {
     pub(super) ramp_step: f64,
     pub(super) units: [usize; 3],
 }
+impl DcSettings {
+    /// A unit-dimension change resets only the OFF editor, never hardware.
+    pub(super) fn reset_function(&mut self, mode: iv_core::Mode) {
+        self.mode = mode;
+        self.value = 0.0;
+        self.compliance = if mode == iv_core::Mode::Iv {
+            0.001
+        } else {
+            1.0
+        };
+        self.ramp_step = if mode == iv_core::Mode::Iv {
+            0.001
+        } else {
+            1e-6
+        };
+        self.units = if mode == iv_core::Mode::Iv {
+            [1, 1, 1]
+        } else {
+            [2, 0, 2]
+        };
+    }
+}
+
 impl Default for DcSettings {
     fn default() -> Self {
         Self {
@@ -410,6 +433,23 @@ const fn default_inventory_id() -> u64 {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn dc_function_changes_reset_editor_dimensions_and_never_enable_output() {
+        let mut dc = DcSettings {
+            value: 2.0,
+            ..Default::default()
+        };
+        dc.reset_function(iv_core::Mode::Vi);
+        assert_eq!(dc.mode, iv_core::Mode::Vi);
+        assert_eq!(dc.value, 0.0);
+        assert_eq!(dc.compliance, 1.0);
+        assert_eq!(dc.units, [2, 0, 2]);
+        dc.reset_function(iv_core::Mode::Iv);
+        assert_eq!(dc.value, 0.0);
+        assert_eq!(dc.compliance, 0.001);
+        assert_eq!(dc.units, [1, 1, 1]);
+    }
 
     #[test]
     fn active_explicit_source_protection_cannot_be_overwritten_by_stale_gui_cache() {

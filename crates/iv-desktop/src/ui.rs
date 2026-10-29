@@ -778,16 +778,7 @@ impl IvApp {
     }
 
     fn live_monitor(&self, ui: &mut egui::Ui, source: bool) {
-        let mode = self
-            .state
-            .source_dc
-            .as_ref()
-            .map(|dc| dc.mode)
-            .unwrap_or_else(|| {
-                self.live_reading
-                    .as_ref()
-                    .map_or(self.settings.config.mode, |r| r.mode)
-            });
+        let mode = self.card_control_mode();
         let source_channel = if mode == Mode::Iv { 1 } else { 0 };
         let channel = if source {
             source_channel
@@ -1699,6 +1690,11 @@ impl IvApp {
                         self.settings.units = [definition.preferred_unit_index; 3];
                     }
                     self.settings.config.mode = next_mode;
+                    if self.state.source_dc.is_none() && self.dc_open.contains(&self.settings.source1_id)
+                        && let Some(entry)=self.settings.sources.iter_mut().find(|e|e.id==self.settings.source1_id)
+                        && entry.dc.mode != next_mode {
+                        entry.dc.reset_function(next_mode);
+                    }
                     self.settings.config.balanced_source =
                         (choice == 2).then(iv_core::BalancedSourceConfig::default);
                     self.settings.bind_active_entries();
@@ -1793,56 +1789,103 @@ impl IvApp {
             });
     }
 
+    /// Active sweep wins; otherwise the held DC mode or open DC editor wins.
+    fn card_control_mode(&self) -> Mode {
+        let dc = self
+            .state
+            .source_dc
+            .as_ref()
+            .filter(|_| self.state.output == OutputState::On)
+            .map(|d| d.mode);
+        let editor = self
+            .dc_open
+            .contains(&self.settings.source1_id)
+            .then(|| {
+                self.settings
+                    .sources
+                    .iter()
+                    .find(|e| e.id == self.settings.source1_id)
+                    .map(|e| e.dc.mode)
+            })
+            .flatten();
+        card_mode(
+            self.settings.config.mode,
+            self.pending_run
+                || matches!(
+                    self.state.phase,
+                    Phase::Preparing | Phase::Running | Phase::CleaningUp
+                ) && self.pending_dc.is_none(),
+            dc,
+            editor,
+        )
+    }
+
+    fn primary_dc_context(&self) -> bool {
+        if self.pending_run
+            || matches!(
+                self.state.phase,
+                Phase::Preparing | Phase::Running | Phase::CleaningUp
+            ) && self.pending_dc.is_none()
+        {
+            return false;
+        }
+        self.card_control_mode() != self.settings.config.mode
+            || self.dc_open.contains(&self.settings.source1_id)
+            || self.state.source_dc.is_some() && self.state.output == OutputState::On
+    }
+
     /// Keep source protection beside the selected source, rather than hiding it
     /// in a run-level dialog. This is the protection value for the active mode.
     fn source_compliance_control(&mut self, ui: &mut egui::Ui) {
-        let width = ui.available_width();
-        let mode = self.settings.config.mode;
-        let protection_unit = if mode == Mode::Iv { "A" } else { "V" };
-        let effective_source = self
+        let mode = self.card_control_mode();
+        let dc_context =
+            self.primary_dc_context() && !self.pending_run && self.state.phase != Phase::Running;
+        let unit = if mode == Mode::Iv { "A" } else { "V" };
+        let effective = self
             .preview
             .as_ref()
             .ok()
-            .map(|preview| preview.hardware_compliance)
+            .map(|p| p.hardware_compliance)
             .unwrap_or(self.settings.config.compliance);
-
-        ui.label("Source compliance")
-            .on_hover_text("Limits the source output and protects the source circuit.")
-            .on_hover_ui(|ui| self.source_protection_effective_note(ui, protection_unit));
-        ui.add_enabled_ui(!self.busy() && !self.python_locked(), |ui| {
-            let (source_value, source_unit) = match mode {
-                Mode::Iv => (
-                    &mut self.settings.source_current_protection,
-                    &mut self.settings.source_protection_units[0],
-                ),
-                Mode::Vi => (
-                    &mut self.settings.source_voltage_protection,
-                    &mut self.settings.source_protection_units[1],
-                ),
-            };
-            let mut displayed_source = source_value.unwrap_or(effective_source);
-            let original_source = displayed_source;
-            quantity(
-                ui,
-                "source_protection",
-                &mut displayed_source,
-                source_unit,
-                protection_unit,
-                width,
-                true,
-            );
-            if displayed_source != original_source {
-                *source_value = Some(displayed_source);
-            }
-        });
+        let held = self
+            .state
+            .source_dc
+            .as_ref()
+            .filter(|_| self.state.output == OutputState::On)
+            .cloned();
+        ui.add_space(4.);
+        ui.horizontal(|ui| {
+            form_label(ui,"Compliance",72.);
+            let width=ui.available_width();
+            ui.add_enabled_ui(!self.busy() && !self.python_locked() && !(dc_context && held.is_some()),|ui| {
+                if dc_context {
+                    if let Some(entry)=self.settings.sources.iter_mut().find(|e|e.id==self.settings.source1_id) {
+                        let mut value=held.as_ref().map_or(entry.dc.compliance,|d|d.compliance);
+                        quantity(ui,"dc_card_compliance",&mut value,&mut entry.dc.units[1],unit,width,true);
+                        if held.is_none() { entry.dc.compliance=value; }
+                    }
+                } else {
+                    let (saved,units)=match mode {
+                        Mode::Iv=>(&mut self.settings.source_current_protection,&mut self.settings.source_protection_units[0]),
+                        Mode::Vi=>(&mut self.settings.source_voltage_protection,&mut self.settings.source_protection_units[1]),
+                    };
+                    let mut value=saved.unwrap_or(effective); let before=value;
+                    quantity(ui,"source_protection",&mut value,units,unit,width,true);
+                    if value!=before { *saved=Some(value); }
+                }
+            }).response.on_disabled_hover_text("Finish the current operation and turn DC output OFF before changing compliance.");
+        }).response.on_hover_text(if dc_context {
+            if mode==Mode::Iv { "DC voltage output · current compliance. Changes apply on the next explicit Output ON." } else { "DC current output · voltage compliance. Changes apply on the next explicit Output ON." }
+        } else if mode==Mode::Iv { "Voltage source · current compliance" } else { "Current source · voltage compliance" })
+        .on_hover_ui(|ui| { if !dc_context { self.source_protection_effective_note(ui,unit); } });
         self.settings.activate_mode_protection();
     }
 
     /// Meter stop and range controls are intentionally separate: the former
     /// stops a run while the latter selects the meter input path.
     fn meter_measurement_controls(&mut self, ui: &mut egui::Ui) {
-        let width = ui.available_width();
-        let mode = self.settings.config.mode;
+        let width = (ui.available_width() - 78.0).max(125.0);
+        let mode = self.card_control_mode();
         let protection_unit = if mode == Mode::Iv { "A" } else { "V" };
         let effective_source = self
             .preview
@@ -1855,8 +1898,8 @@ impl IvApp {
             Mode::Vi => self.settings.voltage_compliance,
         };
         ui.add_space(4.0);
-        ui.label("Meter limit")
-            .on_hover_text("Stops the sweep when the external meter reading reaches this value. It does not select the meter range.");
+        ui.horizontal(|ui| {
+            form_label(ui,"Limit",72.0);
         ui.add_enabled_ui(!self.busy() && !self.python_locked(), |ui| {
             let (meter_value, meter_unit) = match mode {
                 Mode::Iv => (
@@ -1879,30 +1922,48 @@ impl IvApp {
             );
         });
 
-        preserve_source_on_meter_edit(&mut self.settings, previous_meter_limit, effective_source);
+        }).response.on_hover_text("Sweep stop threshold for the measured magnitude. It does not select a range or replace DC hardware compliance.");
+        if mode == self.settings.config.mode {
+            preserve_source_on_meter_edit(
+                &mut self.settings,
+                previous_meter_limit,
+                effective_source,
+            );
+        } else {
+            preserve_source_on_meter_edit_for_mode(
+                &mut self.settings,
+                mode,
+                previous_meter_limit,
+                previous_meter_limit,
+            );
+        }
         ui.add_space(4.0);
-        ui.label("Meter range").on_hover_text(
-            "Auto may change the meter input path. Fixed keeps one range for the complete sweep.",
-        );
+
         let meter_model = self.settings.meter_model.clone();
         let range_locked_by_operation = self.busy() || self.python_locked();
         let range_edit = ui.add_enabled_ui(
             !range_locked_by_operation && crate::gui_control::outputs_off(&self.state),
-            |ui| match mode {
-                Mode::Iv => widgets::meter_range_choice(
-                    ui,
-                    "active_meter_current_range",
-                    &meter_model,
-                    mode,
-                    &mut self.settings.config.meter_current_range,
-                ),
-                Mode::Vi => widgets::meter_range_choice(
-                    ui,
-                    "active_meter_voltage_range",
-                    &meter_model,
-                    mode,
-                    &mut self.settings.config.meter_voltage_range,
-                ),
+            |ui| {
+                ui.horizontal(|ui| {
+                    form_label(ui, "Range", 72.0);
+                    match mode {
+                        Mode::Iv => widgets::meter_range_choice(
+                            ui,
+                            "active_meter_current_range",
+                            &meter_model,
+                            mode,
+                            &mut self.settings.config.meter_current_range,
+                        ),
+                        Mode::Vi => widgets::meter_range_choice(
+                            ui,
+                            "active_meter_voltage_range",
+                            &meter_model,
+                            mode,
+                            &mut self.settings.config.meter_voltage_range,
+                        ),
+                    }
+                })
+                .inner
             },
         );
         range_edit
@@ -2920,6 +2981,24 @@ impl eframe::App for IvApp {
             self.first_frame_s = Some(self.boot.elapsed().as_secs_f64());
         }
         self.sync();
+        // Reconcile the idle live channel after closing DC or finishing a
+        // sweep. This changes only an already-OFF source function, never ON.
+        let control_mode = self.card_control_mode();
+        if !self.busy()
+            && !self.python_locked()
+            && self.state.error.is_empty()
+            && self.state.source_connected
+            && self.state.output == OutputState::Off
+            && self
+                .live_reading
+                .as_ref()
+                .is_some_and(|r| r.mode != control_mode)
+        {
+            self.live_samples.clear();
+            self.live_reading = None;
+            self.send(Command::SetLiveMode { mode: control_mode });
+        }
+
         self.external_control();
         self.python_banner(ctx);
         ctx.request_repaint_after(Duration::from_millis(100));
@@ -3133,8 +3212,30 @@ fn protection_message(alert: &ProtectionAlert, output: OutputState) -> String {
 
 /// Preserve the previous hardware protection when editing a legacy profile's
 /// coupled meter threshold. Editing Meter limit must never raise Source compliance.
+fn card_mode(sweep: Mode, running: bool, dc: Option<Mode>, editor: Option<Mode>) -> Mode {
+    if running {
+        sweep
+    } else {
+        dc.or(editor).unwrap_or(sweep)
+    }
+}
+
 fn preserve_source_on_meter_edit(settings: &mut Settings, previous: f64, effective_source: f64) {
-    let (meter, source) = match settings.config.mode {
+    preserve_source_on_meter_edit_for_mode(
+        settings,
+        settings.config.mode,
+        previous,
+        effective_source,
+    );
+}
+
+fn preserve_source_on_meter_edit_for_mode(
+    settings: &mut Settings,
+    mode: Mode,
+    previous: f64,
+    effective_source: f64,
+) {
+    let (meter, source) = match mode {
         Mode::Iv => (
             settings.current_compliance,
             &mut settings.source_current_protection,
@@ -3322,6 +3423,35 @@ fn load_gui_profile(bytes: &[u8]) -> Result<Settings, String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn compact_cards_follow_sweep_and_dc_function_without_mixing_ranges() {
+        assert_eq!(card_mode(Mode::Iv, false, None, None), Mode::Iv);
+        assert_eq!(card_mode(Mode::Vi, false, None, None), Mode::Vi);
+        assert_eq!(card_mode(Mode::Iv, false, None, Some(Mode::Vi)), Mode::Vi);
+        assert_eq!(
+            card_mode(Mode::Iv, false, Some(Mode::Vi), Some(Mode::Iv)),
+            Mode::Vi
+        );
+        assert_eq!(
+            card_mode(Mode::Iv, true, Some(Mode::Vi), Some(Mode::Vi)),
+            Mode::Iv
+        );
+        let mut settings = Settings::default();
+        settings.config.meter_current_range = Some(0.001);
+        settings.config.meter_voltage_range = Some(1.0);
+        settings.current_compliance = 0.002;
+        settings.voltage_compliance = 0.1;
+        settings.source_voltage_protection = None;
+        settings.voltage_compliance = 0.2;
+        preserve_source_on_meter_edit_for_mode(&mut settings, Mode::Vi, 0.1, 0.1);
+        settings.activate_mode_protection();
+        assert_eq!(settings.config.mode, Mode::Iv);
+        assert_eq!(settings.config.compliance, 0.002);
+        assert_eq!(settings.source_voltage_protection, Some(0.1));
+        assert_eq!(settings.config.meter_current_range, Some(0.001));
+        assert_eq!(settings.config.meter_voltage_range, Some(1.0));
+    }
+
     #[test]
     fn meter_limit_edits_preserve_source_protection_in_both_modes() {
         for mode in [Mode::Iv, Mode::Vi] {

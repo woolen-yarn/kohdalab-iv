@@ -26,7 +26,13 @@ pub(super) fn meter_range_choice(
     let unit = if mode == iv_core::Mode::Iv { "A" } else { "V" };
     let before = *value;
     let selected = value.map_or_else(
-        || "Auto".into(),
+        || {
+            if mode == iv_core::Mode::Iv {
+                "Auto · I".into()
+            } else {
+                "Auto · V".into()
+            }
+        },
         |v| format!("Fixed · {}", super::formatting::fmt_quantity(v, unit)),
     );
     egui::ComboBox::from_id_salt(id)
