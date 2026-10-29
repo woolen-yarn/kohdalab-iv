@@ -1249,6 +1249,110 @@ fn physical_gate_dc_cross_range_obeys_the_same_verified_off_contract() {
 }
 
 #[test]
+fn physical_source_dc_explicit_range_holds_zero_and_in_range_levels_without_rewrite() {
+    let bridge = Bridge::new(METERS[1].1, "", "0.0001");
+    use_written_source_range_responses(&bridge);
+    use_written_source_level_responses(&bridge);
+    let mut engine = Engine::start(&bridge.dir);
+    engine.connect("YOKOGAWA_GS210", METERS[1].0);
+    engine.send(json!({
+        "command":"set_source_dc", "mode":"dc_iv", "value":0.001,
+        "compliance":0.2, "ramp_step":0.00001, "range":1.0
+    }));
+    engine.wait(|s| s["output"] == "On" && s["source_dc_limits"]["range"] == 1.0);
+
+    let before = bridge.commands().len();
+    engine.send(json!({
+        "command":"set_source_dc", "mode":"dc_iv", "value":0.0,
+        "compliance":0.2, "ramp_step":0.00001, "range":1.0
+    }));
+    let state = engine.wait(|s| s["output"] == "On" && s["source_dc"]["value"] == 0.0);
+    assert_eq!(state["source_dc_limits"]["range"], 1.0, "{state}");
+    assert_held_range_update_does_not_reconfigure(&bridge.commands(), before, 3);
+
+    let before = bridge.commands().len();
+    engine.send(json!({
+        "command":"set_source_dc", "mode":"dc_iv", "value":0.002,
+        "compliance":0.2, "ramp_step":0.00001, "range":1.0
+    }));
+    let state = engine.wait(|s| s["output"] == "On" && s["source_dc"]["value"] == 0.002);
+    assert_eq!(state["source_dc_limits"]["range"], 1.0, "{state}");
+    assert_held_range_update_does_not_reconfigure(&bridge.commands(), before, 3);
+}
+
+#[test]
+fn physical_source_dc_rejects_explicit_range_change_and_weak_protection_without_on() {
+    let bridge = Bridge::new(METERS[1].1, "", "0.0001");
+    use_written_source_range_responses(&bridge);
+    use_written_source_level_responses(&bridge);
+    let mut engine = Engine::start(&bridge.dir);
+    engine.connect("YOKOGAWA_GS210", METERS[1].0);
+    engine.send(json!({
+        "command":"set_source_dc", "mode":"dc_iv", "value":0.001,
+        "compliance":0.2, "ramp_step":0.00001, "range":1.0
+    }));
+    engine.wait(|s| s["output"] == "On" && s["source_dc_limits"]["range"] == 1.0);
+    let before = bridge.commands().len();
+    engine.send(json!({
+        "command":"set_source_dc", "mode":"dc_iv", "value":0.001,
+        "compliance":0.2, "ramp_step":0.000001, "range":0.1
+    }));
+    let state = engine.wait(|s| !s["error"].as_str().unwrap_or_default().is_empty());
+    assert_eq!(state["output"], "Off", "{state}");
+    let commands = bridge.commands();
+    assert!(
+        !commands[before..]
+            .iter()
+            .any(|line| line == &format!("WRITE 3 {}", hex(":SOUR:RANG 1.000000000000e-1\n"))),
+        "an explicit range change while ON must not write a new range: {commands:?}"
+    );
+
+    let bridge = Bridge::new(METERS[1].1, "", "0.0001");
+    let mut engine = Engine::start(&bridge.dir);
+    engine.connect("YOKOGAWA_GS210", METERS[1].0);
+    engine.send(json!({
+        "command":"set_source_dc", "mode":"dc_iv", "value":0.0,
+        "compliance":0.001, "ramp_step":0.0000001, "range":0.01
+    }));
+    let state = engine.wait(|s| !s["error"].as_str().unwrap_or_default().is_empty());
+    assert_eq!(state["output"], "Off", "{state}");
+    assert!(
+        !bridge
+            .commands()
+            .iter()
+            .any(|line| line == &format!("WRITE 3 {}", hex(":OUTP ON\n"))),
+        "a fixed divider range with weak protection must never energize"
+    );
+}
+
+#[test]
+fn physical_gate_explicit_range_holds_zero_without_reconfiguration() {
+    let bridge = Bridge::new(METERS[1].1, "", "0.0001");
+    use_written_source_range_responses(&bridge);
+    use_written_source_level_responses(&bridge);
+    let mut engine = Engine::start(&bridge.dir);
+    engine.connect("YOKOGAWA_GS210", METERS[1].0);
+    engine.send(json!({
+        "command":"connect_gate", "simulation":false,
+        "resource":"USB0::0x0B21::0x0039::GATE::INSTR", "model":"YOKOGAWA_GS210"
+    }));
+    engine.wait(|s| s["gate_connected"] == true && s["error"] == "");
+    engine.send(json!({
+        "command":"set_gate_voltage", "voltage":0.001,
+        "compliance":0.2, "ramp_step":0.00001, "range":1.0
+    }));
+    engine.wait(|s| s["gate_output"] == "On" && s["gate_dc_limits"]["range"] == 1.0);
+    let before = bridge.commands().len();
+    engine.send(json!({
+        "command":"set_gate_voltage", "voltage":0.0,
+        "compliance":0.2, "ramp_step":0.00001, "range":1.0
+    }));
+    let state = engine.wait(|s| s["gate_output"] == "On" && s["gate_voltage"] == 0.0);
+    assert_eq!(state["gate_dc_limits"]["range"], 1.0, "{state}");
+    assert_held_range_update_does_not_reconfigure(&bridge.commands(), before, 0);
+}
+
+#[test]
 fn native_dc_rejects_an_off_grid_update_before_writing_a_level() {
     let bridge = Bridge::new(METERS[1].1, "", "0.0001");
     let mut engine = Engine::start(&bridge.dir);

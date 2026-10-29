@@ -37,6 +37,7 @@ pub(super) struct DcSettings {
     pub(super) value: f64,
     pub(super) compliance: f64,
     pub(super) ramp_step: f64,
+    pub(super) range: Option<f64>,
     pub(super) units: [usize; 3],
 }
 impl DcSettings {
@@ -44,6 +45,11 @@ impl DcSettings {
     pub(super) fn reset_function(&mut self, mode: iv_core::Mode) {
         self.mode = mode;
         self.value = 0.0;
+        self.range = Some(if mode == iv_core::Mode::Iv {
+            1.0
+        } else {
+            0.001
+        });
         self.compliance = if mode == iv_core::Mode::Iv {
             0.001
         } else {
@@ -55,9 +61,9 @@ impl DcSettings {
             1e-6
         };
         self.units = if mode == iv_core::Mode::Iv {
-            [1, 1, 1]
+            [0, 1, 1]
         } else {
-            [2, 0, 2]
+            [1, 0, 2]
         };
     }
 }
@@ -69,7 +75,8 @@ impl Default for DcSettings {
             value: 0.0,
             compliance: 0.001,
             ramp_step: 0.001,
-            units: [1, 1, 1],
+            range: Some(1.0),
+            units: [0, 1, 1],
         }
     }
 }
@@ -444,11 +451,11 @@ mod tests {
         assert_eq!(dc.mode, iv_core::Mode::Vi);
         assert_eq!(dc.value, 0.0);
         assert_eq!(dc.compliance, 1.0);
-        assert_eq!(dc.units, [2, 0, 2]);
+        assert_eq!(dc.units, [1, 0, 2]);
         dc.reset_function(iv_core::Mode::Iv);
         assert_eq!(dc.value, 0.0);
         assert_eq!(dc.compliance, 0.001);
-        assert_eq!(dc.units, [1, 1, 1]);
+        assert_eq!(dc.units, [0, 1, 1]);
     }
 
     #[test]

@@ -593,13 +593,78 @@ pub fn manual_source_range(
         select_range(spec, model, mode, value.abs(), Some(compliance))?;
     if value != 0.0 && value.abs() < resolution * (1.0 - 4.0 * f64::EPSILON) {
         return Err(format!(
-            "The minimum nonzero DC increment is {resolution:e} SI for the selected source range."
+            "DC level must be a multiple of {resolution:e} SI. The minimum nonzero increment is {resolution:e} SI for the selected source range."
         ));
     }
     nudge_source_value(0.0, value, resolution, maximum)?;
     Ok(SourceRangeProfile {
         name: String::new(),
         command_value,
+        maximum,
+        resolution,
+    })
+}
+
+/// Validate a caller-selected native source range for fixed DC output.
+///
+/// Unlike [`manual_source_range`], this never chooses a different range.  The
+/// selected command value is retained (including legacy 7651 codes), and both
+/// the requested level and ramp increment must be checked by the caller on
+/// this exact range grid.  In particular, GS210 divider ranges are rejected
+/// when their fixed 200 mA protection would weaken the requested limit.
+pub fn fixed_manual_source_range(
+    model: &str,
+    mode: Mode,
+    value: f64,
+    compliance: f64,
+    range: f64,
+) -> Result<SourceRangeProfile, String> {
+    if !value.is_finite() || !range.is_finite() || range <= 0.0 {
+        return Err("DC level and selected source range must be finite.".into());
+    }
+    finite_positive(compliance, "Source protection limit", None)?;
+    let spec = source_spec(model)?;
+    let effective_protection = quantized_hardware_compliance(spec, model, mode, compliance)?;
+    let entries = if mode == Mode::Iv {
+        &spec.voltage_ranges
+    } else {
+        &spec.current_ranges
+    };
+    let entry = entries
+        .iter()
+        .find(|entry| {
+            (entry.command_value - range).abs()
+                <= entry.command_value.abs().max(range.abs()).max(1.0) * 1e-9
+        })
+        .ok_or_else(|| format!("{model} does not support source range {range:e}."))?;
+    if mode == Mode::Iv
+        && let Some(fixed) = entry.fixed_current_limit_a
+        && fixed > effective_protection + f64::EPSILON
+    {
+        return Err(format!(
+            "Source range {range:e} requires a fixed {fixed:e} A current protection, which would weaken the requested {compliance:e} A limit."
+        ));
+    }
+    let (maximum, resolution) = if mode == Mode::Iv {
+        entry
+            .max_abs_v
+            .zip(entry.resolution_v)
+            .ok_or_else(|| format!("{model} has no voltage profile for range {range:e}."))?
+    } else {
+        entry
+            .max_abs_a
+            .zip(entry.resolution_a)
+            .ok_or_else(|| format!("{model} has no current profile for range {range:e}."))?
+    };
+    if value != 0.0 && value.abs() < resolution * (1.0 - 4.0 * f64::EPSILON) {
+        return Err(format!(
+            "DC level must be a multiple of {resolution:e} SI. The minimum nonzero increment is {resolution:e} SI for the selected source range."
+        ));
+    }
+    nudge_source_value(0.0, value, resolution, maximum)?;
+    Ok(SourceRangeProfile {
+        name: String::new(),
+        command_value: entry.command_value,
         maximum,
         resolution,
     })
@@ -2762,6 +2827,21 @@ mod dc_nudge_tests {
         ] {
             assert!(manual_source_range("YOKOGAWA_GS210", mode, value, limit).is_err());
         }
+    }
+
+    #[test]
+    fn fixed_manual_dc_range_never_autoselects_or_rounds() {
+        let fixed = fixed_manual_source_range("YOKOGAWA_GS210", Mode::Iv, 0.001, 0.2, 1.0).unwrap();
+        assert_eq!(fixed.command_value, 1.0);
+        assert_eq!(fixed.resolution, 1e-5);
+        // This would be valid on the automatic 10 mV range, but not on an
+        // explicitly selected 1 V range grid.
+        assert!(fixed_manual_source_range("YOKOGAWA_GS210", Mode::Iv, 1e-6, 0.2, 1.0).is_err());
+        assert!(fixed_manual_source_range("YOKOGAWA_GS210", Mode::Iv, 1e-30, 0.2, 0.01).is_err());
+        assert!(fixed_manual_source_range("YOKOGAWA_GS210", Mode::Iv, 0.02, 0.2, 0.01).is_err());
+        // The 10 mV divider is unavailable when it would weaken protection.
+        assert!(fixed_manual_source_range("YOKOGAWA_GS210", Mode::Iv, 0.0, 0.001, 0.01).is_err());
+        assert!(fixed_manual_source_range("YOKOGAWA_GS210", Mode::Vi, 0.0, 1.0, 0.123).is_err());
     }
 
     #[test]

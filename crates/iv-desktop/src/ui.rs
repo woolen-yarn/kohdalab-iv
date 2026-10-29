@@ -1112,6 +1112,71 @@ impl IvApp {
                 egui::FontId::proportional(10.0),
                 if connected { TEAL } else { MUTED },
             );
+            let summary = device_summary(&self.settings.source2_model).to_owned();
+            let id = self.settings.source2_id;
+            if self.source_card_header(ui, id, &summary) {
+                ui.add_enabled_ui(idle && !connected, |ui| {
+                    egui::ComboBox::from_id_salt("source2_model")
+                        .width(ui.available_width())
+                        .selected_text(&self.settings.source2_model)
+                        .show_ui(ui, |ui| {
+                            ui.set_min_width(230.0);
+                            for descriptor in instrument_catalog(InstrumentRole::Source) {
+                                if model_supported(descriptor.id) {
+                                    ui.selectable_value(
+                                        &mut self.settings.source2_model,
+                                        descriptor.id.into(),
+                                        descriptor.id,
+                                    );
+                                }
+                            }
+                        });
+                    ui.horizontal(|ui| {
+                        let summary = resource_summary(&self.settings.source2);
+                        let width = (ui.available_width() - 30.0).max(65.0);
+                        compact_field(
+                            ui,
+                            "source2_resource",
+                            &mut self.settings.source2,
+                            width,
+                            summary,
+                        );
+                        egui::ComboBox::from_id_salt("source2_resources")
+                            .width(20.0)
+                            .selected_text("")
+                            .show_ui(ui, |ui| {
+                                ui.set_min_width(470.0);
+                                for resource in &self.state.resources {
+                                    ui.selectable_value(
+                                        &mut self.settings.source2,
+                                        resource.resource.clone(),
+                                        &resource.label,
+                                    );
+                                }
+                            });
+                    });
+                });
+                ui.horizontal(|ui| {
+                    if button(ui, "Refresh", 70.0, idle).clicked() {
+                        self.send(Command::Discover);
+                    }
+                    if button(
+                        ui,
+                        "Connect",
+                        70.0,
+                        idle && !connected
+                            && (self.settings.source2_model == "SIMULATED_SOURCE"
+                                || !self.settings.source2.is_empty()),
+                    )
+                    .clicked()
+                    {
+                        self.connect_secondary();
+                    }
+                    if button(ui, "Disconnect", 80.0, idle && connected).clicked() {
+                        self.send(Command::DisconnectSource2);
+                    }
+                });
+            }
             ui.add_space(4.0);
             ui.separator();
             ui.horizontal(|ui| {
@@ -1208,71 +1273,6 @@ impl IvApp {
                     .size(9.0)
                     .color(MUTED),
             );
-            let summary = device_summary(&self.settings.source2_model).to_owned();
-            let id = self.settings.source2_id;
-            if self.source_card_header(ui, id, &summary) {
-                ui.add_enabled_ui(idle && !connected, |ui| {
-                    egui::ComboBox::from_id_salt("source2_model")
-                        .width(ui.available_width())
-                        .selected_text(&self.settings.source2_model)
-                        .show_ui(ui, |ui| {
-                            ui.set_min_width(230.0);
-                            for descriptor in instrument_catalog(InstrumentRole::Source) {
-                                if model_supported(descriptor.id) {
-                                    ui.selectable_value(
-                                        &mut self.settings.source2_model,
-                                        descriptor.id.into(),
-                                        descriptor.id,
-                                    );
-                                }
-                            }
-                        });
-                    ui.horizontal(|ui| {
-                        let summary = resource_summary(&self.settings.source2);
-                        let width = (ui.available_width() - 30.0).max(65.0);
-                        compact_field(
-                            ui,
-                            "source2_resource",
-                            &mut self.settings.source2,
-                            width,
-                            summary,
-                        );
-                        egui::ComboBox::from_id_salt("source2_resources")
-                            .width(20.0)
-                            .selected_text("")
-                            .show_ui(ui, |ui| {
-                                ui.set_min_width(470.0);
-                                for resource in &self.state.resources {
-                                    ui.selectable_value(
-                                        &mut self.settings.source2,
-                                        resource.resource.clone(),
-                                        &resource.label,
-                                    );
-                                }
-                            });
-                    });
-                });
-                ui.horizontal(|ui| {
-                    if button(ui, "Refresh", 70.0, idle).clicked() {
-                        self.send(Command::Discover);
-                    }
-                    if button(
-                        ui,
-                        "Connect",
-                        70.0,
-                        idle && !connected
-                            && (self.settings.source2_model == "SIMULATED_SOURCE"
-                                || !self.settings.source2.is_empty()),
-                    )
-                    .clicked()
-                    {
-                        self.connect_secondary();
-                    }
-                    if button(ui, "Disconnect", 80.0, idle && connected).clicked() {
-                        self.send(Command::DisconnectSource2);
-                    }
-                });
-            }
             self.dc_controls(ui, id);
         });
     }
@@ -1445,7 +1445,6 @@ impl IvApp {
                 egui::FontId::proportional(10.0),
                 if connected { TEAL } else { MUTED },
             );
-            self.live_monitor(ui, source);
             let model = if source {
                 &self.settings.source_model
             } else {
@@ -1477,6 +1476,7 @@ impl IvApp {
                 if self.source_card_header(ui, id, &summary) {
                     self.instrument_connection_controls(ui, true, connected);
                 }
+                self.live_monitor(ui, true);
                 self.source_compliance_control(ui);
                 self.dc_controls(ui, id);
             } else {
@@ -1494,6 +1494,7 @@ impl IvApp {
                 if open {
                     self.instrument_connection_controls(ui, false, connected);
                 }
+                self.live_monitor(ui, false);
                 self.meter_measurement_controls(ui);
             }
         });
@@ -3041,7 +3042,7 @@ impl eframe::App for IvApp {
         }
         let limit_smoke = self.smoke && std::env::args().any(|arg| arg == "--gui-limit-smoke");
         let smoke_outcome = if dc_smoke {
-            self.dc_smoke_stage == 8
+            self.dc_smoke_stage == 10
                 && self.state.phase == Phase::Completed
                 && self.state.source_dc.is_none()
                 && self.state.gate_output == OutputState::On
@@ -3068,7 +3069,12 @@ impl eframe::App for IvApp {
         if self.screenshot.is_some()
             && !self.screenshot_requested
             && self.started.elapsed() > Duration::from_secs(2)
-            && (!self.smoke || smoke_outcome)
+            && (!self.smoke
+                || smoke_outcome
+                || (dc_smoke
+                    && self.dc_smoke_stage == 6
+                    && self.state.output == OutputState::On
+                    && std::env::args().any(|arg| arg == "--screenshot-dc-on")))
         {
             self.screenshot_requested = true;
             ctx.send_viewport_cmd(egui::ViewportCommand::Screenshot(Default::default()));

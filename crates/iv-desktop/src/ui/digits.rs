@@ -14,8 +14,6 @@ pub(super) struct DigitControl<'a> {
     pub display_maximum: f64,
     pub display_resolution: f64,
     pub enabled: bool,
-    pub fixed_range: bool,
-    pub source: Option<(&'a str, Mode, f64)>,
 }
 
 #[derive(Debug)]
@@ -142,6 +140,14 @@ fn arrow(ui: &mut egui::Ui, up: bool, enabled: bool, width: f32) -> egui::Respon
     response
 }
 
+pub(super) fn reset_editor(ctx: &egui::Context, id: u64) {
+    let key = egui::Id::new(("dc_typed_value", id));
+    ctx.data_mut(|data| {
+        data.remove::<bool>(key);
+        data.remove::<TypedDraft>(key.with("buffer"));
+    });
+}
+
 /// Returns an SI value only for an explicit digit or typed-value commit.
 /// Unit selection cannot produce a value-change request.
 pub(super) fn output_digits(ui: &mut egui::Ui, id: u64, control: DigitControl<'_>) -> Option<f64> {
@@ -153,22 +159,17 @@ pub(super) fn output_digits(ui: &mut egui::Ui, id: u64, control: DigitControl<'_
         display_maximum,
         display_resolution,
         enabled,
-        fixed_range,
-        source,
     } = control;
     let validate = |next: f64| {
-        if let Some((model, mode, compliance)) = source {
-            iv_core::manual_source_range(model, mode, next, compliance)
-                .ok()
-                .map(|_| next)
-        } else {
-            iv_core::nudge_source_value(0.0, next, limits.resolution, limits.maximum).ok()
+        if next != 0.0 && next.abs() < limits.resolution * (1.0 - 4.0 * f64::EPSILON) {
+            return None;
         }
+        iv_core::nudge_source_value(0.0, next, limits.resolution, limits.maximum).ok()
     };
     *unit = (*unit).min(4);
     let layout = Digits::new(value, *unit, display_resolution, display_maximum);
     let tone = if base == "A" { TEAL } else { ORANGE };
-    let edit_id = ui.make_persistent_id(("dc_typed_value", id));
+    let edit_id = egui::Id::new(("dc_typed_value", id));
     let mut edit = ui
         .ctx()
         .data_mut(|data| data.get_temp::<bool>(edit_id))
@@ -317,10 +318,10 @@ pub(super) fn output_digits(ui: &mut egui::Ui, id: u64, control: DigitControl<'_
     ui.horizontal(|ui| {
         let text = format!(
             "{} ±{}",
-            if fixed_range { "Range" } else { "Max" },
+            "Range",
             fmt_quantity(limits.maximum, base)
         );
-        ui.label(RichText::new(text).size(9.0).color(MUTED)).on_hover_text("Range is selected automatically. A range change briefly switches output OFF, verifies the new settings, then ramps to the requested value. Grey arrows are outside the source limits or below its resolution.");
+        ui.label(RichText::new(text).size(9.0).color(MUTED)).on_hover_text("Selected range stays fixed. Turn output OFF before changing range. Grey arrows are outside this range or below its resolution.");
         if ui.add_enabled(enabled, egui::Button::new("Type…").small()).clicked() { edit = !edit; }
     });
     let buffer_id = edit_id.with("buffer");
@@ -378,6 +379,23 @@ pub(super) fn output_digits(ui: &mut egui::Ui, id: u64, control: DigitControl<'_
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn gs200_digits_follow_each_selected_range_instead_of_the_function_maximum() {
+        for (unit, resolution, maximum, expected) in [
+            (1, 100e-9, 0.012, "00.0000"),
+            (1, 1e-6, 0.12, "000.000"),
+            (0, 10e-6, 1.2, "0.00000"),
+            (0, 100e-6, 12.0, "00.0000"),
+            (0, 1e-3, 32.0, "00.000"),
+            (1, 10e-9, 0.0012, "0.00000"),
+            (1, 100e-9, 0.012, "00.0000"),
+            (1, 1e-6, 0.12, "000.000"),
+            (1, 1e-6, 0.2, "000.000"),
+        ] {
+            assert_eq!(Digits::new(0.0, unit, resolution, maximum).text, expected);
+        }
+    }
+
     #[test]
     fn fixed_typed_draft_preserves_negative_polarity_in_every_unit() {
         for (unit, scale) in SCALES.iter().enumerate() {
@@ -449,7 +467,7 @@ mod tests {
                         ui.set_max_width(224.0);
                         origin = ui.cursor().min;
                         if typing {
-                            let id = ui.make_persistent_id(("dc_typed_value", 1_u64));
+                            let id = egui::Id::new(("dc_typed_value", 1_u64));
                             ui.ctx().data_mut(|data| data.insert_temp(id, true));
                         }
                         result = output_digits(
@@ -467,8 +485,6 @@ mod tests {
                                 display_maximum: 0.01,
                                 display_resolution: 1e-7,
                                 enabled: true,
-                                fixed_range: true,
-                                source: None,
                             },
                         );
                     });
@@ -560,8 +576,6 @@ mod tests {
                             display_maximum: 0.01,
                             display_resolution: 1e-7,
                             enabled: true,
-                            fixed_range: true,
-                            source: None,
                         },
                     );
                 });

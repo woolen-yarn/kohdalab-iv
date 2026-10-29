@@ -607,12 +607,14 @@ pub fn serve() -> Result<(), String> {
                 voltage,
                 compliance,
                 ramp_step,
+                range,
             } => gate::set_voltage(
                 pair.as_mut(),
                 &mut state,
                 voltage,
                 compliance,
                 ramp_step,
+                range,
                 &control,
             ),
             Command::GateOutputOff => {
@@ -625,6 +627,7 @@ pub fn serve() -> Result<(), String> {
                 value,
                 compliance,
                 ramp_step,
+                range,
             } => {
                 let prepared = if control.cancelled() {
                     Ok(())
@@ -655,6 +658,7 @@ pub fn serve() -> Result<(), String> {
                             value,
                             compliance,
                             ramp_step,
+                            range,
                         },
                         &control,
                     )

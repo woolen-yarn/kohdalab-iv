@@ -44,6 +44,101 @@ fn ramp_step_on_grid(step: f64, resolution: f64) -> f64 {
     }
 }
 
+fn dc_ranges(model: &str, mode: Mode) -> Vec<iv_core::SourceRangeProfile> {
+    let model = if model == "SIMULATED_SOURCE" {
+        "YOKOGAWA_GS210"
+    } else {
+        model
+    };
+    match iv_core::instrument_profile(model) {
+        Ok(Some(iv_core::InstrumentProfile::Source(profile))) => {
+            if mode == Mode::Iv {
+                profile.voltage_ranges
+            } else {
+                profile.current_ranges
+            }
+        }
+        _ => Vec::new(),
+    }
+}
+
+fn select_dc_range(settings: &mut settings::DcSettings, range: &iv_core::SourceRangeProfile) {
+    settings.range = Some(range.command_value);
+    if iv_core::nudge_source_value(0.0, settings.value, range.resolution, range.maximum).is_err() {
+        settings.value = 0.0;
+    }
+    settings.ramp_step = ramp_step_on_grid(settings.ramp_step, range.resolution).min(range.maximum);
+    settings.units[0] = if settings.mode == Mode::Vi || range.name.contains("mV") {
+        1
+    } else {
+        0
+    };
+}
+
+fn range_tabs(
+    ui: &mut egui::Ui,
+    ranges: &[iv_core::SourceRangeProfile],
+    selected: Option<f64>,
+    unit: &str,
+) -> Option<f64> {
+    let available = ui.available_width();
+    let mut clicked = None;
+    ui.scope(|ui| {
+        ui.spacing_mut().item_spacing.x = 2.0;
+        ui.spacing_mut().button_padding.x = 2.0;
+        let count = ranges.len().max(1) as f32;
+        let width = ((available - 2.0 * (count - 1.0)) / count).floor().max(1.0);
+        ui.horizontal(|ui| {
+            for range in ranges {
+                if ui
+                    .add_sized(
+                        [width, 24.0],
+                        egui::Button::new(RichText::new(&range.name).size(10.0))
+                            .truncate()
+                            .selected(selected == Some(range.command_value)),
+                    )
+                    .on_hover_text(format!(
+                        "{} · ±{} · increment {}",
+                        range.name,
+                        fmt_quantity(range.maximum, unit),
+                        fmt_quantity(range.resolution, unit)
+                    ))
+                    .clicked()
+                {
+                    clicked = Some(range.command_value);
+                }
+            }
+        });
+    });
+    clicked
+}
+
+fn dc_request_valid(model: &str, settings: &settings::DcSettings) -> Result<(), String> {
+    let range = settings.range.ok_or("Select a source range.")?;
+    let model = if model == "SIMULATED_SOURCE" {
+        "YOKOGAWA_GS210"
+    } else {
+        model
+    };
+    let selected = iv_core::fixed_manual_source_range(
+        model,
+        settings.mode,
+        settings.value,
+        settings.compliance,
+        range,
+    )?;
+    if !settings.ramp_step.is_finite() || settings.ramp_step <= 0.0 {
+        return Err("Ramp step must be positive.".into());
+    }
+    iv_core::nudge_source_value(
+        0.0,
+        settings.ramp_step,
+        selected.resolution,
+        selected.maximum,
+    )?;
+    Ok(())
+}
+
 impl IvApp {
     fn dc_role(&self, id: u64) -> CardRole {
         if id == self.settings.source1_id {
@@ -150,74 +245,6 @@ impl IvApp {
         device_open
     }
 
-    fn dc_digit_limits(
-        &self,
-        id: u64,
-        mode: Mode,
-        value: f64,
-        on: bool,
-        compliance: f64,
-    ) -> Option<crate::protocol::DcLimits> {
-        if on {
-            let held = match self.dc_role(id) {
-                CardRole::Source => &self.state.source_dc_limits,
-                CardRole::Secondary => &self.state.source2_dc_limits,
-                CardRole::Bias => &self.state.gate_dc_limits,
-            };
-            if let Some(held) = held
-                && iv_core::nudge_source_value(0.0, value, held.resolution, held.maximum).is_ok()
-            {
-                return Some(held.clone());
-            }
-        }
-        let entry = self.settings.sources.iter().find(|entry| entry.id == id)?;
-        let model = if entry.model == "SIMULATED_SOURCE" {
-            "YOKOGAWA_GS210"
-        } else {
-            &entry.model
-        };
-        let range = iv_core::manual_source_range(model, mode, value, compliance).ok()?;
-        Some(crate::protocol::DcLimits {
-            range: range.command_value,
-            maximum: range.maximum,
-            resolution: range.resolution,
-        })
-    }
-
-    /// Return stable display geometry for the chosen source function.  The
-    /// active range still governs commands; this only prevents the DC digits
-    /// from changing their places as the value crosses a hardware range.
-    fn dc_digit_display_format(
-        &self,
-        id: u64,
-        mode: Mode,
-        fallback: &crate::protocol::DcLimits,
-        compliance: f64,
-    ) -> (f64, f64) {
-        let Some(entry) = self.settings.sources.iter().find(|entry| entry.id == id) else {
-            return (fallback.maximum, fallback.resolution);
-        };
-        let model = if entry.model == "SIMULATED_SOURCE" {
-            "YOKOGAWA_GS210"
-        } else {
-            &entry.model
-        };
-        let Ok(Some(iv_core::InstrumentProfile::Source(profile))) =
-            iv_core::instrument_profile(model)
-        else {
-            return (fallback.maximum, fallback.resolution);
-        };
-        let maximum = if mode == Mode::Iv {
-            profile.maximum_voltage
-        } else {
-            profile.maximum_current
-        };
-        let resolution = iv_core::manual_source_range(model, mode, 0.0, compliance)
-            .map(|range| range.resolution)
-            .unwrap_or(fallback.resolution);
-        (maximum, resolution)
-    }
-
     fn dc_current(&self, id: u64) -> Option<(Mode, f64, f64)> {
         match self.dc_role(id) {
             CardRole::Source => self
@@ -275,7 +302,48 @@ impl IvApp {
             settings.value = value;
             settings.compliance = compliance;
         }
+        let ranges = dc_ranges(&entry.model, settings.mode);
+        if on {
+            let held = match role {
+                CardRole::Source => &self.state.source_dc_limits,
+                CardRole::Secondary => &self.state.source2_dc_limits,
+                CardRole::Bias => &self.state.gate_dc_limits,
+            };
+            if let Some(held) = held {
+                if settings.range != Some(held.range) {
+                    super::digits::reset_editor(ui.ctx(), id);
+                }
+                settings.range = Some(held.range);
+            }
+        } else if !ranges
+            .iter()
+            .any(|range| Some(range.command_value) == settings.range)
+        {
+            let initial = iv_core::manual_source_range(
+                if entry.model == "SIMULATED_SOURCE" {
+                    "YOKOGAWA_GS210"
+                } else {
+                    &entry.model
+                },
+                settings.mode,
+                settings.value,
+                settings.compliance,
+            )
+            .ok();
+            if let Some(range) = ranges
+                .iter()
+                .find(|range| {
+                    initial
+                        .as_ref()
+                        .is_some_and(|initial| initial.command_value == range.command_value)
+                })
+                .or_else(|| ranges.first())
+            {
+                select_dc_range(&mut settings, range);
+            }
+        }
         let mut digit_change = false;
+        let mut off_requested = false;
         ui.add_space(5.0);
         egui::Frame::new()
             .fill(INPUT)
@@ -332,78 +400,31 @@ impl IvApp {
                         } else {
                             ("A", "V")
                         };
-                        if let Some(limits) = self.dc_digit_limits(
-                            id,
-                            settings.mode,
-                            settings.value,
-                            on,
-                            settings.compliance,
-                        ) {
-                            let (display_maximum, display_resolution) = self
-                                .dc_digit_display_format(
-                                    id,
-                                    settings.mode,
-                                    &limits,
-                                    settings.compliance,
-                                );
-                            let ramp_valid = iv_core::nudge_source_value(
-                                settings.ramp_step,
-                                0.0,
-                                limits.resolution,
-                                limits.maximum,
-                            )
-                            .is_ok()
-                                && settings.ramp_step > 0.0;
-                            let digit_model = self
-                                .settings
-                                .sources
-                                .iter()
-                                .find(|entry| entry.id == id)
-                                .map(|entry| {
-                                    if entry.model == "SIMULATED_SOURCE" {
-                                        "YOKOGAWA_GS210"
-                                    } else {
-                                        entry.model.as_str()
-                                    }
-                                })
-                                .unwrap_or("YOKOGAWA_GS210")
-                                .to_owned();
+                        let ranges = dc_ranges(&entry.model, settings.mode);
+                        ui.add_enabled_ui(!on, |ui| {
+                            if let Some(command) = range_tabs(ui, &ranges, settings.range, unit)
+                                && let Some(range) = ranges.iter().find(|range| range.command_value == command) {
+                                select_dc_range(&mut settings, range);
+                                super::digits::reset_editor(ui.ctx(), id);
+                            }
+                        }).response.on_disabled_hover_text("Turn output OFF before changing range.");
+                        if let Some(range) = ranges.iter().find(|range| Some(range.command_value) == settings.range) {
+                            let limits = crate::protocol::DcLimits { range: range.command_value, maximum: range.maximum, resolution: range.resolution };
                             let config = super::digits::DigitControl {
                                 value: settings.value,
                                 unit: &mut settings.units[0],
                                 base: unit,
                                 limits,
-                                display_maximum,
-                                display_resolution,
-                                enabled: editable && ramp_valid,
-                                fixed_range: on,
-                                source: Some((
-                                    digit_model.as_str(),
-                                    settings.mode,
-                                    settings.compliance,
-                                )),
+                                display_maximum: range.maximum,
+                                display_resolution: range.resolution,
+                                enabled: editable,
                             };
                             if let Some(value) = super::digits::output_digits(ui, id, config) {
                                 settings.value = value;
-                                if let Ok(range) = iv_core::manual_source_range(
-                                    &digit_model,
-                                    settings.mode,
-                                    value,
-                                    settings.compliance,
-                                ) {
-                                    settings.ramp_step =
-                                        ramp_step_on_grid(settings.ramp_step, range.resolution);
-                                }
                                 digit_change = true;
                             }
                         } else {
-                            ui.label(
-                            RichText::new(
-                                "Verified source range unavailable. Turn output OFF and reconnect.",
-                            )
-                            .small()
-                            .color(RED),
-                        );
+                            ui.label(RichText::new("No source ranges available.").small().color(RED));
                         }
                         ui.add_space(3.0);
                         let field_width = (ui.available_width() - 74.0).max(125.0);
@@ -435,74 +456,58 @@ impl IvApp {
                                 }
                             });
                     });
-                    ui.label(
-                        RichText::new("OFF before function or compliance changes.")
-                            .small()
-                            .color(MUTED),
-                    );
                 });
-                let valid = settings.value.is_finite()
-                    && settings.compliance.is_finite()
-                    && settings.compliance > 0.0
-                    && settings.ramp_step.is_finite()
-                    && settings.ramp_step > 0.0;
+                let validation = dc_request_valid(&entry.model, &settings);
+                if let Err(error) = &validation {
+                    ui.label(RichText::new(error).small().color(ORANGE));
+                }
                 ui.add_space(4.0);
-                ui.horizontal(|ui| {
-                    if !connected {
-                        let can_connect = editable
-                            && model_supported(&entry.model)
-                            && (role != CardRole::Bias || !self.state.gate_connected)
-                            && (entry.model == "SIMULATED_SOURCE"
-                                || !entry.resource.trim().is_empty());
-                        if button(ui, "Connect", 82.0, can_connect).clicked() {
-                            match role {
-                                CardRole::Source => self.connect_instrument(true),
-                                CardRole::Secondary => self.connect_secondary(),
-                                CardRole::Bias => {
-                                    self.settings.dc_gate_id = id;
-                                    self.send_dc_job(Command::ConnectGate {
-                                        model: entry.model.clone(),
-                                        simulation: entry.model == "SIMULATED_SOURCE",
-                                        resource: entry.resource.clone(),
-                                    });
-                                }
+                if !connected {
+                    let can_connect = editable && model_supported(&entry.model)
+                        && (role != CardRole::Bias || !self.state.gate_connected)
+                        && (entry.model == "SIMULATED_SOURCE" || !entry.resource.trim().is_empty());
+                    if button(ui, "Connect", 82.0, can_connect).clicked() {
+                        match role {
+                            CardRole::Source => self.connect_instrument(true),
+                            CardRole::Secondary => self.connect_secondary(),
+                            CardRole::Bias => {
+                                self.settings.dc_gate_id = id;
+                                self.send_dc_job(Command::ConnectGate { model: entry.model.clone(), simulation: entry.model == "SIMULATED_SOURCE", resource: entry.resource.clone() });
                             }
                         }
-                    } else if button(
-                        ui,
-                        if on { "Apply" } else { "Output ON" },
-                        88.0,
-                        editable && valid,
-                    )
-                    .clicked()
-                    {
-                        let command = match role {
-                            CardRole::Source | CardRole::Secondary => Command::SetSourceDc {
-                                secondary: role == CardRole::Secondary,
-                                mode: settings.mode,
-                                value: settings.value,
-                                compliance: settings.compliance,
-                                ramp_step: settings.ramp_step,
-                            },
-                            CardRole::Bias => Command::SetGateVoltage {
-                                voltage: settings.value,
-                                compliance: settings.compliance,
-                                ramp_step: settings.ramp_step,
-                            },
-                        };
-                        self.send_dc_job(command);
                     }
-                    if button(ui, "OFF", 55.0, connected)
-                        .on_hover_text(
-                            "Immediate safety operation. If a sweep is running it is stopped.",
-                        )
-                        .clicked()
-                    {
-                        self.send(match role {
-                            CardRole::Source => Command::SourceDcOff { secondary: false },
-                            CardRole::Secondary => Command::SourceDcOff { secondary: true },
-                            CardRole::Bias => Command::GateOutputOff,
-                        });
+                }
+                ui.horizontal(|ui| {
+                    let state = self.dc_output(id);
+                    let can_turn_off = connected && state != OutputState::Off;
+                    let can_turn_on = connected && state == OutputState::Off && editable && validation.is_ok();
+                    let (text, fill, color) = match state {
+                        OutputState::On => ("Output ON", ORANGE, Color32::BLACK),
+                        OutputState::Unknown => ("Output ?", RED, Color32::WHITE),
+                        OutputState::Off => ("Output OFF", INPUT, MUTED),
+                    };
+                    if ui.add_enabled(can_turn_off || can_turn_on, egui::Button::new(RichText::new(text).color(color)).fill(fill).min_size(egui::vec2(113.0, 26.0)))
+                        .on_hover_text(if can_turn_off { "Turn output OFF immediately. Stops an active sweep." } else { "Enable the selected DC level. Range stays fixed while ON." }).clicked() {
+                        if can_turn_off {
+                            off_requested = true;
+                            self.send(match role {
+                                CardRole::Source => Command::SourceDcOff { secondary:false },
+                                CardRole::Secondary => Command::SourceDcOff { secondary:true },
+                                CardRole::Bias => Command::GateOutputOff,
+                            });
+                        } else {
+                            let command = match role {
+                                CardRole::Source | CardRole::Secondary => Command::SetSourceDc { secondary:role == CardRole::Secondary, mode:settings.mode, value:settings.value, compliance:settings.compliance, ramp_step:settings.ramp_step, range:settings.range },
+                                CardRole::Bias => Command::SetGateVoltage { voltage:settings.value, compliance:settings.compliance, ramp_step:settings.ramp_step, range:settings.range },
+                            };
+                            self.send_dc_job(command);
+                        }
+                    }
+                    if button(ui, "Zero", 60.0, editable && settings.range.is_some() && (!on || validation.is_ok()) && (!connected || state != OutputState::Unknown))
+                        .on_hover_text("Ramp to zero within the selected range. Output stays ON if already ON; while OFF this only edits the level.").clicked() {
+                        settings.value = 0.0;
+                        super::digits::reset_editor(ui.ctx(), id);
+                        digit_change = on;
                     }
                 });
                 if connected
@@ -546,28 +551,8 @@ impl IvApp {
                     }
                 }
             });
-        let request_valid = self
-            .dc_digit_limits(id, settings.mode, settings.value, on, settings.compliance)
-            .is_some_and(|limits| {
-                settings.compliance.is_finite()
-                    && settings.compliance > 0.0
-                    && settings.ramp_step > 0.0
-                    && iv_core::nudge_source_value(
-                        settings.value,
-                        0.0,
-                        limits.resolution,
-                        limits.maximum,
-                    )
-                    .is_ok()
-                    && iv_core::nudge_source_value(
-                        settings.ramp_step,
-                        0.0,
-                        limits.resolution,
-                        limits.maximum,
-                    )
-                    .is_ok()
-            });
-        if digit_change && on && editable && !self.busy() && request_valid {
+        let request_valid = dc_request_valid(&entry.model, &settings).is_ok();
+        if digit_change && on && editable && !off_requested && !self.busy() && request_valid {
             let command = match role {
                 CardRole::Source | CardRole::Secondary => Command::SetSourceDc {
                     secondary: role == CardRole::Secondary,
@@ -575,11 +560,13 @@ impl IvApp {
                     value: settings.value,
                     compliance: settings.compliance,
                     ramp_step: settings.ramp_step,
+                    range: settings.range,
                 },
                 CardRole::Bias => Command::SetGateVoltage {
                     voltage: settings.value,
                     compliance: settings.compliance,
                     ramp_step: settings.ramp_step,
+                    range: settings.range,
                 },
             };
             self.send_dc_job(command);
@@ -688,34 +675,6 @@ impl IvApp {
                         }
                     });
                 });
-                if connected {
-                    ui.add_space(5.0);
-                    ui.label(
-                        RichText::new(
-                            self.state
-                                .gate_voltage
-                                .map(|v| fmt_quantity(v, "V"))
-                                .unwrap_or_else(|| "— V".into()),
-                        )
-                        .monospace()
-                        .size(22.0)
-                        .color(ORANGE),
-                    );
-                    ui.label(
-                        RichText::new(format!(
-                            "Source level · output {}",
-                            self.state.gate_output.to_lowercase()
-                        ))
-                        .small()
-                        .color(
-                            if self.state.gate_output == OutputState::Unknown {
-                                RED
-                            } else {
-                                MUTED
-                            },
-                        ),
-                    );
-                }
                 if self.source_card_header(ui, id, device_summary(&entry.model)) {
                     ui.label(
                         RichText::new("Fixed bias source · separate from the sweep")
@@ -772,6 +731,34 @@ impl IvApp {
                     }
                 }
 
+                if connected {
+                    ui.add_space(5.0);
+                    ui.label(
+                        RichText::new(
+                            self.state
+                                .gate_voltage
+                                .map(|v| fmt_quantity(v, "V"))
+                                .unwrap_or_else(|| "— V".into()),
+                        )
+                        .monospace()
+                        .size(22.0)
+                        .color(ORANGE),
+                    );
+                    ui.label(
+                        RichText::new(format!(
+                            "Source level · output {}",
+                            self.state.gate_output.to_lowercase()
+                        ))
+                        .small()
+                        .color(
+                            if self.state.gate_output == OutputState::Unknown {
+                                RED
+                            } else {
+                                MUTED
+                            },
+                        ),
+                    );
+                }
                 self.dc_controls(ui, id);
             });
     }
@@ -796,6 +783,7 @@ impl IvApp {
                     voltage: 0.02,
                     compliance: 0.001,
                     ramp_step: 0.001,
+                    range: Some(1.0),
                 });
                 self.dc_smoke_stage = 2;
             }
@@ -814,6 +802,7 @@ impl IvApp {
                     voltage,
                     compliance: 0.001,
                     ramp_step: 0.001,
+                    range: Some(1.0),
                 });
                 self.dc_smoke_stage = 3;
             }
@@ -825,6 +814,7 @@ impl IvApp {
                     voltage: 0.02,
                     compliance: 0.001,
                     ramp_step: 0.001,
+                    range: Some(1.0),
                 });
                 self.dc_smoke_stage = 4;
             }
@@ -835,6 +825,7 @@ impl IvApp {
                     value: 0.001,
                     compliance: 0.001,
                     ramp_step: 0.001,
+                    range: Some(1.0),
                 });
                 self.dc_smoke_stage = 5;
             }
@@ -849,6 +840,7 @@ impl IvApp {
                     value,
                     compliance: 0.001,
                     ramp_step: 0.001,
+                    range: Some(1.0),
                 });
                 self.dc_smoke_stage = 6;
             }
@@ -858,13 +850,52 @@ impl IvApp {
                 .as_ref()
                 .is_some_and(|dc| dc.value == 0.0011) =>
             {
-                self.settings.sources[0].dc.units[0] = 0; // Display only, no engine command.
+                self.settings.sources[0].dc.units[0] = 0;
+                if std::env::args().any(|arg| arg == "--screenshot-dc-on")
+                    && self.screenshot.is_some()
+                    && !self.screenshot_saved
+                {
+                    return;
+                }
+                self.send_dc_job(Command::SetSourceDc {
+                    secondary: false,
+                    mode: Mode::Iv,
+                    value: 0.0,
+                    compliance: 0.001,
+                    ramp_step: 0.001,
+                    range: Some(1.0),
+                });
                 self.dc_smoke_stage = 7;
             }
-            7 => {
-                assert_eq!(self.state.source_dc.as_ref().unwrap().value, 0.0011);
-                self.start_run();
+            7 if self
+                .state
+                .source_dc
+                .as_ref()
+                .is_some_and(|dc| dc.value == 0.0) =>
+            {
+                assert_eq!(self.state.output, OutputState::On);
+                assert_eq!(self.state.source_dc_limits.as_ref().unwrap().range, 1.0);
+                self.send_dc_job(Command::SetSourceDc {
+                    secondary: false,
+                    mode: Mode::Iv,
+                    value: 0.0011,
+                    compliance: 0.001,
+                    ramp_step: 0.001,
+                    range: Some(1.0),
+                });
                 self.dc_smoke_stage = 8;
+            }
+            8 if self
+                .state
+                .source_dc
+                .as_ref()
+                .is_some_and(|dc| dc.value == 0.0011) =>
+            {
+                self.dc_smoke_stage = 9;
+            }
+            9 => {
+                self.start_run();
+                self.dc_smoke_stage = 10;
             }
             _ => {}
         }
@@ -875,6 +906,86 @@ impl IvApp {
 mod tests {
     use super::*;
     use crate::protocol::GuiJobCompletion;
+    #[test]
+    fn all_manual_range_tabs_fit_one_row_in_a_compact_card() {
+        let context = egui::Context::default();
+        let ranges = dc_ranges("YOKOGAWA_GS210", Mode::Iv);
+        let _ = context.run(
+            egui::RawInput {
+                screen_rect: Some(egui::Rect::from_min_size(
+                    egui::Pos2::ZERO,
+                    egui::vec2(240.0, 300.0),
+                )),
+                ..Default::default()
+            },
+            |ctx| {
+                egui::CentralPanel::default().show(ctx, |ui| {
+                    ui.set_width(224.0);
+                    let before = ui.cursor().min.y;
+                    assert_eq!(range_tabs(ui, &ranges, Some(1.0), "V"), None);
+                    assert!(ui.cursor().min.y - before < 35.0);
+                    assert!(
+                        ui.min_rect().width() <= 224.1,
+                        "tab row width {}",
+                        ui.min_rect().width()
+                    );
+                });
+            },
+        );
+    }
+
+    #[test]
+    fn selecting_a_manual_range_sets_units_grid_and_resets_only_invalid_off_levels() {
+        let ranges = dc_ranges("YOKOGAWA_GS210", Mode::Iv);
+        let mut settings = settings::DcSettings {
+            value: 0.002,
+            ..Default::default()
+        };
+        select_dc_range(&mut settings, &ranges[0]);
+        assert_eq!(settings.range, Some(0.01));
+        assert_eq!(settings.units[0], 1);
+        assert_eq!(settings.value, 0.002);
+        settings.value = 0.0020001;
+        select_dc_range(&mut settings, &ranges[2]);
+        assert_eq!(
+            settings.value, 0.0,
+            "never round an off-grid target into another output"
+        );
+        assert_eq!(settings.units[0], 0);
+        assert_eq!(settings.range, Some(1.0));
+        settings.value = 2.0;
+        select_dc_range(&mut settings, &ranges[0]);
+        assert_eq!(settings.value, 0.0);
+        let ranges = dc_ranges("YOKOGAWA_GS210", Mode::Vi);
+        settings.reset_function(Mode::Vi);
+        select_dc_range(&mut settings, &ranges[0]);
+        assert_eq!(settings.units[0], 1);
+        assert_eq!(settings.range, Some(0.001));
+    }
+
+    #[test]
+    fn manual_range_validation_does_not_auto_select_or_weaken_compliance() {
+        let mut settings = settings::DcSettings::default();
+        assert!(dc_request_valid("YOKOGAWA_GS210", &settings).is_ok());
+        settings.value = 1e-7;
+        assert!(
+            dc_request_valid("YOKOGAWA_GS210", &settings).is_err(),
+            "1V range cannot emit 100nV"
+        );
+        settings.range = Some(0.01);
+        assert!(
+            dc_request_valid("YOKOGAWA_GS210", &settings).is_err(),
+            "divider ranges require 200mA"
+        );
+        settings.compliance = 0.2;
+        assert!(dc_request_valid("YOKOGAWA_GS210", &settings).is_ok());
+        settings.value = 0.02;
+        assert!(
+            dc_request_valid("YOKOGAWA_GS210", &settings).is_err(),
+            "10mV range must remain fixed"
+        );
+    }
+
     #[test]
     fn range_change_adapts_only_the_ramp_increment_to_the_hardware_grid() {
         assert_eq!(ramp_step_on_grid(1e-7, 1e-5), 1e-5);

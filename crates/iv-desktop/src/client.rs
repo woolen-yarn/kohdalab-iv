@@ -405,6 +405,7 @@ mod tests {
                 voltage: 1.0,
                 compliance: 0.001,
                 ramp_step: 0.01,
+                range: None,
             })
             .unwrap();
         let safety = Arc::new(AtomicU8::new(SAFETY_OUTPUT_OFF));
