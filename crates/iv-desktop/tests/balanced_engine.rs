@@ -395,6 +395,44 @@ fn meter_limit_dispatches_off_to_both_before_other_queries() {
 }
 
 #[test]
+fn auto_resistance_transition_stops_both_balanced_outputs_before_saving() {
+    for settle in [0.0, 0.25] {
+        let bridge = Bridge::new();
+        install_fixed_meter_range_drift_after_energized_read(&bridge);
+        let mut engine = Engine::new(bridge.dir.path());
+        engine.connect(false);
+        let path = bridge.path("auto-range-transition");
+        let mut c = config();
+        c.start = 0.;
+        c.stop = 0.;
+        c.repeat = 2;
+        c.start_settle_s = settle;
+        c.settle_s = settle;
+        trigger_fixed_meter_range_drift(&bridge);
+        engine.send(json!({"command":"run","config":c,"path":path}));
+        let state = engine.wait(terminal);
+        assert_eq!(state["phase"], "Failed", "{state}");
+        assert_eq!(state["output"], "Off");
+        assert_eq!(state["source2_output"], "Off");
+        assert_eq!(state["points"], 0);
+        assert!(
+            state["error"]
+                .as_str()
+                .unwrap()
+                .contains("Meter range transition detected"),
+            "{state}"
+        );
+        let log = bridge.log();
+        let range = log
+            .iter()
+            .rposition(|e| e["address"] == "7" && e["command"] == "SENS:CURR:DC:RANG?")
+            .unwrap();
+        assert_both_off_before_queries(&log, range);
+        assert_eq!(csv::Reader::from_path(&path).unwrap().records().count(), 0);
+    }
+}
+
+#[test]
 fn fixed_meter_range_drift_during_balanced_repeated_read_stops_both_before_saving() {
     let bridge = Bridge::new();
     install_fixed_meter_range_drift_after_energized_read(&bridge);

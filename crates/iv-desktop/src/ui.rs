@@ -1483,6 +1483,7 @@ impl IvApp {
                 if self.source_card_header(ui, id, &summary) {
                     self.instrument_connection_controls(ui, true, connected);
                 }
+                self.source_compliance_control(ui);
                 self.dc_controls(ui, id);
             } else {
                 egui::CollapsingHeader::new(format!("Device  ·  {summary}"))
@@ -1494,6 +1495,7 @@ impl IvApp {
                     })
                     .header_response
                     .on_hover_text(hint);
+                self.meter_measurement_controls(ui);
             }
             self.live_monitor(ui, source);
         });
@@ -1640,7 +1642,7 @@ impl IvApp {
     fn sweep(&mut self, ui: &mut egui::Ui) {
         let old_mode = self.settings.config.mode;
         let was_dual = self.settings.config.balanced_source.is_some();
-        let width = (ui.available_width() - 57.0).max(150.0);
+        let width = (ui.available_width() - 57.0).max(90.0);
         egui::Grid::new("sweep_conditions")
             .num_columns(2)
             .spacing([6.0, 8.0])
@@ -1657,6 +1659,7 @@ impl IvApp {
                 let response = ui.add_enabled_ui(mode_editable, |ui| {
                     egui::ComboBox::from_id_salt("mode")
                         .width(width)
+                    .truncate()
                         .selected_text(match choice {
                             0 => mode_name(Mode::Iv),
                             1 => mode_name(Mode::Vi),
@@ -1723,6 +1726,7 @@ impl IvApp {
                 form_label(ui, "Sweep", 45.0);
                 egui::ComboBox::from_id_salt("pattern")
                     .width(width)
+                    .truncate()
                     .selected_text(pattern_name(self.settings.config.pattern))
                     .show_ui(ui, |ui| {
                         ui.set_min_width(230.0);
@@ -1787,6 +1791,178 @@ impl IvApp {
                 }
                 ui.end_row();
             });
+    }
+
+    /// Keep source protection beside the selected source, rather than hiding it
+    /// in a run-level dialog. This is the protection value for the active mode.
+    fn source_compliance_control(&mut self, ui: &mut egui::Ui) {
+        let width = ui.available_width();
+        let mode = self.settings.config.mode;
+        let protection_unit = if mode == Mode::Iv { "A" } else { "V" };
+        let effective_source = self
+            .preview
+            .as_ref()
+            .ok()
+            .map(|preview| preview.hardware_compliance)
+            .unwrap_or(self.settings.config.compliance);
+
+        ui.label("Source compliance")
+            .on_hover_text("Limits the source output and protects the source circuit.")
+            .on_hover_ui(|ui| self.source_protection_effective_note(ui, protection_unit));
+        ui.add_enabled_ui(!self.busy() && !self.python_locked(), |ui| {
+            let (source_value, source_unit) = match mode {
+                Mode::Iv => (
+                    &mut self.settings.source_current_protection,
+                    &mut self.settings.source_protection_units[0],
+                ),
+                Mode::Vi => (
+                    &mut self.settings.source_voltage_protection,
+                    &mut self.settings.source_protection_units[1],
+                ),
+            };
+            let mut displayed_source = source_value.unwrap_or(effective_source);
+            let original_source = displayed_source;
+            quantity(
+                ui,
+                "source_protection",
+                &mut displayed_source,
+                source_unit,
+                protection_unit,
+                width,
+                true,
+            );
+            if displayed_source != original_source {
+                *source_value = Some(displayed_source);
+            }
+        });
+        self.settings.activate_mode_protection();
+    }
+
+    /// Meter stop and range controls are intentionally separate: the former
+    /// stops a run while the latter selects the meter input path.
+    fn meter_measurement_controls(&mut self, ui: &mut egui::Ui) {
+        let width = ui.available_width();
+        let mode = self.settings.config.mode;
+        let protection_unit = if mode == Mode::Iv { "A" } else { "V" };
+        let effective_source = self
+            .preview
+            .as_ref()
+            .ok()
+            .map(|preview| preview.hardware_compliance)
+            .unwrap_or(self.settings.config.compliance);
+        let previous_meter_limit = match mode {
+            Mode::Iv => self.settings.current_compliance,
+            Mode::Vi => self.settings.voltage_compliance,
+        };
+        ui.add_space(4.0);
+        ui.label("Meter limit")
+            .on_hover_text("Stops the sweep when the external meter reading reaches this value. It does not select the meter range.");
+        ui.add_enabled_ui(!self.busy() && !self.python_locked(), |ui| {
+            let (meter_value, meter_unit) = match mode {
+                Mode::Iv => (
+                    &mut self.settings.current_compliance,
+                    &mut self.settings.compliance_units[0],
+                ),
+                Mode::Vi => (
+                    &mut self.settings.voltage_compliance,
+                    &mut self.settings.compliance_units[1],
+                ),
+            };
+            quantity(
+                ui,
+                "meter_stop",
+                meter_value,
+                meter_unit,
+                protection_unit,
+                width,
+                true,
+            );
+        });
+
+        preserve_source_on_meter_edit(&mut self.settings, previous_meter_limit, effective_source);
+        ui.add_space(4.0);
+        ui.label("Meter range").on_hover_text(
+            "Auto may change the meter input path. Fixed keeps one range for the complete sweep.",
+        );
+        let meter_model = self.settings.meter_model.clone();
+        let range_locked_by_operation = self.busy() || self.python_locked();
+        let range_edit = ui.add_enabled_ui(
+            !range_locked_by_operation && crate::gui_control::outputs_off(&self.state),
+            |ui| match mode {
+                Mode::Iv => widgets::meter_range_choice(
+                    ui,
+                    "active_meter_current_range",
+                    &meter_model,
+                    mode,
+                    &mut self.settings.config.meter_current_range,
+                ),
+                Mode::Vi => widgets::meter_range_choice(
+                    ui,
+                    "active_meter_voltage_range",
+                    &meter_model,
+                    mode,
+                    &mut self.settings.config.meter_voltage_range,
+                ),
+            },
+        );
+        range_edit
+            .response
+            .on_disabled_hover_text(if range_locked_by_operation {
+                "Wait for the current operation or external control to finish."
+            } else {
+                "Turn all source outputs OFF before changing the meter range."
+            });
+        let range_changed = range_edit.inner;
+        if range_changed {
+            self.send_meter_ranges();
+        }
+        let fixed_range = match mode {
+            Mode::Iv => self.settings.config.meter_current_range,
+            Mode::Vi => self.settings.config.meter_voltage_range,
+        };
+        if let Some(range) = fixed_range {
+            if let Some(resistance) = iv_core::meter_input_resistance(&meter_model, mode, range) {
+                let label = match resistance.kind {
+                    iv_core::MeterResistanceKind::Shunt => "Shunt resistance",
+                    iv_core::MeterResistanceKind::Terminal => "Input resistance",
+                };
+                ui.label(
+                    RichText::new(format!("{label}: {}", fmt_quantity(resistance.ohms, "ohm")))
+                        .small()
+                        .color(MUTED),
+                );
+            } else {
+                let note = if mode == Mode::Vi {
+                    "Input impedance depends on instrument setting"
+                } else if meter_model == "SIMULATED_METER" {
+                    "Simulation · no physical input"
+                } else if meter_model == "ADCMT_7461A" {
+                    "Range monitoring unavailable for this model"
+                } else {
+                    "Input resistance: not verified"
+                };
+                ui.label(RichText::new(note).small().color(MUTED));
+            }
+            let meter_limit = match mode {
+                Mode::Iv => self.settings.current_compliance,
+                Mode::Vi => self.settings.voltage_compliance,
+            };
+            if meter_limit > range {
+                ui.label(
+                    RichText::new("Meter limit exceeds fixed range; overload may stop first.")
+                        .small()
+                        .color(ORANGE),
+                );
+            }
+        } else {
+            let auto_note = if meter_model == "ADCMT_7461A" {
+                "Auto · range monitoring unavailable for this model"
+            } else {
+                "Auto · range monitoring on"
+            };
+            ui.label(RichText::new(auto_note).small().color(MUTED));
+        }
+        self.settings.activate_mode_protection();
     }
 
     fn measurement_controls(&mut self, ui: &mut egui::Ui) {
@@ -2159,60 +2335,6 @@ impl IvApp {
                 self.save_measurement();
             }
         });
-        ui.label(
-            RichText::new(format!(
-                "{} readings / point · NPLC {}",
-                iv_core::readings_per_point(&self.settings.config),
-                self.settings.config.nplc
-            ))
-            .small()
-            .color(MUTED),
-        );
-        if let Ok(preview) = &self.preview {
-            let rounding_changed = (preview.effective_step.abs() - preview.requested_step.abs())
-                .abs()
-                > preview
-                    .effective_step
-                    .abs()
-                    .max(preview.requested_step.abs())
-                    * f64::EPSILON
-                    * 8.0;
-            let step = fmt_quantity(preview.effective_step.abs(), preview.unit);
-            let requested = fmt_quantity(preview.requested_step.abs(), preview.unit);
-            let step_text = if rounding_changed {
-                format!("Effective step {step} (requested {requested})")
-            } else {
-                format!("Effective step {step}")
-            };
-            let summary = if preview.custom {
-                format!("Custom list · {} points", preview.planned_points)
-            } else {
-                format!("{step_text} · {} points", preview.planned_points)
-            };
-            ui.label(RichText::new(summary).small().color(MUTED))
-                .on_hover_text(format!(
-                    "Automatic ramp: {}. Step does not generate custom-list targets.",
-                    fmt_quantity(preview.effective_ramp, preview.unit)
-                ));
-            ui.label(RichText::new(preview.route_text()).small().color(MUTED))
-                .on_hover_text(
-                    preview
-                        .route
-                        .iter()
-                        .take(16)
-                        .map(|v| fmt_quantity(*v, preview.unit))
-                        .collect::<Vec<_>>()
-                        .join(" -> "),
-                );
-        }
-        if let Err(reason) = &self.preview {
-            ui.add_space(4.0);
-            ui.label(
-                RichText::new(format!("Cannot start: {reason}"))
-                    .small()
-                    .color(ORANGE),
-            );
-        }
     }
 
     fn protection_dialog(&mut self, ctx: &egui::Context) {
@@ -2332,25 +2454,34 @@ impl IvApp {
         let Some(reason) = self.start_error.clone() else {
             return;
         };
+        let meter_range_changed = reason.contains("Meter range transition detected")
+            || reason.contains("Meter range changed");
         let response = egui::Modal::new(egui::Id::new("start_error")).show(ctx, |ui| {
             ui.set_width(420.0);
-            ui.heading("Operation needs attention");
+            ui.heading(if meter_range_changed {
+                "Meter range changed"
+            } else {
+                "Operation needs attention"
+            });
             ui.add_space(8.0);
             egui::ScrollArea::vertical()
                 .max_height((ctx.content_rect().height() - 200.0).max(160.0))
                 .show(ui, |ui| {
-                    ui.label(reason);
+                    ui.label(RichText::new(reason).color(if meter_range_changed {
+                        ORANGE
+                    } else {
+                        Color32::WHITE
+                    }));
                 });
             ui.add_space(8.0);
-            ui.label(
-                RichText::new(if crate::gui_control::outputs_off(&self.state) {
-                    "Review the settings before trying again."
-                } else {
-                    "Verify all connected source outputs are OFF before continuing."
-                })
-                .small()
-                .color(MUTED),
-            );
+            let next_step = if meter_range_changed {
+                "Use a fixed Meter range in the Meter card, then repeat the complete sweep."
+            } else if crate::gui_control::outputs_off(&self.state) {
+                "Review the settings before trying again."
+            } else {
+                "Verify all connected source outputs are OFF before continuing."
+            };
+            ui.label(RichText::new(next_step).small().color(MUTED));
             ui.add_space(12.0);
             if button(ui, "OK", 80.0, true).clicked() {
                 ui.close();
@@ -2377,64 +2508,31 @@ impl IvApp {
                         self.device_bindings(ui);
                         ui.add_space(8.0);
                         section(ui, "Timing", |ui| {
-                            number(ui, iv_core::parameter_definition("settle_s").unwrap().label, &mut self.settings.config.settle_s, 1.0, "", 0.0..=iv_core::MAX_SECONDS);
-
+                            number(
+                                ui,
+                                "Wait time",
+                                &mut self.settings.config.settle_s,
+                                1.0,
+                                "s",
+                                0.0..=iv_core::MAX_SECONDS,
+                            );
                         });
                         ui.add_space(8.0);
-                        section(ui, "Meter range", |ui| {
-                            ui.label("Voltage measurement");
-                            widgets::meter_range_choice(ui, "meter_voltage_range", &self.settings.meter_model, Mode::Vi, &mut self.settings.config.meter_voltage_range);
-                            ui.label("Current measurement");
-                            widgets::meter_range_choice(ui, "meter_current_range", &self.settings.meter_model, Mode::Iv, &mut self.settings.config.meter_current_range);
-                            ui.label(RichText::new("Fixed keeps the chosen range for the entire sweep. Choose a range covering all expected readings. This does not change Source compliance or Measurement limit.").small().color(MUTED));
-                        });
-                        ui.add_space(8.0);
-                        section(ui, "Protection and stop", |ui| {
-                            let width = ui.available_width();
-                            let effective_source = self.preview.as_ref().ok()
-                                .map(|preview| preview.hardware_compliance)
-                                .unwrap_or(self.settings.config.compliance);
-                            let (source_value, meter_value, source_unit, meter_unit, protection_unit) =
-                                match self.settings.config.mode {
-                                    Mode::Iv => (&mut self.settings.source_current_protection,
-                                        &mut self.settings.current_compliance,
-                                        &mut self.settings.source_protection_units[0],
-                                        &mut self.settings.compliance_units[0], "A"),
-                                    Mode::Vi => (&mut self.settings.source_voltage_protection,
-                                        &mut self.settings.voltage_compliance,
-                                        &mut self.settings.source_protection_units[1],
-                                        &mut self.settings.compliance_units[1], "V"),
-                                };
-                            let mut displayed_source = source_value.unwrap_or(effective_source);
-                            let original_source = displayed_source;
-                            let original_meter = *meter_value;
-                            ui.label("Source compliance")
-                                .on_hover_text("Limits the source output. Applies to the source circuit, including leads and contacts.");
-                            quantity(ui, "source_protection", &mut displayed_source,
-                                source_unit, protection_unit, width, true);
-                            ui.add_space(8.0);
-                            ui.label("Measurement limit")
-                                .on_hover_text("Stops the sweep when the external meter's measured magnitude reaches this value. This does not set the meter range.");
-                            quantity(ui, "meter_stop", meter_value,
-                                meter_unit, protection_unit, width, true);
-                            if displayed_source != original_source || *meter_value != original_meter {
-                                // A Meter-only edit preserves the actual source protection.
-                                // Opening/accepting unrelated timing settings preserves legacy None.
-                                *source_value = Some(displayed_source);
-                            }
-                            if let Some(dual)=&mut self.settings.config.balanced_source {
-                                ui.add_space(8.0);ui.label("Source 2 compliance");
-                                quantity(ui,"source2_compliance",&mut dual.source_compliance,
-                                    &mut self.settings.source2_compliance_unit,"A",width,true);
-                            }
-                            self.settings.activate_mode_protection();
-                            self.source_protection_effective_note(ui, protection_unit);
-                            ui.add_space(5.0);
-                            egui::CollapsingHeader::new("About limits").show(ui, |ui| {
-                                ui.label(RichText::new("Source compliance protects the source circuit, including leads and contacts. Measurement limit stops on the external meter reading; it does not set the meter range. In four-terminal wiring, the two voltages can differ. The instrument may round or constrain compliance. GS210 limiter detection does not require /MON.").small().color(MUTED));
+                        if let Some(dual) = &mut self.settings.config.balanced_source {
+                            section(ui, "Dual source", |ui| {
+                                ui.label("Source 2 compliance");
+                                quantity(
+                                    ui,
+                                    "source2_compliance",
+                                    &mut dual.source_compliance,
+                                    &mut self.settings.source2_compliance_unit,
+                                    "A",
+                                    ui.available_width(),
+                                    true,
+                                );
                             });
-                        });
-                        ui.add_space(8.0);
+                            ui.add_space(8.0);
+                        }
                         egui::CollapsingHeader::new("Advanced").show(ui, |ui| {
                             let unit = if self.settings.config.mode == Mode::Iv { "mV" } else { "mA" };
                             number(ui, "Maximum source target", &mut self.settings.config.source_limit, 0.001, unit, 0.0..=f64::MAX);
@@ -2993,8 +3091,8 @@ fn protection_summary(alert: &ProtectionAlert) -> (&'static str, &'static str) {
             "Check wiring and contacts. Reduce the sweep range or review Source compliance.",
         ),
         ProtectionKind::MeasurementLimit => (
-            "Measurement limit reached",
-            "Reduce the sweep range or review Measurement limit.",
+            "Meter limit reached",
+            "Reduce the sweep range or review Meter limit.",
         ),
     }
 }
@@ -3014,7 +3112,7 @@ fn protection_message(alert: &ProtectionAlert, output: OutputState) -> String {
                 "Source compliance reached. The source may no longer deliver the requested output."
             };
             format!(
-                "{reason}\n\nCurrent source compliance: {limit}\nInstrument status: {}\n\nCheck the sample, current-path contacts and wiring. Four-terminal Meter voltage can differ from the source terminal voltage. Reduce the sweep range, or review Settings > Source compliance. Increase compliance only if the sample and wiring ratings permit it.",
+                "{reason}\n\nCurrent source compliance: {limit}\nInstrument status: {}\n\nCheck the sample, current-path contacts and wiring. Four-terminal Meter voltage can differ from the source terminal voltage. Reduce the sweep range, or review Source card > Source compliance. Increase compliance only if the sample and wiring ratings permit it.",
                 alert.indicator
             )
         }
@@ -3024,13 +3122,31 @@ fn protection_message(alert: &ProtectionAlert, output: OutputState) -> String {
                 .map(|value| fmt_quantity(value, &alert.unit))
                 .unwrap_or_else(|| "Unavailable".into());
             format!(
-                "Measurement limit reached.\n\nCurrent measurement limit: {limit}\nTrigger reading: {reading}\n\nCheck the sample and wiring. Reduce the sweep range, or review Settings > Measurement limit. Increase the limit only if safe for the sample. Changing this limit does not change Source compliance."
+                "Measurement limit reached.\n\nCurrent Meter limit: {limit}\nTrigger reading: {reading}\n\nCheck the sample and wiring. Reduce the sweep range, or review Meter card > Meter limit. Increase the limit only if safe for the sample. Changing this limit does not change Source compliance."
             )
         }
     };
     format!(
         "{detail}\n\n{output_status}\n\nThe run will not resume automatically. Review the settings, then press Start to begin a new run."
     )
+}
+
+/// Preserve the previous hardware protection when editing a legacy profile's
+/// coupled meter threshold. Editing Meter limit must never raise Source compliance.
+fn preserve_source_on_meter_edit(settings: &mut Settings, previous: f64, effective_source: f64) {
+    let (meter, source) = match settings.config.mode {
+        Mode::Iv => (
+            settings.current_compliance,
+            &mut settings.source_current_protection,
+        ),
+        Mode::Vi => (
+            settings.voltage_compliance,
+            &mut settings.source_voltage_protection,
+        ),
+    };
+    if meter != previous && source.is_none() {
+        *source = Some(effective_source);
+    }
 }
 
 fn start_block_reason(config: &RunConfig, connected: bool, matching_modes: bool) -> Option<String> {
@@ -3113,6 +3229,19 @@ fn route_vertices(points: &[iv_core::SweepPoint]) -> Vec<f64> {
     vertices
 }
 
+fn mode_name(mode: Mode) -> &'static str {
+    measurement_definition(mode).label
+}
+
+fn pattern_name(pattern: Pattern) -> &'static str {
+    sweep_definitions()
+        .iter()
+        .find(|definition| definition.pattern == pattern)
+        .expect("every built-in pattern has a definition")
+        .label
+}
+
+#[cfg(test)]
 impl SweepPreview {
     fn route_text(&self) -> String {
         let label = if self.custom {
@@ -3133,18 +3262,6 @@ impl SweepPreview {
         };
         format!("{label}: {route}")
     }
-}
-
-fn mode_name(mode: Mode) -> &'static str {
-    measurement_definition(mode).label
-}
-
-fn pattern_name(pattern: Pattern) -> &'static str {
-    sweep_definitions()
-        .iter()
-        .find(|definition| definition.pattern == pattern)
-        .expect("every built-in pattern has a definition")
-        .label
 }
 
 fn model_supported(model: &str) -> bool {
@@ -3205,6 +3322,26 @@ fn load_gui_profile(bytes: &[u8]) -> Result<Settings, String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn meter_limit_edits_preserve_source_protection_in_both_modes() {
+        for mode in [Mode::Iv, Mode::Vi] {
+            let mut settings = Settings::default();
+            settings.config.mode = mode;
+            settings.current_compliance = 0.005;
+            settings.voltage_compliance = 0.005;
+            settings.source_current_protection = None;
+            settings.source_voltage_protection = None;
+            preserve_source_on_meter_edit(&mut settings, 0.001, 0.2);
+            settings.activate_mode_protection();
+            assert_eq!(settings.config.source_compliance, Some(0.2));
+            assert_eq!(settings.config.compliance, 0.005);
+            // An explicit source setting is never replaced by a meter edit.
+            preserve_source_on_meter_edit(&mut settings, 0.003, 0.5);
+            settings.activate_mode_protection();
+            assert_eq!(settings.config.source_compliance, Some(0.2));
+        }
+    }
+
     #[test]
     fn api_profile_uses_the_selected_models_before_plan_validation() {
         let mut profile = Settings::default();
@@ -3411,7 +3548,7 @@ mod tests {
         );
         assert!(text.contains("Instrument status: H"));
         assert!(text.contains("OFF verified"));
-        assert!(text.contains("Settings > Source compliance"));
+        assert!(text.contains("Source card > Source compliance"));
         for output in [OutputState::Unknown, OutputState::On] {
             let text = protection_message(&source, output);
             assert!(!text.contains("OFF verified"));
@@ -3426,16 +3563,12 @@ mod tests {
             -0.3,
         );
         assert!(!protection_role(&meter));
-        assert_eq!(protection_summary(&meter).0, "Measurement limit reached");
-        assert!(
-            protection_summary(&meter)
-                .1
-                .contains("review Measurement limit")
-        );
+        assert_eq!(protection_summary(&meter).0, "Meter limit reached");
+        assert!(protection_summary(&meter).1.contains("review Meter limit"));
         let text = protection_message(&meter, OutputState::Off);
-        assert!(text.contains("Current measurement limit:"));
+        assert!(text.contains("Current Meter limit:"));
         assert!(text.contains("Trigger reading: -300.0000 mV"), "{text}");
-        assert!(text.contains("Settings > Measurement limit"));
+        assert!(text.contains("Meter card > Meter limit"));
         assert!(text.contains("will not resume automatically"));
     }
 }

@@ -615,6 +615,47 @@ fn all_registered_physical_meters_follow_the_same_safe_sweep_contract() {
 // order, not an abstract transport mock.
 
 #[test]
+fn auto_resistance_transition_stops_before_follow_up_queries_and_csv_acceptance() {
+    for settle in [0.0, 0.25] {
+        let bridge = Bridge::new(METERS[1].1, "", "0.0001");
+        install_fixed_meter_responses(&bridge, &hex("0.001"), &hex("1"), false, &hex("1"));
+        install_fixed_current_range_drift_after_read(&bridge);
+        let mut engine = Engine::start(&bridge.dir);
+        engine.connect("YOKOGAWA_GS210", METERS[1].0);
+        let output = path("auto-resistance-transition");
+        let mut run = fixed_range_config(iv_core::Mode::Iv);
+        run.meter_current_range = None;
+        run.start = 0.;
+        run.stop = 0.;
+        run.pattern = iv_core::Pattern::Linear;
+        run.repeat = 2;
+        run.start_settle_s = settle;
+        run.settle_s = settle;
+        trigger_fixed_current_range_drift(&bridge);
+        engine.send(json!({"command":"run","config":run,"path":output}));
+        let state = engine.wait(|s| s["phase"] == "Failed");
+        assert_eq!(state["output"], "Off", "{state}");
+        assert_eq!(state["points"], 0, "{state}");
+        assert!(
+            state["error"]
+                .as_str()
+                .unwrap()
+                .contains("Meter range transition detected"),
+            "{state}"
+        );
+        assert_range_drift_stops_before_follow_up_queries(&bridge.commands());
+        assert_eq!(
+            csv::Reader::from_path(&output).unwrap().records().count(),
+            0
+        );
+        let raw = std::fs::read_to_string(output.with_extension("raw.csv")).unwrap();
+        assert!(raw.contains("meter_reading"));
+        assert!(raw.contains("0.0001"));
+        cleanup(&output);
+    }
+}
+
+#[test]
 fn fixed_meter_ranges_hold_across_forward_and_backward_iv_and_vi_sweeps() {
     for (mode, expected_auto_off, expected_range) in [
         (
@@ -785,23 +826,126 @@ fn fixed_range_drift_during_positive_settling_stops_before_resolution_or_source_
 }
 
 #[test]
+fn auto_resistance_transition_in_live_dc_stops_before_follow_up_queries() {
+    let bridge = Bridge::new(METERS[1].1, "", "0.0001");
+    install_fixed_meter_responses(&bridge, &hex("0.001"), &hex("1"), false, &hex("1"));
+    install_fixed_current_range_drift_after_read(&bridge);
+    let mut engine = Engine::start(&bridge.dir);
+    engine.connect("YOKOGAWA_GS210", METERS[1].0);
+    engine.send(json!({"command":"set_source_dc","mode":"dc_iv","value":0.0,"compliance":0.2,"ramp_step":0.0001}));
+    engine.wait(|s| s["output"] == "On" && !s["source_dc"].is_null());
+    trigger_fixed_current_range_drift(&bridge);
+    let state = engine.wait(|s| s["phase"] == "Failed");
+    assert_eq!(state["output"], "Off", "{state}");
+    assert!(
+        state["error"]
+            .as_str()
+            .unwrap()
+            .contains("Meter range transition detected"),
+        "{state}"
+    );
+    assert_range_drift_stops_before_follow_up_queries(&bridge.commands());
+}
+
+#[test]
+fn manual_dc_initializes_meter_baseline_before_first_output_on() {
+    let bridge = Bridge::new(METERS[1].1, "", "0.0001");
+    install_fixed_meter_responses(&bridge, &hex("0.001"), &hex("1"), false, &hex("1"));
+    install_fixed_current_range_drift_after_read(&bridge);
+    trigger_fixed_current_range_drift(&bridge);
+    let mut engine = Engine::start(&bridge.dir);
+    // Queue without waiting for a monitor tick after connect.
+    engine.send(json!({"command":"connect","simulation":false,"source":"GPIB0::3::INSTR","meter":"GPIB0::7::INSTR","source_model":"YOKOGAWA_GS210","meter_model":METERS[1].0}));
+    engine.send(json!({"command":"set_source_dc","mode":"dc_iv","value":0.0,"compliance":0.2,"ramp_step":0.0001}));
+    let state = engine.wait(|s| s["phase"] == "Failed");
+    assert_eq!(state["output"], "Off", "{state}");
+    assert!(
+        state["error"]
+            .as_str()
+            .unwrap()
+            .contains("Meter range transition detected"),
+        "{state}"
+    );
+    let commands = bridge.commands();
+    let on = commands
+        .iter()
+        .position(|l| l == &format!("WRITE 3 {}", hex(":OUTP ON\n")))
+        .unwrap();
+    assert!(
+        commands[..on]
+            .iter()
+            .any(|l| l == &format!("QUERY 7 {}", hex("SENS:CURR:DC:RANG?\n")))
+    );
+    assert_range_drift_stops_before_follow_up_queries(&commands);
+}
+
+#[test]
+fn auto_guard_survives_held_dc_value_edits_without_reconfiguring_the_meter() {
+    let bridge = Bridge::new(METERS[1].1, "", "0.0001");
+    install_fixed_meter_responses(&bridge, &hex("0.001"), &hex("1"), false, &hex("1"));
+    install_fixed_current_range_drift_after_read(&bridge);
+    // Change the reported range at the source write, before a monitor cycle
+    // can re-prime. This catches accidental CONF/baseline resets on DC edits.
+    for name in ["kohdalab-gpib-helper", "kohdalab-usbtmc-helper"] {
+        let path = bridge.dir.join(name);
+        let script = std::fs::read_to_string(&path).unwrap();
+        let script = script.replace(
+            &format!("[ \"$payload\" = '{}' ]", hex("READ?\n")),
+            "[ \"$payload\" = 'not-a-read-hook' ]",
+        );
+        let hook = format!(
+            " response=''\n if [ \"$operation\" = WRITE ] && [ \"$output\" = '{}' ] && [ -f '{}' ]; then case \"$payload\" in {}*) touch '{}' ;; esac; fi\n",
+            hex("1"),
+            bridge.dir.join("arm-fixed-current-range-drift").display(),
+            hex(":SOUR:LEV:FIX "),
+            bridge.dir.join("fixed-current-range-drifted").display()
+        );
+        let hook = format!(
+            "{hook} if [ \"$operation\" = QUERY ] && [ \"$address\" = 3 ] && [ \"$payload\" = '{}' ] && [ -f '{}' ]; then printf 'KIV\\tOK\\t{}\\n'; continue; fi\n",
+            hex(":SOUR:LEV?\n"),
+            bridge.dir.join("fixed-current-range-drifted").display(),
+            hex("0.0001")
+        );
+        std::fs::write(path, script.replacen(" response=''\n", &hook, 1)).unwrap();
+    }
+    let mut engine = Engine::start(&bridge.dir);
+    engine.connect("YOKOGAWA_GS210", METERS[1].0);
+    engine.send(json!({"command":"set_source_dc","mode":"dc_iv","value":0.0,"compliance":0.2,"ramp_step":0.0001}));
+    engine.wait(|s| s["output"] == "On" && s["live"]["meter_range"] == 0.001);
+    let before = bridge.commands().len();
+    trigger_fixed_current_range_drift(&bridge);
+    engine.send(json!({"command":"set_source_dc","mode":"dc_iv","value":0.0001,"compliance":0.2,"ramp_step":0.0001}));
+    let state = engine.wait(|s| s["phase"] == "Failed");
+    assert_eq!(state["output"], "Off", "{state}");
+    assert!(
+        state["error"]
+            .as_str()
+            .unwrap()
+            .contains("Meter range transition detected"),
+        "{state}"
+    );
+    let commands = bridge.commands();
+    assert!(
+        !commands[before..]
+            .iter()
+            .any(|line| line.starts_with(&format!("WRITE 7 {}", hex("CONF:")))),
+        "{commands:?}"
+    );
+    assert_range_drift_stops_before_follow_up_queries(&commands);
+}
+
+#[test]
 fn fixed_range_drift_in_idle_monitor_stops_an_enabled_source_before_resolution_or_output_query() {
     let bridge = Bridge::new(METERS[1].1, "", "0.0001");
     install_fixed_meter_responses(&bridge, &hex("0.001"), &hex("1"), false, &hex("0"));
     install_fixed_current_range_drift_after_read(&bridge);
     let mut engine = Engine::start(&bridge.dir);
     engine.connect("YOKOGAWA_GS210", METERS[1].0);
-    engine.send(json!({
-        "command":"set_source_dc", "mode":"dc_iv", "value":0.0,
-        "compliance":0.2, "ramp_step":0.0001
-    }));
+    engine.send(json!({"command":"set_meter_ranges","meter_voltage_range":null,"meter_current_range":0.001}));
+    engine.wait(|s| s["live"]["meter_range"] == 0.001 && s["error"] == "");
+    engine.send(json!({"command":"set_source_dc","mode":"dc_iv","value":0.0,"compliance":0.2,"ramp_step":0.0001}));
     let state = engine.wait(|s| s["output"] == "On");
-    assert_eq!(state["error"], "", "{state}");
-    engine.send(json!({
-        "command":"set_meter_ranges",
-        "meter_voltage_range":null,
-        "meter_current_range":0.001
-    }));
+    assert_eq!(state["error"], "");
     // SetMeterRanges is asynchronous relative to the live monitor. Arm the
     // drift only after the range request has been accepted, then wait for its
     // next energized READ?/RANG? pair.
@@ -982,6 +1126,28 @@ fn failed_readings_retain_raw_evidence_after_immediate_output_off() {
     for settle in [0.0, 0.20] {
         for reading in ["broken reading", "NaN", "9.9e37"] {
             let bridge = Bridge::new(METERS[1].1, "", reading);
+            // Inject bad readings only after source ON, so an unrelated idle
+            // monitor cannot consume the fault before the intended sweep.
+            for name in ["kohdalab-gpib-helper", "kohdalab-usbtmc-helper"] {
+                let file = bridge.dir.join(name);
+                let script = std::fs::read_to_string(&file).unwrap();
+                let branch = format!(
+                    "7:{}|0:{}) response='{}'",
+                    hex("READ?\n"),
+                    hex("READ?\n"),
+                    hex(reading)
+                );
+                let replacement = format!(
+                    "7:{}|0:{}) if [ \"$output\" = '{}' ]; then response='{}'; else response='{}'; fi",
+                    hex("READ?\n"),
+                    hex("READ?\n"),
+                    hex("1"),
+                    hex(reading),
+                    hex("0.0001")
+                );
+                assert!(script.contains(&branch));
+                std::fs::write(file, script.replace(&branch, &replacement)).unwrap();
+            }
             let mut engine = Engine::start(&bridge.dir);
             engine.connect("YOKOGAWA_GS210", METERS[1].0);
             let output = path("failed-reading-evidence");
@@ -1065,7 +1231,7 @@ fn read_transport_errors_retain_error_evidence_and_stop_before_further_queries()
             let file = bridge.dir.join(name);
             let script = std::fs::read_to_string(&file).unwrap();
             let injection = format!(
-                " response=''\n if [ \"$payload\" = '{}' ]; then printf 'KIV\\tERR\\t{}\\n'; continue; fi\n",
+                " response=''\n if [ \"$payload\" = '{}' ] && [ \"$output\" = '31' ]; then printf 'KIV\\tERR\\t{}\\n'; continue; fi\n",
                 hex("READ?\n"),
                 hex("injected meter read failure")
             );

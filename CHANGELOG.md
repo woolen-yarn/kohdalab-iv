@@ -3,6 +3,13 @@
 > **Language navigation / 言語案内:** The English historical record appears first, followed by a complete Japanese counterpart. Versions, dates, API names, commands, compatibility wording, and historical claims are preserved in both languages.
 > 英語の履歴記録を先に置き、その後に完全な日本語対訳を掲載します。バージョン、日付、API 名、コマンド、互換性の表現、履歴上の主張は両言語で保持します。
 
+## Unreleased
+
+- Keep the central Measurement controls in two columns. Place Source compliance in the Source card, Meter limit/range in the Meter card, and Wait time in Settings → Timing; retain compact Run controls.
+- Show verified current-input shunt/terminal resistance for fixed ranges. Preserve independent Meter limit and Source compliance, including legacy profiles.
+- Guard Auto range changes across documented resistance groups, stopping conservatively on unknown loading changes. Verify the baseline before sweep/DC output ON and preserve it across held DC edits; request OFF before further acquisition/evidence and exclude the transition conversion from analysis CSV. ADCMT range monitoring remains unavailable pending verified commands.
+- 中央は2列を維持し、コンプライアンス・Meter limit／rangeを左の各カードへ、Wait timeをSettings内へ整理。Autoの抵抗変化を検出した場合は出力OFF・停止し、固定レンジでの再測定を案内します。
+
 ## 1.3.0-alpha.15 — 2026-10-29
 
 - Add independent Auto/fixed meter voltage and current ranges. Verify fixed settings before source ON and monitor actual range through return sweeps, repeated/settling conversions, idle live acquisition, and Dual; request OFF on mismatch. ADCMT 7461A remains Auto-only pending command verification.

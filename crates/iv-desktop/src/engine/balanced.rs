@@ -72,6 +72,7 @@ struct Run<'a> {
     last_live: Instant,
     levels: [f64; 2],
     meter_precision: MeterResolutionCache,
+    meter_guard: meter::RangeGuard,
     point_readbacks: Option<[f64; 2]>,
 }
 impl Run<'_> {
@@ -283,20 +284,20 @@ impl Run<'_> {
                 self.check(point)
             };
             let fixed_range = if safe.as_ref().is_ok_and(|safe| *safe)
-                && iv_core::selected_meter_range(&self.planned.config1).is_some()
+                && meter::monitored(&self.planned.config1)
             {
-                meter::observed(
-                    self.pair
-                        .as_deref_mut()
-                        .ok_or("Missing dual-source transport")?,
-                    &self.planned.config1,
-                    self.state,
-                    self.audit,
-                    point,
-                    None,
-                    self.begin,
-                )
-                .map(|observation| positive_reading(&observation.reply))
+                self.meter_guard
+                    .observed(
+                        self.pair
+                            .as_deref_mut()
+                            .ok_or("Missing dual-source transport")?,
+                        &self.planned.config1,
+                        self.state,
+                        self.audit,
+                        (point, None),
+                        self.begin,
+                    )
+                    .map(|observation| positive_reading(&observation.reply))
             } else {
                 Ok(None)
             };
@@ -319,7 +320,7 @@ impl Run<'_> {
             if let Some((range, resolution)) =
                 iv_core::meter_display_queries(&self.planned.config1.meter_model, Mode::Iv)?
             {
-                if iv_core::selected_meter_range(&self.planned.config1).is_none() {
+                if !meter::monitored(&self.planned.config1) {
                     record.meter_range =
                         positive_reading(&self.query(Role::Meter, range, point)?);
                 }
@@ -455,6 +456,18 @@ impl Run<'_> {
                 return Err(format!("Meter configuration: {error}"));
             }
             meter::verify(config, |command| self.query(Role::Meter, command, 0))?;
+            if meter::monitored(config) && iv_core::selected_meter_range(config).is_none() {
+                self.meter_guard.observed(
+                    self.pair
+                        .as_deref_mut()
+                        .ok_or("Missing dual-source transport")?,
+                    config,
+                    self.state,
+                    self.audit,
+                    (0, None),
+                    self.begin,
+                )?;
+            }
         }
         if self.control.cancelled() {
             return Ok(());
@@ -540,20 +553,20 @@ impl Run<'_> {
                 let fixed_range = if check.as_ref().is_ok_and(|safe| *safe)
                     && !limited
                     && parsed.is_ok()
-                    && iv_core::selected_meter_range(config).is_some()
+                    && meter::monitored(config)
                 {
-                    meter::observed(
-                        self.pair
-                            .as_deref_mut()
-                            .ok_or("Missing dual-source transport")?,
-                        config,
-                        self.state,
-                        self.audit,
-                        point.point_index,
-                        Some(reading_index),
-                        self.begin,
-                    )
-                    .map(|observation| positive_reading(&observation.reply))
+                    self.meter_guard
+                        .observed(
+                            self.pair
+                                .as_deref_mut()
+                                .ok_or("Missing dual-source transport")?,
+                            config,
+                            self.state,
+                            self.audit,
+                            (point.point_index, Some(reading_index)),
+                            self.begin,
+                        )
+                        .map(|observation| positive_reading(&observation.reply))
                 } else {
                     Ok(None)
                 };
@@ -571,7 +584,7 @@ impl Run<'_> {
                 if !check? {
                     return Ok(None);
                 }
-                if iv_core::selected_meter_range(config).is_some() {
+                if meter::monitored(config) {
                     record.meter_range = fixed_range?;
                 }
                 parsed?
@@ -638,7 +651,7 @@ impl Run<'_> {
             if let Some((range, resolution)) =
                 iv_core::meter_display_queries(&config.meter_model, Mode::Iv)?
             {
-                if iv_core::selected_meter_range(config).is_none() {
+                if !meter::monitored(config) {
                     record.meter_range =
                         positive_reading(&self.query(Role::Meter, range, point.point_index)?);
                 }
@@ -730,6 +743,7 @@ pub(super) fn execute(
         last_live: Instant::now(),
         levels: [0.0; 2],
         meter_precision: MeterResolutionCache::default(),
+        meter_guard: meter::RangeGuard::new(&planned.config1),
         point_readbacks: None,
     };
     let work = (|| -> Result<(), String> {

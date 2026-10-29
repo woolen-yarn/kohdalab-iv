@@ -363,6 +363,8 @@ struct DmmSpec {
     voltage_ranges: Vec<f64>,
     #[serde(default)]
     current_ranges: Vec<f64>,
+    #[serde(default)]
+    current_input_resistances: Vec<MeterRangeResistance>,
 }
 
 fn source_specs() -> Result<BTreeMap<String, SourceSpec>, String> {
@@ -405,6 +407,48 @@ fn meter_spec(model: &str) -> Result<DmmSpec, String> {
     meter_specs()?
         .remove(model)
         .ok_or_else(|| format!("Embedded meter profile for {model} is missing."))
+}
+
+/// What a documented electrical loading value includes.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum MeterResistanceKind {
+    Shunt,
+    Terminal,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Deserialize)]
+pub struct MeterInputResistance {
+    pub ohms: f64,
+    pub kind: MeterResistanceKind,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Deserialize)]
+pub struct MeterRangeResistance {
+    pub range: f64,
+    pub ohms: f64,
+    pub kind: MeterResistanceKind,
+}
+
+/// Verified current-input loading only. Voltage input impedance can depend on
+/// an independently selected High-Z setting; do not infer it from range alone.
+pub fn meter_range_resistances(model: &str, mode: Mode) -> Vec<MeterRangeResistance> {
+    if mode != Mode::Iv {
+        return Vec::new();
+    }
+    meter_spec(model)
+        .map(|s| s.current_input_resistances)
+        .unwrap_or_default()
+}
+
+pub fn meter_input_resistance(model: &str, mode: Mode, range: f64) -> Option<MeterInputResistance> {
+    meter_range_resistances(model, mode)
+        .into_iter()
+        .find(|row| ranges_match(row.range, range))
+        .map(|row| MeterInputResistance {
+            ohms: row.ohms,
+            kind: row.kind,
+        })
 }
 
 /// Fixed ranges supported by a meter profile for the selected measurement
@@ -1642,6 +1686,25 @@ pub fn simulate_record(config: &RunConfig, point: &SweepPoint, elapsed_s: f64) -
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn input_resistance_profiles_distinguish_shunts_and_terminal_paths() {
+        let r = meter_input_resistance("AGILENT_34411A", Mode::Iv, 0.001).unwrap();
+        assert_eq!(r.ohms, 200.);
+        assert_eq!(r.kind, MeterResistanceKind::Shunt);
+        assert_eq!(
+            meter_input_resistance("AGILENT_34411A", Mode::Iv, 0.01)
+                .unwrap()
+                .ohms,
+            2.
+        );
+        let r = meter_input_resistance("ADCMT_7461A", Mode::Iv, 0.001).unwrap();
+        assert_eq!(r.ohms, 103.);
+        assert_eq!(r.kind, MeterResistanceKind::Terminal);
+        assert!(meter_input_resistance("AGILENT_34411A", Mode::Vi, 1.).is_none());
+        assert!(meter_input_resistance("KEYSIGHT_34465A", Mode::Iv, 0.001).is_none());
+        assert!(meter_input_resistance("unknown", Mode::Iv, 1.).is_none());
+    }
 
     #[test]
     fn documented_meter_ranges_are_available_for_every_supported_profile() {
