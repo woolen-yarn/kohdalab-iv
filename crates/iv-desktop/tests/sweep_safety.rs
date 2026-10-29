@@ -941,6 +941,17 @@ fn fixed_range_drift_in_idle_monitor_stops_an_enabled_source_before_resolution_o
     install_fixed_current_range_drift_after_read(&bridge);
     let mut engine = Engine::start(&bridge.dir);
     engine.connect("YOKOGAWA_GS210", METERS[1].0);
+    // Connection completion publishes an Unknown output until an explicit
+    // verified-OFF operation has run. Establish that barrier before changing
+    // meter range; otherwise a fast CI reader can correctly reject the range
+    // command while the source's physical state is still unknown.
+    engine.send(json!({
+        "command":"set_source_dc", "mode":"dc_iv", "value":0.0,
+        "compliance":0.2, "ramp_step":0.0001
+    }));
+    engine.wait(|s| s["output"] == "On" && s["error"] == "");
+    engine.send(json!({"command":"source_dc_off"}));
+    engine.wait(|s| s["output"] == "Off" && s["source_dc"].is_null());
     engine.send(json!({"command":"set_meter_ranges","meter_voltage_range":null,"meter_current_range":0.001}));
     engine.wait(|s| s["live"]["meter_range"] == 0.001 && s["error"] == "");
     engine.send(json!({"command":"set_source_dc","mode":"dc_iv","value":0.0,"compliance":0.2,"ramp_step":0.0001}));
@@ -1387,6 +1398,9 @@ fn native_slow_dc_off_blocks_later_run_before_any_output_resume() {
     let bridge = Bridge::new(METERS[1].1, "slow_status", "0.0001");
     let mut engine = Engine::start(&bridge.dir);
     engine.connect("YOKOGAWA_GS210", METERS[1].0);
+    let safety_before = engine.wait(|s| s["connected"] == true)["safety_revision"]
+        .as_u64()
+        .unwrap();
     let output = path("dc-off-race");
     let run = config("YOKOGAWA_GS210", METERS[1].0, iv_core::Mode::Iv, 0.0, 1);
     engine.send(json!({
@@ -1395,13 +1409,17 @@ fn native_slow_dc_off_blocks_later_run_before_any_output_resume() {
     }));
     engine.send(json!({"command":"source_dc_off"}));
     engine.send(json!({"command":"run","config":run,"path":output}));
-    let state = engine.wait(|s| {
+    let _rejected = engine.wait(|s| {
         s["error"]
             .as_str()
             .is_some_and(|error| error.contains("already active or queued"))
     });
+    let state = engine.wait(|s| {
+        s["safety_revision"].as_u64().is_some_and(|revision| revision > safety_before)
+            && s["output"] == "Off"
+    });
     assert_eq!(state["output"], "Off", "{state}");
-    assert!(state["source_dc"].is_null());
+    assert!(state["source_dc"].is_null(), "{state}");
     assert!(
         !output.exists(),
         "a rejected Run must not create CSV output"
