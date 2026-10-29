@@ -269,7 +269,7 @@ if ($TestRoot) {
     $programFiles = Join-Path $test 'ProgramFiles'
     $desktop = Join-Path $test 'Desktop'
     $documents = Join-Path $test 'Documents'
-    $userData = Join-Path $test 'UserData'
+    $userData = Join-Path $test 'UserData\iv'
     $isTest = $true
 } else {
     $isTest = $false
@@ -300,7 +300,7 @@ if ($TestRoot) {
     $desktop = if ($DesktopPath) { Get-FullPath $DesktopPath } else { [Environment]::GetFolderPath([Environment+SpecialFolder]::DesktopDirectory) }
     $documents = if ($DocumentsPath) { Get-FullPath $DocumentsPath } else { [Environment]::GetFolderPath([Environment+SpecialFolder]::MyDocuments) }
     $profile = if ($UserProfilePath) { Get-FullPath $UserProfilePath } else { $env:USERPROFILE }
-    $userData = Join-Path $profile '.kohdalab'
+    $userData = Join-Path $profile '.kohdalab\iv'
 }
 
 if ($TestCorruptAfterMove -and -not $isTest) {

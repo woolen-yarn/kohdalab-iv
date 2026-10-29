@@ -27,10 +27,11 @@ if (Test-Path (Join-Path $pythonRuntime 'support\USB-Setup.exe')) { throw 'Drive
 $pyConfig=Join-Path $OutputDir 'simulated.json'
 Copy-Item $SimulatedConfig $pyConfig
 $rustProfile=Join-Path $OutputDir 'rust-profile'
-$rustConfigDir=Join-Path $rustProfile '.kohdalab\config'
+# Use the application-owned configuration directory in an isolated profile.
+$rustConfigDir=Join-Path $rustProfile '.kohdalab\iv'
 New-Item -ItemType Directory -Force $rustConfigDir | Out-Null
 $rustSettings=@{source='';meter='';source_model='SIMULATED_SOURCE';meter_model='SIMULATED_METER';simulation=$true;output_dir=(Join-Path $OutputDir 'unused-results');filename='unused';auto_suffix=$true}
-[IO.File]::WriteAllText((Join-Path $rustConfigDir 'iv-next.json'),($rustSettings|ConvertTo-Json -Depth 6),$utf8)
+[IO.File]::WriteAllText((Join-Path $rustConfigDir 'config.json'),($rustSettings|ConvertTo-Json -Depth 6),$utf8)
 $pythonExe=Join-Path $pythonRuntime 'KohdaLab IV.exe'
 $rustExe=Join-Path $RustPackage 'kohdalab-iv.exe'
 if(!(Test-Path -LiteralPath $rustExe)) { $rustExe=Join-Path $RustPackage 'kohdalab-iv-next.exe' }

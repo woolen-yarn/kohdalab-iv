@@ -38,7 +38,7 @@ try {
  New-Item -ItemType Directory (Split-Path -Parent $legacyShortcutPath) -Force | Out-Null
  $legacyShortcut=(New-Object -ComObject WScript.Shell).CreateShortcut($legacyShortcutPath)
  $legacyShortcut.TargetPath=$legacyExe
- $legacyShortcut.WorkingDirectory=(Join-Path $testRoot 'UserData')
+ $legacyShortcut.WorkingDirectory=(Join-Path $testRoot 'UserData\iv')
  $legacyShortcut.Save()
  New-Package 'first'
  Install-Fixture
@@ -48,12 +48,12 @@ try {
  Assert-True ((Get-FileHash $exe).Hash -eq (Get-FileHash (Join-Path $package 'kohdalab-iv.exe')).Hash) 'Fresh install differs from package'
  $shortcut=(New-Object -ComObject WScript.Shell).CreateShortcut((Join-Path $testRoot 'Desktop\KohdaLab IV.lnk'))
  Assert-True ($shortcut.TargetPath -eq $exe) 'Legacy shortcut was not migrated to the renamed executable'
- Assert-True ($shortcut.WorkingDirectory -eq (Join-Path $testRoot 'UserData')) 'Shortcut working folder is not user-writable'
+ Assert-True ($shortcut.WorkingDirectory -eq (Join-Path $testRoot 'UserData\iv')) 'Shortcut working folder is not user-writable'
  # Re-running identical setup must also succeed.
  Install-Fixture
- $userData=Join-Path $testRoot 'UserData'
- New-Item -ItemType Directory (Join-Path $userData 'config') -Force | Out-Null
- $config=Join-Path $userData 'config\iv-next.json'
+ $userData=Join-Path $testRoot 'UserData\iv'
+ New-Item -ItemType Directory $userData -Force | Out-Null
+ $config=Join-Path $userData 'config.json'
  Set-Content $config '{"keep":"user settings"}' -Encoding ASCII
  $measurement=Join-Path $userData 'results\user-measurement.csv'
  Set-Content $measurement 'voltage_V,current_A' -Encoding ASCII

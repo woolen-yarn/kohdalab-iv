@@ -155,7 +155,7 @@ to the portable or source build kit. See REDISTRIBUTION.md for licensing terms.
 Simulation is a 1 kOhm circuit and never opens physical devices. CSV contains
 every saved measurement point; the live graph can coalesce updates or reduce
 its display cache during large runs. Existing result files are not overwritten.
-Settings use `~/.kohdalab/config/iv-next.json`.
+Settings use `~/.kohdalab/iv/config.json`. Old shared/preview profiles are not discovered or migrated automatically; explicit valid IV profiles can still be loaded. Settings carry `application: "kohdalab-iv"`; foreign app profiles are rejected on Load and before replacing a file on Save. See [settings storage](../reference/settings-storage.md).
 
 If communication fails, emergency cleanup attempts a fresh source helper and
 verifies the source identity before retrying output off. If output cannot be
@@ -177,8 +177,8 @@ output paths are writable. User files remain separate:
 
 | Content | Location |
 | --- | --- |
-| Settings | `%USERPROFILE%\.kohdalab\config\iv-next.json` |
-| Default measurements | `%USERPROFILE%\.kohdalab\results` |
+| Settings | `%USERPROFILE%\.kohdalab\iv\config.json` |
+| Default measurements | `%USERPROFILE%\.kohdalab\iv\results` |
 | Driver setup/cache | `%LOCALAPPDATA%\KohdaLab IV` |
 | Previous installation backup | `KohdaLab IV\archive` inside your Windows Documents folder |
 
@@ -437,7 +437,7 @@ ZIP 全体を展開します。Windows は `Install-Application.cmd` を実行�
 
 直接 USB は GS210 TMC mode (0B21:0039) または 34411A (0957:0A07) が必要です。ネイティブ USB/GPIB 接続には既存ポータブルの WinUSB 割当が必要で、同梱 `support/USB-Setup.exe` がインストールできます。これは自動起動ではなく明示的な支援操作で、管理者承認が必要な場合があります。アプリは無関係なデバイスを変更しません。NI GPIB-USB-HS+ をサポートします。Agilent 82357B は別途許可された手順で初期化済みの 0957:0718 に限り、boot ID 0957:0518 は開く／boot driver 置換なしで拒否します。本リリースは firmware をダウンロード・キャッシュ・アップロードせず、ポータブルやソースキットに firmware を追加してはいけません。
 
-シミュレーションは 1 kOhm 回路で実デバイスを開きません。CSV は全保存測定点を含み、ライブグラフは大規模実行中に更新をまとめるか表示キャッシュを縮小します。既存結果ファイルは上書きせず、設定は `~/.kohdalab/config/iv-next.json` を使います。通信失敗時、緊急 cleanup は新規 source helper を試し、output off 再試行前に source identity を確認します。出力を検証できなければ Unknown を報告するので、source 前面パネルを確認してください。hardware compliance と物理出力制御は不可欠です。
+シミュレーションは 1 kOhm 回路で実デバイスを開きません。CSV は全保存測定点を含み、ライブグラフは大規模実行中に更新をまとめるか表示キャッシュを縮小します。既存結果ファイルは上書きせず、設定は `~/.kohdalab/iv/config.json` を使います。通信失敗時、緊急 cleanup は新規 source helper を試し、output off 再試行前に source identity を確認します。出力を検証できなければ Unknown を報告するので、source 前面パネルを確認してください。hardware compliance と物理出力制御は不可欠です。
 
 ## Windows のインストールと更新
 
@@ -445,8 +445,8 @@ ZIP 全体を展開します。Windows は `Install-Application.cmd` を実行�
 
 | 内容 | 場所 |
 | --- | --- |
-| Settings | `%USERPROFILE%\.kohdalab\config\iv-next.json` |
-| Default measurements | `%USERPROFILE%\.kohdalab\results` |
+| Settings | `%USERPROFILE%\.kohdalab\iv\config.json` |
+| Default measurements | `%USERPROFILE%\.kohdalab\iv\results` |
 | Driver setup/cache | `%LOCALAPPDATA%\KohdaLab IV` |
 | Previous installation backup | Windows Documents 内 `KohdaLab IV\archive` |
 

@@ -3,6 +3,11 @@
 > **Language navigation / 言語案内:** The English historical record appears first, followed by a complete Japanese counterpart. Versions, dates, API names, commands, compatibility wording, and historical claims are preserved in both languages.
 > 英語の履歴記録を先に置き、その後に完全な日本語対訳を掲載します。バージョン、日付、API 名、コマンド、互換性の表現、履歴上の主張は両言語で保持します。
 
+## 1.3.0-alpha.17 — 2026-10-29
+
+- Separate IV settings into `~/.kohdalab/iv/config.json`. Use only the application-owned default; remove automatic legacy/preview profile discovery. Standardize Windows install working data under `.kohdalab/iv` and default measurements under `iv/results`. Reject foreign application identities, unidentified JSON and newer schemas before loading or replacing settings; save atomically and report autosave failures.
+- IV設定をアプリ専用フォルダーへ分離し、旧共有・preview設定の自動探索と移行を外し、元ファイルは削除しません。Windowsインストール先はアプリ専用のProgram Filesフォルダーを維持し、標準の測定保存先は `iv/results` へ揃えます。別アプリ・未識別JSON・未対応の新版設定は読み込みと上書きを拒否し、安全な保存とエラー表示を行います。
+
 ## 1.3.0-alpha.16 — 2026-10-29
 
 - Keep the central Measurement controls in two columns. Place Source compliance in the Source card, Meter limit/range in the Meter card, and Wait time in Settings → Timing; retain compact Run controls.
