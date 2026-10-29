@@ -18,7 +18,7 @@ Windows x64 Setup and portable preview ZIP; macOS Apple-silicon preview ZIP; sou
 
 Local Rust workspace: 280 passed; strict clippy passed. Real GUI common/native simulation: three points, 18 columns, duplicate receipts, exclusive ownership, verified stop and release/reacquire.
 
-The common Python SDK has seven device-free tests. Source/build identifiers, package manifests and SHA-256 evidence accompany the release. These checks do not newly qualify physical instruments, optical closure, camera calibration or scientific accuracy.
+The common Python SDK has nine device-free tests. Source/build identifiers, package manifests and SHA-256 evidence accompany the release. These checks do not newly qualify physical instruments, optical closure, camera calibration or scientific accuracy.
 
 ## 日本語
 
