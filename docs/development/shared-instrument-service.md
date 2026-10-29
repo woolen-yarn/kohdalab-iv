@@ -1,7 +1,9 @@
 # Shared instrument service
 
-Status: proposed cross-application architecture, not an available backend.
-The layout changes in `manual-dc-output.md` are implemented independently.
+Status: native GPIB development backend implemented, opt-in only. The shared
+protocol/service and IV/TRKR adapters are available in the development sources;
+the broader design below is the target, not a claim that all adapters and
+packaging have shipped. See [development setup and limitations](../guides/shared-instruments-development.md).
 Do not remove the existing adapter lock to enable simultaneous use.
 
 ## Scope and evidence
@@ -21,8 +23,8 @@ Local source inspection on 2026-10-29:
 | Camera (`34667f9`) | `camera_lab::session::Worker`, native USB camera acquisition | No GPIB implementation found in the inspected Rust/Python sources. Camera ownership can follow the common contract; frame streaming stays on its existing data path. |
 
 These are local source observations, not multi-application hardware validation.
-PLE/Camera have not been modified. Neither IV nor TRKR currently routes through
-the proposed service.
+PLE/Camera have not been modified. IV/TRKR now route through the shared service
+only when explicitly configured; their default direct backend is unchanged.
 
 ## Ownership boundaries
 
@@ -172,6 +174,8 @@ Required checks:
 - GUI and Notebook APIs, CSV/raw CSV, file naming and safety limits retain
   their existing behavior. No firmware or SDK is newly bundled.
 
-Until those tests pass, use separate physical GPIB controllers/interfaces or
-connect the programs sequentially. Current direct-helper releases cannot be
-made concurrent by deleting a `.lock` file.
+The deterministic service tests and actual IV transport/proxy test run without
+physical GPIB devices. Coordinated hardware/release validation remains pending.
+Current published direct-helper releases cannot be made concurrent by deleting
+a `.lock` file. Keep separate controllers/interfaces or sequential operation
+for those releases.

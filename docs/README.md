@@ -9,6 +9,7 @@
 - [Portable guide / portable版ガイド](guides/portable-guide.md)
 - [Product details / 製品詳細](guides/product-details.md)
 - [Quick start / はじめに](guides/quick-start.md)
+- [Shared instruments (development) / 複数アプリのGPIB共有・開発版](guides/shared-instruments-development.md)
 
 ## Development / 開発
 
@@ -32,6 +33,7 @@
 
 - [Performance comparison / 性能比較](validation/performance-comparison.md)
 - [Sweep latency / スイープ遅延](validation/sweep-latency.md)
+- [Shared instrument service (development) / 機器共有の模擬検証](validation/shared-instruments.md)
 
 - [Historical release records / 過去のリリース記録](validation/releases/): preserved snapshots and checksums. / 当時の記録とチェックサムを保持。
 

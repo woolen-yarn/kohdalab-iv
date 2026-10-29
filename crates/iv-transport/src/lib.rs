@@ -10,6 +10,7 @@ mod drivers;
 mod instruments;
 #[cfg(all(test, unix))]
 mod legacy_models;
+pub mod shared_controller;
 use fs2::FileExt;
 use serde::{Deserialize, Serialize};
 use std::fs::{self, File, OpenOptions};
@@ -102,6 +103,36 @@ fn executable_name(stem: &str) -> String {
     } else {
         stem.to_owned()
     }
+}
+
+fn hub_config() -> Result<Option<PathBuf>, String> {
+    let Some(path) = std::env::var_os("KOHDALAB_INSTRUMENT_HUB_CONFIG") else {
+        return Ok(None);
+    };
+    if path.is_empty() {
+        return Err("KOHDALAB_INSTRUMENT_HUB_CONFIG must name an endpoint file".into());
+    }
+    let path = PathBuf::from(path);
+    instrument_protocol::Endpoint::load(&path)
+        .map_err(|e| format!("Shared instrument endpoint: {e}"))?;
+    Ok(Some(path))
+}
+
+fn hub_proxy(helper: &Path) -> Result<PathBuf, String> {
+    let path = std::env::var_os("KOHDALAB_INSTRUMENT_HUB_CLIENT")
+        .map(PathBuf::from)
+        .or_else(|| {
+            helper
+                .parent()
+                .map(|p| p.join(executable_name("kohdalab-instrument-hub")))
+        })
+        .ok_or("Shared instrument client path is missing")?;
+    if !path.is_file() {
+        return Err(
+            "Shared instrument client was not found. No direct GPIB fallback was attempted.".into(),
+        );
+    }
+    Ok(path)
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
@@ -214,7 +245,13 @@ fn discover_visa(paths: &HelperPaths) -> Discovery {
 }
 
 fn discover_preferred(paths: &HelperPaths) -> Discovery {
-    let mut result = discover_visa(paths);
+    // In explicit shared mode the service owns GPIB discovery/backend choice.
+    // Do not start a local vendor resource manager against its controller.
+    let mut result = if std::env::var_os("KOHDALAB_INSTRUMENT_HUB_CONFIG").is_some() {
+        Discovery::default()
+    } else {
+        discover_visa(paths)
+    };
     let native = discover_usb(paths);
     result.warnings.extend(native.warnings);
     for resource in native.resources {
@@ -236,6 +273,13 @@ fn discover_preferred(paths: &HelperPaths) -> Discovery {
 
 fn preferred_kind(paths: &HelperPaths, resource: &str) -> Result<ResourceKind, String> {
     let native = ResourceKind::parse(resource)?;
+    if hub_config()?.is_some() && native.is_gpib() {
+        let bare = match native {
+            ResourceKind::Visa { native, .. } => *native,
+            kind => kind,
+        };
+        return Ok(bare);
+    }
     if matches!(native, ResourceKind::Visa { .. }) {
         return Ok(native);
     }
@@ -278,6 +322,29 @@ fn discover_usb(paths: &HelperPaths) -> Discovery {
 }
 
 fn discover_gpib_with_new_session(paths: &HelperPaths, result: &mut Discovery, started: Instant) {
+    if std::env::var_os("KOHDALAB_INSTRUMENT_HUB_CONFIG").is_some() {
+        let found = (|| {
+            let config = hub_config()?.ok_or("Shared instrument configuration is missing")?;
+            let proxy = hub_proxy(&paths.gpib)?;
+            let args: Vec<String> = vec![
+                "--list".into(),
+                "--config".into(),
+                config.to_string_lossy().into_owned(),
+                "--app".into(),
+                "KohdaLab IV".into(),
+            ];
+            let argv: Vec<_> = args.iter().map(String::as_str).collect();
+            run_oneshot(&proxy, &argv, Duration::from_secs(12))
+        })();
+        match found
+            .and_then(|line| parse_kiv(&line)?.into_payload())
+            .and_then(|payload| parse_resources(&payload, "GPIB"))
+        {
+            Ok(resources) => result.resources.extend(resources),
+            Err(e) => result.warnings.push(format!("Shared GPIB discovery: {e}")),
+        }
+        return;
+    }
     // Do not open/reset a native GPIB bridge when VISA already exposes its bus.
     if result
         .resources
@@ -502,12 +569,19 @@ impl DevicePair {
         } else {
             self.open_single_endpoint(&kind)?
         };
+        lock_session(&endpoint.session)?.claim(endpoint.address, role, model)?;
         let identity = match identify_endpoint(&endpoint, role, model).and_then(|id| {
             instruments::verify_model(role, model, &id)?;
             Ok(id)
         }) {
             Ok(identity) => identity,
             Err(error) => {
+                if lock_session(&endpoint.session)?.hub {
+                    // A rejected claim/identity must not retain an address in
+                    // the common service, nor close other healthy IV roles.
+                    let _ = lock_session(&endpoint.session)?.release(endpoint.address);
+                    return Err(error);
+                }
                 if self.session_is_attached_elsewhere(&endpoint.session) {
                     if let Err(local_error) =
                         lock_session(&endpoint.session).and_then(|mut session| {
@@ -604,6 +678,7 @@ impl DevicePair {
         }) {
             return Err(format!("LOCAL {}: {error}", endpoint.resource));
         }
+        lock_session(&endpoint.session)?.release(endpoint.address)?;
         let shared_with_other = ROLES.into_iter().any(|other_role| {
             other_role != role
                 && self
@@ -1151,6 +1226,9 @@ impl DevicePair {
                     role_name(recovering_role)
                 )
             })?;
+        if lock_session(&source_session)?.hub {
+            return Err("Shared GPIB recovery cannot restart the controller while other applications may own devices. Verify outputs at the front panel and recover the service explicitly; no write was replayed.".into());
+        }
         let source_kind = self
             .kind_option(recovering_role)
             .ok_or_else(|| {
@@ -1579,11 +1657,20 @@ struct DeviceLease {
     // One OS file handle owns the lock until the last helper lease is dropped.
     // The parent serializes all per-device VISA requests; another application
     // cannot acquire any address on this GPIB controller during the session.
-    _file: Arc<File>,
+    _file: Option<Arc<File>>,
 }
 
 impl DeviceLease {
     fn acquire(key: &str) -> Result<Self, String> {
+        if key == "gpib-adapter" && hub_config()?.is_some() {
+            // No local hardware process can be launched with this marker.
+            // The authenticated proxy and service own all actual bus access.
+            return Ok(Self { _file: None });
+        }
+        Self::acquire_physical(key)
+    }
+
+    fn acquire_physical(key: &str) -> Result<Self, String> {
         #[cfg(test)]
         let directory =
             std::env::temp_dir().join(format!("kohdalab-iv-lock-tests-{}", std::process::id()));
@@ -1614,7 +1701,7 @@ impl DeviceLease {
             format!("Device is already in use: {key}. Close the other KohdaLab IV instance.")
         })?;
         Ok(Self {
-            _file: Arc::new(file),
+            _file: Some(Arc::new(file)),
         })
     }
 }
@@ -1635,14 +1722,30 @@ struct HelperSession {
     exit_address: u8,
     poisoned: bool,
     closed: bool,
+    hub: bool,
 }
 
 impl HelperSession {
+    fn spawn_physical(path: &Path, timeout: Duration, lease: DeviceLease) -> Result<Self, String> {
+        Self::spawn_with_args_and_lease(path, &[], timeout, lease, 1)
+    }
+
     fn spawn_with_lease(
         path: &Path,
         timeout: Duration,
         lease: DeviceLease,
     ) -> Result<Self, String> {
+        if let Some(config) = hub_config()? {
+            let proxy = hub_proxy(path)?;
+            let args = vec![
+                "--client".into(),
+                "--config".into(),
+                config.to_string_lossy().into_owned(),
+                "--app".into(),
+                "KohdaLab IV".into(),
+            ];
+            return Self::spawn_with_args_and_lease(&proxy, &args, timeout, lease, 1);
+        }
         Self::spawn_with_args_and_lease(path, &[], timeout, lease, 1)
     }
 
@@ -1691,9 +1794,34 @@ impl HelperSession {
             exit_address,
             poisoned: false,
             closed: false,
+            hub: args.first().is_some_and(|arg| arg == "--client"),
         };
         session.wait_startup(timeout)?;
         Ok(session)
+    }
+
+    fn claim(&mut self, address: u8, role: Role, model: &str) -> Result<(), String> {
+        if !self.hub {
+            return Ok(());
+        }
+        let policy = if is_source_role(role) {
+            instrument_protocol::SafetyPolicy::Source {
+                model: model.into(),
+            }
+        } else {
+            instrument_protocol::SafetyPolicy::Instrument
+        };
+        let payload = serde_json::to_vec(&policy).map_err(|e| e.to_string())?;
+        self.request("CLAIM", address, 15_000, &payload, Duration::from_secs(17))
+            .map(|_| ())
+    }
+
+    fn release(&mut self, address: u8) -> Result<(), String> {
+        if !self.hub {
+            return Ok(());
+        }
+        self.request("RELEASE", address, 10_000, &[], Duration::from_secs(12))
+            .map(|_| ())
     }
 
     fn wait_startup(&mut self, timeout: Duration) -> Result<(), String> {
