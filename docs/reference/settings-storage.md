@@ -22,6 +22,8 @@ New saves identify their owner with `application: "kohdalab-<app>"`.
 Foreign, damaged, unidentified, or newer unsupported IV settings are rejected
 before replacement. Saves use a temporary file and atomic replacement.
 
+On normal first launch, IV creates a missing `iv/config.json` from built-in defaults using a complete temporary file and atomic no-clobber publication. Existing bytes remain unchanged, including invalid or unsupported files; load/create errors are shown in the GUI. Concurrent initialization reads the winning file rather than replacing it. Explicit profiles and smoke-test launches do not initialize the production default. Creating a profile does not connect instruments or enable output.
+
 IV and TRKR read only their dedicated defaults. Files such as
 `config/iv-next.json`, `config/trkr-next.json`, `config/default.json`, and the old
 Python `config/iv.json` are no longer discovered or migrated automatically.

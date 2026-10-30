@@ -134,9 +134,15 @@ impl IvApp {
         } else {
             match settings::load_startup_settings() {
                 Ok(loaded) => loaded,
-                Err(error) => (Settings::default(), error),
+                Err(error) => (
+                    Settings::default(),
+                    format!(
+                        "Configuration could not be loaded or created: {error}\nExisting files were not replaced. Check the Config path and folder permissions."
+                    ),
+                ),
             }
         };
+        let startup_error = (!settings_notice.is_empty()).then(|| settings_notice.clone());
         if smoke {
             settings = Settings {
                 simulation: true,
@@ -261,7 +267,7 @@ impl IvApp {
             timing_before: None,
             config_path,
             notice: settings_notice,
-            start_error: None,
+            start_error: startup_error,
             protection_dialog: None,
             save_notice: None,
             logs: vec![],

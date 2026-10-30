@@ -386,8 +386,8 @@ fn settings_path_in(root: &Path) -> PathBuf {
     root.join("iv").join("config.json")
 }
 
-/// Read only the application-owned default. Old shared profiles are not
-/// discovered or migrated automatically.
+/// Initialize only the missing application-owned default, then read it.
+/// Old shared profiles are not discovered or migrated automatically.
 pub(super) fn load_startup_settings() -> Result<(Settings, String), String> {
     load_startup_settings_in(&user_dir())
 }
@@ -397,9 +397,31 @@ fn load_startup_settings_in(root: &Path) -> Result<(Settings, String), String> {
     match std::fs::read(&destination) {
         Ok(bytes) => load_settings(&bytes).map(|settings| (settings, String::new())),
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
-            Ok((Settings::default(), String::new()))
+            initialize_settings(&destination)?;
+            let bytes = std::fs::read(&destination)
+                .map_err(|error| format!("Read {}: {error}", destination.display()))?;
+            load_settings(&bytes).map(|settings| (settings, String::new()))
         }
         Err(error) => Err(format!("Read {}: {error}", destination.display())),
+    }
+}
+
+fn initialize_settings(path: &Path) -> Result<(), String> {
+    let parent = path.parent().ok_or("Configuration directory is missing")?;
+    std::fs::create_dir_all(parent)
+        .map_err(|error| format!("Create {}: {error}", parent.display()))?;
+    let mut temporary = tempfile::NamedTempFile::new_in(parent)
+        .map_err(|error| format!("Initialize {}: {error}", path.display()))?;
+    use std::io::Write;
+    let bytes = serde_json::to_vec_pretty(&Settings::default()).map_err(|e| e.to_string())?;
+    temporary.write_all(&bytes).map_err(|e| e.to_string())?;
+    temporary.as_file().sync_all().map_err(|e| e.to_string())?;
+    match temporary.persist_noclobber(path) {
+        Ok(_) => Ok(()),
+        // Another GUI may have initialized or saved this profile first.
+        // The caller reads and validates that file; never replace it.
+        Err(error) if error.error.kind() == std::io::ErrorKind::AlreadyExists => Ok(()),
+        Err(error) => Err(format!("Create {}: {}", path.display(), error.error)),
     }
 }
 
@@ -557,12 +579,78 @@ mod tests {
             let (settings, notice) = load_startup_settings_in(root.path()).unwrap();
             assert_ne!(settings.filename, "old-shared-profile");
             assert!(notice.is_empty());
-            assert!(!settings_path_in(root.path()).exists());
+            assert!(settings_path_in(root.path()).is_file());
             assert_eq!(std::fs::read(old).unwrap(), bytes);
         }
         assert_eq!(
             settings_path_in(root.path()),
             root.path().join("iv/config.json")
+        );
+    }
+
+    #[test]
+    fn first_launch_creates_defaults_once_and_preserves_existing_bytes() {
+        let root = tempfile::tempdir().unwrap();
+        let path = settings_path_in(root.path());
+        let (settings, _) = load_startup_settings_in(root.path()).unwrap();
+        assert_eq!(settings.application, APPLICATION_ID);
+        assert_eq!(settings.filename, Settings::default().filename);
+        assert!(!settings.simulation);
+        let bytes = std::fs::read(&path).unwrap();
+        assert_eq!(load_settings(&bytes).unwrap().filename, settings.filename);
+        // Preserve formatting and values even if initialization races with Save.
+        let existing = br#"{ "application": "kohdalab-iv", "filename": "my-experiment" }"#;
+        std::fs::write(&path, existing).unwrap();
+        initialize_settings(&path).unwrap();
+        assert_eq!(
+            load_startup_settings_in(root.path()).unwrap().0.filename,
+            "my-experiment"
+        );
+        assert_eq!(std::fs::read(&path).unwrap(), existing);
+        for invalid in [
+            b"broken".as_slice(),
+            br#"{"application":"kohdalab-trkr"}"#,
+            br#"{"schema_version":999}"#,
+        ] {
+            std::fs::write(&path, invalid).unwrap();
+            assert!(load_startup_settings_in(root.path()).is_err());
+            initialize_settings(&path).unwrap();
+            assert_eq!(std::fs::read(&path).unwrap(), invalid);
+        }
+        assert!(!bytes.is_empty());
+    }
+
+    #[test]
+    fn first_launch_reports_unwritable_configuration_directory() {
+        let root = tempfile::tempdir().unwrap();
+        std::fs::write(root.path().join("iv"), b"not a directory").unwrap();
+        assert!(load_startup_settings_in(root.path()).is_err());
+        assert_eq!(
+            std::fs::read(root.path().join("iv")).unwrap(),
+            b"not a directory"
+        );
+    }
+
+    #[test]
+    fn simultaneous_first_launches_read_complete_valid_defaults() {
+        let root = tempfile::tempdir().unwrap();
+        let barrier = std::sync::Arc::new(std::sync::Barrier::new(8));
+        std::thread::scope(|scope| {
+            for _ in 0..8 {
+                let barrier = barrier.clone();
+                let root = root.path();
+                scope.spawn(move || {
+                    barrier.wait();
+                    let (settings, _) = load_startup_settings_in(root).unwrap();
+                    assert_eq!(settings.application, APPLICATION_ID);
+                });
+            }
+        });
+        let path = settings_path_in(root.path());
+        assert!(load_settings(&std::fs::read(path).unwrap()).is_ok());
+        assert_eq!(
+            std::fs::read_dir(root.path().join("iv")).unwrap().count(),
+            1
         );
     }
 
