@@ -3,8 +3,10 @@
 > **日本語の案内:** 列名、単位、数値の直列化規則は互換性契約です。CSV の列名は翻訳せず、
 > 本文の原表記を使用してください。
 
-The native analysis CSV uses 18 columns (`analysis_v3`), with run metadata schema 8.
-Each new run has a matching multiline-safe `<name>.raw.csv` and `<name>.run.json`.
+The current native analysis CSV uses 26 columns (`analysis_v4`), with run
+metadata schema 9 and GUI settings schema 4. Each new run has a matching
+multiline-safe `<name>.raw.csv` and `<name>.run.json`. The raw audit format is
+unchanged: it remains 18-column `raw_csv_v1`.
 
 ## Three-file contract / 3ファイルの役割
 
@@ -18,7 +20,7 @@ records and the finalized JSON stores SHA-256 checksums of both CSV files.
 | `<name>.raw.csv` | Individual readings, commands/replies, configuration and cleanup events, errors and host timing / 個々の読取・コマンドと応答・設定と終了処理・エラー・ホスト時刻 |
 | `<name>.run.json` | Requested/effective configuration, device identities/resources, observed display settings, optional `experiment` annotations, application version/available commit, outcome and checksums / 要求・実効設定、機器と接続先、取得した表示設定、任意の実験情報、アプリ版・取得可能なコミット、結果とチェックサム |
 
-### Main CSV: all 18 columns / 解析CSVの全18列
+### Main CSV: all 26 columns / 解析CSVの全26列
 
 | Columns / 列 | Meaning / 意味 |
 | --- | --- |
@@ -31,11 +33,23 @@ records and the finalized JSON stores SHA-256 checksums of both CSV files.
 | `readings_requested`, `readings_completed` | Requested and accepted physical reading counts; completed is blank for simulation / 要求回数と受理した実機読取回数。simulationのcompletedは空欄 |
 | `meter_stddev`, `meter_unit` | Sample standard deviation (ddof=1) of accepted readings and unit; blank when fewer than two readings or simulation / 受理した読取の標本標準偏差と単位。2回未満・simulationでは空欄 |
 | `software_limit_hit`, `quality_flags` | Software limit and `normal`, `partial_average`, `software_limit_hit`, or `simulated` qualification / ソフトウェア制限と通常・部分平均・制限・合成の区別 |
+| `V_source_V`, `V_meter_V` | Source voltage readback/setpoint fallback and an independently accepted voltage-Meter reading / Source電圧のreadback・設定値fallbackと、独立して受理した電圧Meter読値 |
+| `I_source_A`, `I_meter_A` | Source current readback/setpoint fallback and an independently accepted current-Meter reading / Source電流のreadback・設定値fallbackと、独立して受理した電流Meter読値 |
+| `R_source_ohm`, `G_source_S` | Per-point V/I and I/V from the Source quantity plus opposite-quantity Meter / Source量と反対量Meterによる点ごとのV/I・I/V |
+| `R_meter_ohm`, `G_meter_S` | Per-point V/I and I/V using both independent Meter readings; blank without both readings / 2つの独立Meter読値による点ごとのV/I・I/V。両方の読値がなければ空欄 |
 
 `software_limit_hit` is not a queried hardware compliance flag. A limited partial
 average retains its requested/completed counts even when its quality flag reports
 the limit. Settings successfully sent are not automatically verified by readback.
 `software_limit_hit`は機器から照会したコンプライアンス状態ではありません。制限による途中平均でも要求・完了回数を保持します。設定送信の成功を読返し検証済みとは扱いません。
+
+`V_meter_V` and `I_meter_A` are blank when their optional same-quantity Meter is
+unassigned or does not provide an accepted conversion; a Source value is never
+written into either field. `V_source_V` and `I_source_A` are likewise blank for
+the source function that does not generate that quantity. In Dual V-I,
+`V_source_V` is the programmed differential source value, not a measured
+terminal voltage. The R/G fields are per-point ratios; they are not the
+independent sweep-slope fits shown in the GUI status strip.
 
 ### Raw CSV: shared 18-column contract / 共通raw CSVの全18列
 
@@ -57,6 +71,10 @@ individual write/query/retry exchanges are not a complete wire trace. No instrum
 fabricated in simulation. Legacy exports keep their `.readings.jsonl` companion.
 空欄は未取得・非該当であり0ではありません。rawは監査対象操作を記録し、全バックグラウンド通信を記録するものではありません。simulationで機器応答を捏造しません。旧形式の保存では`.readings.jsonl`を維持します。
 
+## Historical `analysis_v3` field mapping
+
+The following mapping is retained for interpreting historical `analysis_v3`
+files. Current `analysis_v4` files use the 26-column contract above.
 
 | Former fields | Retained information |
 | --- | --- |
@@ -83,9 +101,10 @@ fabricated in simulation. Legacy exports keep their `.readings.jsonl` companion.
 
 A GS210 programmed-level query is not an independent measurement of voltage or
 current delivered to the load. The origin columns describe this explicitly:
-`meter`, `source_readback`, or `source_setpoint`. Consumers must not treat both
-voltage/current columns as independent DMM measurements. Source-setting
-resolution is not /MON resolution or measurement uncertainty.
+`meter`, `source_readback`, or `source_setpoint`. Only an accepted reading with
+the `meter` origin is a Meter reading; consumers must not treat a Source
+readback/setpoint as a DMM measurement. Source-setting resolution is not /MON
+resolution or measurement uncertainty.
 
 ## Precision, resolution and uncertainty
 
@@ -115,15 +134,20 @@ rows exist; this is not a crash-proof per-point metadata journal.
 
 ## Validation
 
-Tests cover analysis_v3 IV/VI column order, units, setpoint fallback origins,
-negative-zero and finite f64 round trips, and limit/status preservation. A JSON
+Tests cover analysis_v4 IV/VI column order, units, setpoint fallback origins,
+separate Source/Meter fields, negative-zero and finite f64 round trips, and
+limit/status preservation. Legacy `analysis_v3` reading remains supported. A JSON
 replacement-failure test verifies that initial settings survive a failed final
 write. Integration checks cover initial metadata, completed/stopped runs,
 autorange history and output cleanup. Full legacy CSV tests remain intact.
 
 ## 日本語 — 全文対訳
 
-ネイティブCSVは18列の`analysis_v3`で、run metadata schemaは8です。新しいrunはmultiline-safeな`.raw.csv`を作成し、旧runの`.readings.jsonl`は保存時に維持します。
+現在のネイティブCSVは26列の`analysis_v4`で、run metadata schemaは9、GUI settings schemaは4です。raw監査CSVは変更せず18列の`raw_csv_v1`です。新しいrunはmultiline-safeな`.raw.csv`を作成し、旧runの`.readings.jsonl`は保存時に維持します。
+
+### 歴史的な`analysis_v3`フィールド対応
+
+次表は過去の`analysis_v3`ファイルを解釈するために残しています。現在の`analysis_v4`は本文冒頭の26列契約を使います。
 
 | 旧フィールド | 保持する情報 |
 | --- | --- |
@@ -148,7 +172,7 @@ autorange history and output cleanup. Full legacy CSV tests remain intact.
 
 ### 値の由来
 
-GS210のprogrammed-level照会は、負荷へ供給された電圧・電流の独立測定ではありません。origin列の`meter`・`source_readback`・`source_setpoint`で明示します。電圧と電流の両列を独立DMM測定として扱わないでください。出力設定分解能は/MONの分解能や測定不確かさとは異なります。
+GS210のprogrammed-level照会は、負荷へ供給された電圧・電流の独立測定ではありません。origin列の`meter`・`source_readback`・`source_setpoint`で明示します。`meter` originで受理した値だけをMeter読値として扱い、Source readback/setpointをDMM測定と扱わないでください。出力設定分解能は/MONの分解能や測定不確かさとは異なります。
 
 ### 精度・分解能・不確かさ
 
@@ -168,16 +192,17 @@ CSVは各点でflushします。range・resolution変更は最終JSONに点番�
 
 ### 検証
 
-analysis_v3の18列、単位、setpoint fallbackのorigin、負のゼロと有限f64の往復、制限・状態保持をテストします。JSON置換失敗テストで最終保存失敗時にも初期設定が残ることを確認します。統合テストは初期metadata、完了・停止、autorange履歴、出力後処理を確認します。旧CSVの全テストも維持しています。
+analysis_v4の26列、単位、setpoint fallbackのorigin、Source/Meterの分離、負のゼロと有限f64の往復、制限・状態保持をテストします。旧`analysis_v3`の読込みも維持します。JSON置換失敗テストで最終保存失敗時にも初期設定が残ることを確認します。統合テストは初期metadata、完了・停止、autorange履歴、出力後処理を確認します。
 
-## Source hardware protection
+## Historical schema-3/schema-8 protection notes
 
 `config.source_compliance` is the requested Source hardware limit (A for V-I,
 V for I-V). An omitted/null value preserves legacy coupling to `compliance`.
 `config.compliance` is the external Meter software stop. The actual programmed
 Source threshold is `hardware_compliance_setting`; it may differ due to device
-resolution or fixed range protection. Settings files use schema 3; metadata uses
-schema 8. The 18-column analysis CSV remains `analysis_v3`.
+resolution or fixed range protection. This section documents the historical
+schema-3/settings-schema-8 `analysis_v3` records. Current records use settings
+schema 4, metadata schema 9 and the 26-column `analysis_v4` contract above.
 
 For GS210, `source_protection_stop` records the target index/value, observation
 UTC time, raw condition register and H/L/EMR flags, and any associated failure.
@@ -195,8 +220,9 @@ Source保護とMeter停止は別設定です。GS210がH/L制限を返した点�
 
 ### Dual-source runs
 
-Dual runs keep the same 18 analysis columns, column order, SI units, scientific
-notation and origin labels. `voltage_V` represents V1 − V2. Integer weights are
+Dual runs use the current 26 analysis columns, SI units, scientific notation and
+origin labels. The original 18 columns retain their order and the eight explicit
+Source/Meter fields are appended. `voltage_V` represents V1 − V2. Integer weights are
 in `.run.json` under `balanced_drive.ratio`; per-source setpoints and queried
 programmed levels are in `dual_source_points`, joined to CSV rows by
 `point_index`. Independent terminal voltages are unknown (`output_voltage_V:

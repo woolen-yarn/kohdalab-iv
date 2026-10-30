@@ -1,10 +1,17 @@
 # Changelog / 変更履歴
 
-## Unreleased
+## 1.3.0-alpha.21 — 2026-10-30
 
 - Assign separate voltage/current Meters, including an optional source-quantity Meter in V-I, I-V and Dual. Preserve existing one-Meter operation.
 - Overlay Source/Meter traces on one plot with stable lower/upper axes; display independent fitted resistance/conductance.
 - Append explicit Source/Meter V/I and per-point R/G columns in analysis_v4, without fabricating missing measurements. Settings schema 4 and run metadata 9 distinguish this contract; update bundled Notebook clients.
+- Keep the raw audit CSV at its existing 18-column `raw_csv_v1` contract. The bundled client reads both `analysis_v4` and historical `analysis_v3`.
+- Source/Meter assignment, plotting, CSV and packaging coverage for this preview are software/simulation-qualified; no new physical-device qualification is claimed.
+
+- Source/Meterの役割を分離し、V-I・I-V・Dualで同じ物理量を測る任意Meterを追加。従来のMeter 1台だけの運用を維持します。
+- Source/Meter由来の線を上下軸が安定した1枚のプロットに重ね、Source/Meter別の掃引フィットによる抵抗・コンダクタンスを表示します。凡例はforward/backwardのみです。
+- 26列の`analysis_v4`へSource/MeterのV/Iと点ごとのR/Gを追加し、未取得値を捏造しません。settings schema 4、run metadata schema 9、raw監査CSVは既存18列の`raw_csv_v1`です。同梱Notebookクライアントは`analysis_v4`と旧`analysis_v3`を読みます。
+- このpreviewのSource/Meter割当・プロット・CSV・パッケージの確認はソフトウェア／simulationです。新たな実機適合確認は主張しません。
 
 ## 1.3.0-alpha.20
 

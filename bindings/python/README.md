@@ -143,9 +143,10 @@ gate leakage current without an independent meter or `/MON` connection.
 Open [the gate and balanced-IV simulation tutorial](examples/gate-balanced-control.ipynb)
 for a complete no-hardware example.
 
-## Development model selection
+## Explicit model selection
 
-The 1.3 development engine accepts explicit models (both the client and engine must be the matching development version):
+KohdaLab IV 1.3.0-alpha.21 accepts explicit models. Keep the bundled client and
+application at compatible release versions:
 
 ```python
 iv.connect("GPIB0::3::INSTR", "GPIB0::7::INSTR",
@@ -402,4 +403,7 @@ Legacy IV codes remain readable aliases. Error messages and original recording e
 旧IVコードも別名として読み取れます。例外型はコードから選択し、Pythonで文面推測はしません。既存エンジンの診断分類は保護を迂回する判定には使いません。CSV列・保存済みJSONのschemaは変更しません。
 
 
-Source settings and measured V/I are separate in the development version; see [instrument assignment and CSV fields](../../docs/guides/source-and-meter-values.md). Update this client with that application; published older packages retain their documented schema.
+KohdaLab IV 1.3.0-alpha.21 separates Source settings from optional measured V/I;
+see [instrument assignment and CSV fields](../../docs/guides/source-and-meter-values.md).
+Use the bundled client from the same release. It reads `analysis_v4` and legacy
+`analysis_v3`; older applications and clients retain their documented schema.

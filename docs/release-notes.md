@@ -1,23 +1,59 @@
-# KohdaLab IV 1.3.0-alpha.20 preview
+# KohdaLab IV 1.3.0-alpha.21 preview
 
-## Changes
+## Source and Meter values
 
-The canonical configuration is `~/.kohdalab/iv/config/config.json` (Windows: `%USERPROFILE%\.kohdalab\iv\config\config.json`). Runtime API descriptors use `iv/run`; default measurements and application logs use sibling `results` and `logs` where applicable. Camera exports continue to honor the user-selected folder. The shared path definition is vendored identically in all five applications.
+Settings can now assign Source, Meter (V), and Meter (I) independently. V-I and
+Dual V-I may use an optional voltage Meter; I-V may use an optional current
+Meter. Existing single-Meter operation remains available. The central plot keeps
+one shared SI coordinate scale, with Source on the lower axis and Meter on the
+reserved upper axis. Source- and Meter-based traces overlay, the legend shows
+only forward/backward direction, and the one-line status display reports their
+independent fitted R/G values.
 
-Dual mode no longer adds an explanatory row below Mode; the split controls remain in Settings.
+The main CSV is now 26-column `analysis_v4`; the original 18 fields are retained
+in order and eight Source/Meter V/I and per-point R/G fields are appended. Raw
+audit CSV remains 18-column `raw_csv_v1`. Settings schema is 4 and run metadata
+schema is 9. Missing optional Meter values remain blank; no terminal measurement
+is inferred from a source setting. The bundled Python client reads both
+`analysis_v4` and legacy `analysis_v3`.
 
 ## Compatibility and safety
 
-A missing default is created atomically on the first normal GUI launch. Existing settings, including invalid/foreign/unsupported files, are preserved with visible errors. Old direct-child, shared, preview and AppData profiles are not imported or removed automatically; use Browse/Load after reviewing an existing profile. Explicit profile and output paths remain respected. No device connection, source output, capture or shutter movement is added. Scientific file formats and control ownership/cleanup policies are unchanged.
+The canonical application-owned layout is
+`~/.kohdalab/iv/config/config.json`, with sibling `run`, `results`, and `logs`
+directories (Windows: `%USERPROFILE%\.kohdalab\iv\...`). A missing default is
+created atomically on first normal GUI launch; existing, invalid, foreign, and
+unsupported profiles are preserved and reported rather than replaced. Old
+profiles are not imported automatically. Device connection and source output are
+not enabled by configuration creation or loading.
 
-Update the bundled Python clients/common SDK (1.0.1) with the GUI. They discover the new app-owned run directory; legacy discovery is read-only. The wire protocol stays at version 1. Existing cross-process recovery interlocks and OS driver caches retain their safety/OS-managed namespaces rather than being mistaken for GUI configuration.
+Source protection, Meter limit, fixed-range behavior, GUI ownership and cleanup
+policies are unchanged. The additional same-quantity Meter is read sequentially,
+not as a hardware-synchronized acquisition. A failed assigned Meter does not
+silently fall back to a Source value and follows the existing safety-stop path.
 
-## Downloads and validation
+## Distribution and qualification
 
-Windows Setup/portable, supported Mac distribution and corresponding source/build kit are attached. Windows artifacts remain unsigned; supported Mac applications are ad hoc signed and not notarized. Normal GUI startup is tested in isolated user homes, including restart/invalid-file preservation and canonical config/run paths. Platform tests, installer evidence and artifact/source hashes qualify the attached builds; no new physical-device qualification is claimed.
+Windows x64 Setup/portable, macOS Apple-silicon portable, and the corresponding
+source build kit are distributed with this preview. Windows binaries are
+unsigned. macOS bundles are ad hoc signed and are not Apple-notarized. This
+release has software, simulation, packaging, and documentation checks; it does
+not claim a new physical-device qualification for the Source/Meter feature.
 
 ## 日本語
 
-設定は `iv/config/config.json`、実行時APIファイルは同じアプリ配下の `run` に統一します。結果・アプリログもアプリ配下の `results`・`logs` を使います（明示した保存先は保持）。初回は標準設定を自動作成します。旧設定は削除・自動移行せず、不正な設定は上書きせずエラーを表示します。装置への自動接続・出力ONや、測定・データ形式・安全動作の変更はありません。Pythonクライアントも同梱版へ更新してください。
+### Source/Meter値
 
-DualのMode下の説明行を削除し、配分はSettingsで引き続き設定できます。
+SettingsでSource、Meter (V)、Meter (I)を別々に割り当てられます。V-I／Dual V-Iでは任意の電圧Meter、I-Vでは任意の電流Meterを使え、従来のMeter 1台だけの運用も維持します。中央プロットは同じSIスケールで下軸にSource、上軸にMeterを表示します。Source/Meter由来の線は重ねて表示され、凡例はforward/backwardのみ、1行のstatusにはそれぞれの掃引フィットによるR/Gを表示します。
+
+main CSVは26列の`analysis_v4`です。元の18列を順序どおり維持し、Source/MeterのV/Iと点ごとのR/Gの8列を末尾に追加します。raw監査CSVは18列の`raw_csv_v1`のままです。settings schemaは4、run metadata schemaは9です。任意Meterが未割当または取得失敗なら値は空欄で、Source設定値から端子実測を推定して書き込みません。同梱Pythonクライアントは`analysis_v4`と旧`analysis_v3`を読めます。
+
+### 互換性と安全性
+
+標準のアプリ専用保存先は`~/.kohdalab/iv/config/config.json`で、同階層に`run`、`results`、`logs`があります（Windowsでは`%USERPROFILE%\.kohdalab\iv\...`）。初回の通常GUI起動時に設定がなければ原子的に作成します。既存・不正・別アプリ・未対応の設定は置換せずエラー表示します。旧設定は自動移行しません。設定の作成・読込だけでは装置接続やSource出力ONは行いません。
+
+Source保護、Meter limit、固定レンジ、GUIの制御権、終了処理の安全方針は変更しません。追加Meterの取得は順次であり、ハードウェア同期ではありません。割り当てたMeterが失敗した場合はSource値へ黙って置換せず、既存の安全停止処理に従います。
+
+### 配布と検証範囲
+
+このpreviewにはWindows x64 Setup/portable、macOS Apple silicon portable、対応するsource build kitを用意します。Windowsバイナリは未署名です。macOSバンドルはad hoc署名で、Apple公証は受けていません。今回の確認はソフトウェア・simulation・パッケージ・ドキュメントです。Source/Meter機能について、新たな実機適合確認は主張しません。

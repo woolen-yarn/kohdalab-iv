@@ -3235,39 +3235,65 @@ impl IvApp {
     fn main_view(&mut self, ui: &mut egui::Ui) {
         self.measurement_controls(ui);
         ui.add_space(8.0);
+        let status = if self.busy() {
+            format!(
+                "{} ({:.0}s)",
+                self.state.phase.to_lowercase(),
+                self.phase_start.elapsed().as_secs_f64()
+            )
+        } else {
+            self.state.phase.to_lowercase()
+        };
+        let point = if self.state.total == 0 {
+            "—".into()
+        } else {
+            format!("{}/{}", self.state.points, self.state.total)
+        };
+        let fit = |value: Option<f64>| {
+            value
+                .filter(|r| r.is_finite() && *r != 0.0)
+                .map(|r| (r, 1.0 / r))
+        };
+        let source = fit(self.state.resistance);
+        let meter = fit(self.state.reference_resistance);
+        let detail = |name: &str, values: Option<(f64, f64)>| match values {
+            Some((r, g)) => format!(
+                "{name} sweep fit\nR: {r:.12e} Ω\nG: {g:.12e} S\nCSV R/G columns are per-point ratios."
+            ),
+            None => format!("{name} sweep fit: no valid fit available."),
+        };
+        // Fixed cells keep the entire summary on one line, including while
+        // pending, unassigned, or displaying long/large numerical values.
         ui.horizontal(|ui| {
-            ui.label(RichText::new("Status").color(MUTED));
-            let status = if self.busy() {
-                format!(
-                    "{} ({:.0}s)",
-                    self.state.phase.to_lowercase(),
-                    self.phase_start.elapsed().as_secs_f64()
+            ui.spacing_mut().item_spacing.x = 6.0;
+            let available = (ui.available_width() - 18.0).max(0.0);
+            for (fraction, text, hint) in [
+                (
+                    0.19,
+                    format!("Status {status}"),
+                    format!("{}\nOutput: {}", self.state.message, self.state.output),
+                ),
+                (
+                    0.12,
+                    format!("Point {point}"),
+                    format!("Sweep point {point}"),
+                ),
+                (
+                    0.345,
+                    format!("Source R/G {}", format_resistance_conductance(source)),
+                    detail("Source", source),
+                ),
+                (
+                    0.345,
+                    format!("Meter R/G {}", format_resistance_conductance(meter)),
+                    detail("Meter", meter),
+                ),
+            ] {
+                ui.add_sized(
+                    [available * fraction, 20.0],
+                    egui::Label::new(RichText::new(text).size(11.0)).truncate(),
                 )
-            } else {
-                self.state.phase.to_lowercase()
-            };
-            let width = ui.available_width() / 4.0;
-            ui.add_sized([width * 0.75, 20.0], egui::Label::new(status).truncate())
-                .on_hover_text(format!(
-                    "{}\nOutput: {}",
-                    self.state.message, self.state.output
-                ));
-            ui.label(RichText::new("Point").color(MUTED));
-            ui.label(if self.state.total == 0 {
-                "-".into()
-            } else {
-                format!("{}/{}", self.state.points, self.state.total)
-            });
-        });
-        // Fixed-width cells keep numeric values from widening the central panel.
-        // Both cells remain present before acquisition and without an optional DMM.
-        ui.columns(2, |columns| {
-            for (index, label, value) in [(0,"Source R/G",self.state.resistance),(1,"Meter R/G",self.state.reference_resistance)] {
-                let text=format_resistance_conductance(value.filter(|r|r.is_finite() && *r!=0.0).map(|r|(r,1.0/r)));
-                columns[index].label(RichText::new(label).small().color(MUTED))
-                    .on_hover_text("Independent sweep fit: R = slope of V against I; G = 1/R. CSV R/G columns are per-point ratios.");
-                let width=columns[index].available_width();
-                columns[index].add_sized([width,20.0],egui::Label::new(&text).truncate()).on_hover_text(text);
+                .on_hover_text(hint);
             }
         });
         ui.add_space(8.0);
@@ -3386,28 +3412,41 @@ impl IvApp {
             .y_axis_label(format!("{y_name} ({}{y_unit})", y_scale.prefix))
             .y_axis_formatter(move |mark, _| y_scale.tick(mark.value, mark.step_size))
             .label_formatter(move |name, point| {
-                let meter_trace = name.starts_with("meter");
-                let readings = if meter_trace {
-                    reference_samples
-                } else {
-                    samples
-                };
-                let x_name = if meter_trace {
-                    meter_x_name
-                } else {
-                    source_x_name
-                };
-                let resolution = readings
+                // Legend names group by direction. Identify the actual point
+                // from each dataset so tooltip quantities keep their meaning.
+                let source = samples
                     .iter()
                     .rev()
-                    .find(|sample| sample.0 == point.x && sample.1 == point.y)
-                    .map(|sample| sample.3)
-                    .unwrap_or([None; 2]);
-                format!(
-                    "{name}\n{x_name}: {}\n{y_name}: {}",
-                    display_reading(point.x, resolution[0], x_unit),
-                    display_reading(point.y, resolution[1], y_unit)
-                )
+                    .find(|sample| sample.0 == point.x && sample.1 == point.y);
+                let measured = reference_samples
+                    .iter()
+                    .rev()
+                    .find(|sample| sample.0 == point.x && sample.1 == point.y);
+                let mut text = name.to_owned();
+                if let Some(sample) = source {
+                    text.push_str(&format!(
+                        "\n{source_x_name}: {}",
+                        display_reading(point.x, sample.3[0], x_unit)
+                    ));
+                }
+                if let Some(sample) = measured {
+                    text.push_str(&format!(
+                        "\n{meter_x_name}: {}",
+                        display_reading(point.x, sample.3[0], x_unit)
+                    ));
+                }
+                if source.is_none() && measured.is_none() {
+                    text.push_str(&format!(
+                        "\n{x_unit}: {}",
+                        display_reading(point.x, None, x_unit)
+                    ));
+                }
+                let resolution = measured.or(source).and_then(|sample| sample.3[1]);
+                text.push_str(&format!(
+                    "\n{y_name}: {}",
+                    display_reading(point.y, resolution, y_unit)
+                ));
+                text
             })
             .legend(Legend::default().background_alpha(0.45))
             .allow_boxed_zoom(true)
@@ -3417,12 +3456,12 @@ impl IvApp {
             .include_y(0.0)
             .auto_bounds(true)
             .show(ui, |plot_ui| {
-                draw_sweep_series(plot_ui, series, "source", false);
+                draw_sweep_series(plot_ui, series, false);
                 // The two x quantities intentionally share raw SI bounds. Do
                 // not remap or normalize the reference curve: differences are
                 // scientific signal, not UI decoration.
                 if !reference_samples.is_empty() {
-                    draw_sweep_series(plot_ui, reference_series, "meter", true);
+                    draw_sweep_series(plot_ui, reference_series, true);
                 }
             });
         if self.smoke {
@@ -3643,13 +3682,30 @@ impl eframe::App for IvApp {
     }
 }
 
+/// Three display digits keep the summary readable; CSV and fit values are untouched.
+fn compact_fit_quantity(value: f64, unit: &str) -> String {
+    if !value.is_finite() {
+        return "—".into();
+    }
+    if value == 0.0 {
+        return format!("0 {unit}");
+    }
+    let mut scale = AxisScale::for_magnitude(value.abs());
+    if (value / scale.factor).abs() >= 999.5 {
+        scale = AxisScale::for_magnitude(value.abs() * 1.001);
+    }
+    let scaled = value / scale.factor;
+    let decimals = (2.0 - (scaled.abs().log10() + 1e-12).floor()).clamp(0.0, 6.0) as usize;
+    format!("{scaled:.decimals$} {}{unit}", scale.prefix)
+}
+
 fn format_resistance_conductance(values: Option<(f64, f64)>) -> String {
     values
         .map(|(resistance, conductance)| {
             format!(
                 "{} / {}",
-                fmt_quantity(resistance, "Ohm"),
-                fmt_quantity(conductance, "S")
+                compact_fit_quantity(resistance, "Ω"),
+                compact_fit_quantity(conductance, "S")
             )
         })
         .unwrap_or_else(|| "—".into())
@@ -3661,7 +3717,6 @@ fn format_resistance_conductance(values: Option<(f64, f64)>) -> String {
 fn draw_sweep_series<'a>(
     plot_ui: &mut PlotUi<'a>,
     series: &'a [Vec<PlotPoint>; 3],
-    origin: &str,
     reference: bool,
 ) {
     for (values, (direction, color)) in
@@ -3673,7 +3728,7 @@ fn draw_sweep_series<'a>(
             .split(|point| !point.x.is_finite() || !point.y.is_finite())
             .filter(|segment| !segment.is_empty())
         {
-            let name = format!("{origin} {direction}");
+            let name = direction; // Shared name/id groups both measurements in the legend.
             let style = if reference {
                 LineStyle::dotted_dense()
             } else if direction == "backward" {
@@ -3682,7 +3737,7 @@ fn draw_sweep_series<'a>(
                 LineStyle::Solid
             };
             plot_ui.line(
-                Line::new(name.clone(), PlotPoints::Borrowed(segment))
+                Line::new(name, PlotPoints::Borrowed(segment))
                     .color(color)
                     .width(if direction == "forward" {
                         3.0_f32

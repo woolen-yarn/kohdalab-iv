@@ -54,6 +54,15 @@ jobs:
           $env:KOHDALAB_IV_EXE = Join-Path $PWD 'target/release/iv-cli.exe'
           python -m unittest discover -s bindings/python -p 'test_*.py' -v
           if ($LASTEXITCODE -ne 0) { throw 'Notebook/client validation failed' }
+      - name: Render both simulation GUI cases
+        shell: pwsh
+        run: |
+          $v = python -c "import tomllib,pathlib; print(tomllib.loads(pathlib.Path('Cargo.toml').read_text())['workspace']['package']['version'])"
+          python scripts/verify_reference_gui.py target/release/kohdalab-iv.exe --output build/gui-validation --version $v
+          if ($LASTEXITCODE -ne 0) { throw 'GUI rendering/geometry validation failed' }
+          New-Item -ItemType Directory -Force dist | Out-Null
+          Copy-Item build/gui-validation/gui-validation.json dist/gui-validation.json
+          Copy-Item build/gui-validation/source-and-meter.png dist/iv-windows-simulation.png
       - name: Package portable, source kit and Setup
         id: package
         shell: pwsh
@@ -93,6 +102,7 @@ jobs:
           path: |
             dist/*.zip
             dist/*-Setup.exe
+            dist/*.png
             dist/*.json
             dist/SHA256SUMS.txt
 

@@ -206,8 +206,9 @@ source connection; changing Mode never enables output.
 
 Forward curves are blue solid lines with filled circles; backward curves are
 purple dashed lines with open diamonds, so overlapping curves remain distinct.
-Field/Value shows the exact 14-column CSV schema and saved values; live readouts
-and plot tooltips continue using instrument-resolution display precision.
+Field/Value shows the exact 26-column `analysis_v4` schema and saved values;
+live readouts and plot tooltips continue using instrument-resolution display
+precision.
 
 ## Python and Jupyter
 
@@ -320,7 +321,7 @@ native CSV は timestamp、elapsed time、point/repeat/sweep index、direction�
 
 historical benchmark report/prior GitHub release は migration の evidence として利用可能です。MIT は Rust application を対象にし、portable bundle 配布時は native helper/dependency の全 source/license notice を保持します。live acquisition は 50 ms start-to-start interval（最大 20 samples/s）、display refresh は 33 ms interval を目標にします。actual acquisition rate は instrument/NPLC/USB-GPIB latency に依存し synthetic measured sample は追加しません。全 floating CSV column（`elapsed_s`、`target_value`、`voltage_V`、`current_A`）は zero（`0e0`）を含め shortest round-trip scientific notation を使います。
 
-central I-V plot は通常 wheel scroll を無視します。drag、boxed zoom、modifier-wheel zoom、double-click reset は利用できます。direction color は measured turning point を共有し forward/backward line は endpoint で接続します。Excel は import 時 numeric CSV cell を再format し得るため、全 electrical value を exponent で表示するには Excel で Scientific number format を選びます。CSV text は scientific のままです。voltage は amber、current は teal、forward/backward sweep は legend 付き blue/purple です。idle 中の Mode change は output OFF/zero level 検証後に live source/meter function を切替えます。GUI は source connection 時に chosen Mode を適用し、Mode change が output を enable することはありません。forward curve は filled circle の blue solid、backward curve は open diamond の purple dashed で overlap を区別します。Field/Value は exact 14-column CSV schema/saved value を表示し、live readout/plot tooltip は instrument-resolution display precision を使います。
+central I-V plot は通常 wheel scroll を無視します。drag、boxed zoom、modifier-wheel zoom、double-click reset は利用できます。direction color は measured turning point を共有し forward/backward line は endpoint で接続します。Excel は import 時 numeric CSV cell を再format し得るため、全 electrical value を exponent で表示するには Excel で Scientific number format を選びます。CSV text は scientific のままです。voltage は amber、current は teal、forward/backward sweep は legend 付き blue/purple です。idle 中の Mode change は output OFF/zero level 検証後に live source/meter function を切替えます。GUI は source connection 時に chosen Mode を適用し、Mode change が output を enable することはありません。forward curve は filled circle の blue solid、backward curve は open diamond の purple dashed で overlap を区別します。Field/Value はexact 26-column `analysis_v4` schema/saved valueを表示し、live readout/plot tooltipはinstrument-resolution display precisionを使います。
 
 ## Python and Jupyter
 

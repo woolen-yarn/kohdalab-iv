@@ -1,7 +1,8 @@
 # Source settings and measured V/I / Source設定値と実測値
 
-This describes the source-quantity Meter feature in the development version.
-The currently published packages do not gain this feature until an updated release.
+KohdaLab IV 1.3.0-alpha.21 separates programmed Source quantities from optional
+same-quantity Meter readings. This guide describes the released software
+contract. It does not claim a new physical-device qualification.
 
 ## Instrument assignment
 
@@ -52,8 +53,10 @@ is 4. Existing columns retain their names; eight explicit columns are appended:
 | R_source_ohm / G_source_S | Per-point ratios using Source level + the opposite-quantity Meter. |
 | R_meter_ohm / G_meter_S | Per-point ratios using measured voltage + measured current; blank without both. |
 
-`voltage_V` / `current_A` use the measured pair when available, otherwise the
-existing Source+Meter pair. The origin columns distinguish this fallback.
+`voltage_V` / `current_A` use the measured pair when both meter readings are
+available; otherwise they retain the existing Source-plus-opposite-quantity-Meter
+pair. The origin columns distinguish this fallback. Neither `V_meter_V` nor
+`I_meter_A` is fabricated from a Source setting.
 Finite numeric values use shortest-roundtrip scientific notation in SI units,
 without display rounding. Simulation is explicitly flagged and is not physical
 measurement evidence. The raw CSV and run JSON remain companions to the analysis
@@ -80,9 +83,9 @@ with NativeIV() as iv:
     # Review source limits, compliance and sweep values before running.
 ```
 
-Update the bundled Python client together with the application. The new client
-also accepts legacy `analysis_v3`; an old client rejects the new schema rather
-than assuming its earlier contract. The external GUI control API supports
+Use the bundled Python client that ships with 1.3.0-alpha.21. It accepts both
+`analysis_v4` and legacy `analysis_v3`; an older client rejects the new schema
+rather than assuming its earlier contract. The external GUI control API supports
 `reference_meter` alongside `source`, `source2` and `meter` in device lists.
 
 ## 日本語
