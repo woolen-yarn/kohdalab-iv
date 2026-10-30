@@ -1,25 +1,21 @@
-# KohdaLab IV 1.3.0-alpha.18 preview
+# KohdaLab IV 1.3.0-alpha.19 preview
 
-## Changes / 変更内容
+## Changes
 
-Add the authenticated Control Protocol 1 adapter and separate common Python SDK. Refresh the current simulation screenshot and standardize PR/release maintenance. Windows-generated source/build kits retain LF and executable permissions for Mac/MSYS shell scripts.
+The first normal GUI launch automatically creates `~/.kohdalab/iv/config.json` (`%USERPROFILE%\.kohdalab\iv\config.json` on Windows) when it is missing. You do not need to prepare JSON manually.
 
-## Compatibility and migration / 互換性と移行
+## Compatibility and safety
 
-The native protocol and 18-column CSV remain supported. Common operations use IV's existing exclusive ownership and fresh Output OFF release verification. Config remains `~/.kohdalab/iv/config.json`.
+Existing files are not rewritten on startup, including malformed, foreign and unsupported settings. Errors are displayed instead of silently replacing those files. Creation is atomic and cannot clobber a competing launch. Explicit configuration profiles and smoke tests do not initialize the production default. Loading/creating settings never connects instruments or enables source output. Existing acquisition, safety, CSV and external API contracts are unchanged.
 
-## Downloads / ダウンロード
+## Downloads
 
-Windows x64 Setup and portable preview ZIP; macOS Apple-silicon preview ZIP; source/build kit and checksums. Windows is unsigned; macOS is ad hoc signed, not notarized.
+Use the Windows Setup or portable ZIP, macOS Apple silicon preview ZIP, or corresponding source/build kit attached to this release. Windows executables are unsigned; the Mac application uses ad hoc signing and is not notarized.
 
-[Release packages](https://github.com/woolen-yarn/kohdalab-iv/releases). Existing older releases remain available.
+## Validation
 
-## Validation and provenance / 検証と出所
-
-Local Rust workspace: 280 passed; strict clippy passed. Real GUI common/native simulation: three points, 18 columns, duplicate receipts, exclusive ownership, verified stop and release/reacquire.
-
-The common Python SDK has nine device-free tests. Source/build identifiers, package manifests and SHA-256 evidence accompany the release. These checks do not newly qualify physical instruments, optical closure, camera calibration or scientific accuracy.
+The first-launch regression tests cover missing defaults, byte preservation, invalid/future/foreign files and an unusable configuration directory. Final platform CI, compiled GUI startup checks and artifact provenance are recorded with the release. No new physical-device qualification is claimed.
 
 ## 日本語
 
-共通GUI APIとPython SDKを追加しました。既存の測定・CSV・停止方針は維持します。Windowsは未署名、Macはad hoc署名です。実機の新規適合確認は行っていません。
+初回の通常GUI起動時に、標準設定がなければ自動作成します。既存・不正・未対応の設定は上書きせず、エラーを表示します。別プロファイル指定とスモークテストは通常用設定を作成しません。装置への接続・出力ON、測定・CSV・APIの仕様は変更しません。Windows版は未署名、Mac版はアドホック署名で公証されていません。

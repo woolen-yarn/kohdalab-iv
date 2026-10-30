@@ -1,5 +1,10 @@
 # Changelog / 変更履歴
 
+## 1.3.0-alpha.19
+
+- Create a missing default configuration on first normal GUI launch without connecting instruments or enabling output.
+- Preserve existing and invalid settings; report initialization failures. Explicit profiles and smoke tests leave production defaults untouched.
+
 ## 1.3.0-alpha.18 — 2026-10-29
 
 - Preserve LF and executable mode in cross-platform shell scripts inside Windows-generated source/build kits.
