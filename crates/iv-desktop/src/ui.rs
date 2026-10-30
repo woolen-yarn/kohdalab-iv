@@ -1727,15 +1727,6 @@ impl IvApp {
                         });
                     }
                 }
-                if self.settings.config.balanced_source.is_some() {
-                    form_label(ui, "", 45.0);
-                    ui.label(
-                        RichText::new("Differential V · split is configured in Settings")
-                            .small()
-                            .color(MUTED),
-                    );
-                    ui.end_row();
-                }
                 form_label(ui, "Sweep", 45.0);
                 egui::ComboBox::from_id_salt("pattern")
                     .width(width)

@@ -2,6 +2,8 @@
 
 ## 1.3.0-alpha.20
 
+- Remove the explanatory row beneath Dual mode while keeping the split controls in Settings.
+
 - Use the common app-owned directory layout: config/config.json, run, results and logs beneath ~/.kohdalab/iv.
 - Align normal startup, file selection, external API/Notebook discovery and documentation. Preserve operator-selected paths and all old files without automatic migration.
 - Common control SDK 1.0.1 discovers app-owned run directories; wire protocol and instrument safety are unchanged.
