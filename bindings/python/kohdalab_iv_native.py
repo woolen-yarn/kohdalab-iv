@@ -19,9 +19,10 @@ from typing import Any
 # Keep this contract deliberately independent of the package release number.
 # It describes the JSON-lines engine protocol, not the Python distribution.
 API_VERSION = 1
-SETTINGS_SCHEMA_VERSION = 3
-RUN_METADATA_SCHEMA_VERSION = 8
-CSV_SCHEMA = "analysis_v3"
+SETTINGS_SCHEMA_VERSION = 4
+RUN_METADATA_SCHEMA_VERSION = 9
+CSV_SCHEMA = "analysis_v4"
+SUPPORTED_CSV_SCHEMAS = {"analysis_v3", CSV_SCHEMA}
 _MISSING = object()
 
 
@@ -100,7 +101,7 @@ def _negotiate_protocol(declaration=_MISSING):
             f"Engine declares run metadata schema {metadata}, but this client supports up to "
             f"{RUN_METADATA_SCHEMA_VERSION}. Upgrade kohdalab-iv-native."
         )
-    if csv_schema != CSV_SCHEMA:
+    if csv_schema not in SUPPORTED_CSV_SCHEMAS:
         raise RuntimeError(
             f"Engine declares CSV schema '{csv_schema}', but this client supports "
             f"'{CSV_SCHEMA}'. Upgrade kohdalab-iv-native."
@@ -302,6 +303,19 @@ class NativeIV:
         self._send("connect", source=source, meter=meter, simulation=simulation, **self._models)
         return self.wait(lambda s: s.get("connected", False), timeout)
 
+    def connect_reference_meter(self, resource="", *, simulation=False,
+                                model="AGILENT_34411A", timeout=30):
+        """Connect the optional voltage DMM in V-I/Dual, current DMM in I-V.
+
+        Also set run config reference_meter={"model": model}; this method
+        connects a device but never enables any Source output.
+        """
+        if "reference_meter" not in self.default_config:
+            raise RuntimeError("Source-quantity Meter requires a newer IV application.")
+        self._send("connect_reference_meter", model=model,
+                   simulation=simulation, resource=resource)
+        return self.wait(lambda s: s.get("reference_meter_connected", False), timeout)
+
     def _require_multi_source_support(self):
         if "balanced_source" not in self.default_config:
             raise RuntimeError(
@@ -389,7 +403,8 @@ class NativeIV:
         return self.wait(lambda s: not s.get("source_connected") and
                          not s.get("source2_connected") and
                          not s.get("gate_connected") and
-                         not s.get("meter_connected"))
+                         not s.get("meter_connected") and
+                         not s.get("reference_meter_connected", False))
 
     def close(self, timeout=40):
         if self._closed:

@@ -135,9 +135,11 @@ The Mac app is ad hoc signed and is not notarized.
    reports Failed or output Unknown, check the instrument front panel and use
    Disconnect to retry cleanup before reconnecting; do not treat an unverified
    output state as safe.
-6. The status strip shows progress, resistance and conductance. The right log
-   remains visible during discovery and measurement. Field / Value toggles the
-   exact 14 saved CSV fields; hover truncated entries for their full values.
+6. The status strip shows progress plus independent Source/Meter resistance and
+   conductance fits when an optional same-quantity Meter is assigned. The right
+   log remains visible during discovery and measurement. Field / Value toggles
+   the exact saved analysis fields (26 in `analysis_v4`); hover truncated entries
+   for their full values.
 7. Config Browse selects a JSON file. Load / Save use the displayed path. The
    Rust desktop config format is native Rust format.
 

@@ -276,6 +276,14 @@ fn balanced_sweep_keeps_gate_bias_and_records_both_source_values() {
             "meter_unit",
             "software_limit_hit",
             "quality_flags",
+            "V_source_V",
+            "V_meter_V",
+            "I_source_A",
+            "I_meter_A",
+            "R_source_ohm",
+            "R_meter_ohm",
+            "G_source_S",
+            "G_meter_S",
         ]
     );
     assert_eq!(metadata["csv"], path.display().to_string());

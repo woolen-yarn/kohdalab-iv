@@ -40,12 +40,14 @@ failure, or external meter limit stops the run and requests OFF on both IV
 sources. An active API-controlled gate also turns off on failure or protection
 stop. OFF is reported as verified only when verification succeeds.
 
-The analysis CSV retains exactly the existing 18 columns, their order, SI
-units (V/A), scientific numeric format and the existing `source_readback` /
-`source_setpoint` origin labels. In Dual mode its single `voltage_V` column is
-V1 − V2; no per-source columns or ratio columns are added. The raw audit CSV
-also retains its existing 18-column `raw_csv_v1` contract. Additional physical
-exchanges and structured source events use its existing `details_json` field.
+The analysis CSV uses the 26-column `analysis_v4` contract. Its original 18
+columns retain their order, SI units (V/A), scientific numeric format and the
+existing `source_readback` / `source_setpoint` origin labels; eight explicit
+Source/Meter V/I and per-point R/G fields are appended. In Dual mode its
+`voltage_V` and `V_source_V` columns are the programmed differential V1 − V2,
+not independently measured terminal voltages. The raw audit CSV remains the
+existing 18-column `raw_csv_v1` contract. Additional physical exchanges and
+structured source events use its existing `details_json` field.
 
 The companion `.run.json` keeps Dual details separately:
 

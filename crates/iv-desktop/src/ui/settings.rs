@@ -1,7 +1,7 @@
 //! Saved GUI settings and their existing on-disk representation.
 
 use crate::compatibility::SETTINGS_SCHEMA_VERSION;
-use iv_core::RunConfig;
+use iv_core::{ReferenceMeterConfig, RunConfig};
 use serde::{Deserialize, Serialize};
 use std::collections::HashSet;
 use std::path::{Path, PathBuf};
@@ -12,11 +12,12 @@ pub(super) fn profile_load_allowed(state: &crate::protocol::Snapshot) -> bool {
     !state.source_connected
         && !state.source2_connected
         && !state.meter_connected
+        && !state.reference_meter_connected
         && !state.gate_connected
 }
 
 /// A saved instrument connection.  The desktop engine still has one source,
-/// one optional second source and one meter role; the inventory lets users
+/// one optional second source and two meter roles; the inventory lets users
 /// keep several prepared connections and bind those roles in Settings.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
@@ -127,6 +128,10 @@ pub(super) struct Settings {
     pub(super) source2_id: u64,
     #[serde(default)]
     pub(super) meter_id: u64,
+    /// Optional DMM which measures the quantity set by the source.  The
+    /// ordinary `meter_id` remains the mandatory opposite-quantity meter.
+    #[serde(default)]
+    pub(super) reference_meter_id: Option<u64>,
     /// Inventory card associated with the independent voltage-bias connection.
     pub(super) dc_gate_id: u64,
     #[serde(default = "default_inventory_id")]
@@ -169,6 +174,7 @@ impl Default for Settings {
             source1_id: 1,
             source2_id: 2,
             meter_id: 3,
+            reference_meter_id: None,
             dc_gate_id: 0,
             next_inventory_id: 4,
             output_dir: kohdalab_control_protocol::paths::AppPaths::from_root(user_dir(), "iv")
@@ -250,6 +256,29 @@ impl Settings {
         if !self.meters.iter().any(|entry| entry.id == self.meter_id) {
             self.meter_id = self.meters[0].id;
         }
+        if self.reference_meter_id.is_some_and(|id| {
+            !self.meters.iter().any(|entry| entry.id == id) || id == self.meter_id
+        }) {
+            self.reference_meter_id = None;
+        }
+        if let Some(reference_id) = self.reference_meter_id {
+            let primary_resource = self
+                .meters
+                .iter()
+                .find(|entry| entry.id == self.meter_id)
+                .map(|entry| entry.resource.as_str());
+            let reference_resource = self
+                .meters
+                .iter()
+                .find(|entry| entry.id == reference_id)
+                .map(|entry| entry.resource.as_str());
+            if primary_resource
+                .zip(reference_resource)
+                .is_some_and(|(primary, reference)| !primary.is_empty() && primary == reference)
+            {
+                self.reference_meter_id = None;
+            }
+        }
         self.bind_active_entries();
     }
 
@@ -276,6 +305,37 @@ impl Settings {
             self.meter_model.clone_from(&entry.model);
             self.meter.clone_from(&entry.resource);
         }
+        self.config.reference_meter = self
+            .reference_meter_id
+            .and_then(|id| self.meters.iter().find(|entry| entry.id == id))
+            .map(|entry| ReferenceMeterConfig {
+                // The simulator is implemented through the normal 34411A
+                // profile; only the connection command carries the SIM flag.
+                model: if entry.model == "SIMULATED_METER" {
+                    "AGILENT_34411A".into()
+                } else {
+                    entry.model.clone()
+                },
+            });
+    }
+
+    /// Keep assignments tied to physical quantities rather than engine roles.
+    /// In V-I the primary meter is I and the reference is V; in I-V those
+    /// engine roles reverse.  With a legacy single meter there is no second
+    /// identity to preserve, so its existing function-switch behaviour stays
+    /// unchanged.
+    pub(super) fn swap_meter_roles_for_mode_change(
+        &mut self,
+        from: iv_core::Mode,
+        to: iv_core::Mode,
+    ) {
+        if from != to
+            && let Some(reference) = self.reference_meter_id
+        {
+            self.reference_meter_id = Some(self.meter_id);
+            self.meter_id = reference;
+        }
+        self.bind_active_entries();
     }
 
     /// Persist edits made through the existing active-device cards back to
@@ -329,7 +389,7 @@ impl Settings {
     }
 
     pub(super) fn remove_meter(&mut self, id: u64) -> bool {
-        if id == self.meter_id || self.meters.len() <= 1 {
+        if id == self.meter_id || self.reference_meter_id == Some(id) || self.meters.len() <= 1 {
             return false;
         }
         self.meters.retain(|entry| entry.id != id);
@@ -784,10 +844,11 @@ mod tests {
     fn autosave_cannot_overwrite_a_future_versioned_file() {
         let path =
             std::env::temp_dir().join(format!("iv-future-settings-{}.json", std::process::id()));
-        let original = br#"{"schema_version":4,"filename":"future"}"#;
-        std::fs::write(&path, original).unwrap();
+        let future = SETTINGS_SCHEMA_VERSION + 1;
+        let original = format!(r#"{{"schema_version":{future},"filename":"future"}}"#);
+        std::fs::write(&path, &original).unwrap();
         assert!(save_settings(&Settings::default(), &path).is_err());
-        assert_eq!(std::fs::read(&path).unwrap(), original);
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), original);
         std::fs::remove_file(path).unwrap();
     }
 
@@ -865,8 +926,11 @@ mod tests {
                 .filename,
             "current"
         );
-        let error = load_settings(br#"{"schema_version":4}"#).err().unwrap();
-        assert!(error.contains("schema version 4"));
+        let future = SETTINGS_SCHEMA_VERSION + 1;
+        let error = load_settings(format!(r#"{{"schema_version":{future}}}"#).as_bytes())
+            .err()
+            .unwrap();
+        assert!(error.contains(&format!("schema version {future}")));
         assert!(error.contains("newer KohdaLab IV"));
     }
 
@@ -937,6 +1001,92 @@ mod tests {
         assert!(settings.remove_source(settings.sources[2].id));
         assert_eq!(settings.sources.len(), 2);
     }
+
+    #[test]
+    fn optional_reference_meter_binds_only_a_distinct_second_dmm() {
+        let mut settings = Settings::default();
+        settings.add_meter();
+        let reference = settings.meters[1].id;
+        settings.meters[1].model = "SIMULATED_METER".into();
+        settings.reference_meter_id = Some(reference);
+        settings.bind_active_entries();
+        assert_eq!(
+            settings
+                .config
+                .reference_meter
+                .as_ref()
+                .map(|meter| meter.model.as_str()),
+            Some("AGILENT_34411A")
+        );
+
+        // A stale duplicate choice from an edited JSON profile is safely
+        // downgraded to the legacy one-meter configuration.
+        settings.reference_meter_id = Some(settings.meter_id);
+        settings.migrate_inventory();
+        assert_eq!(settings.reference_meter_id, None);
+        assert_eq!(settings.config.reference_meter, None);
+    }
+
+    #[test]
+    fn optional_reference_binding_survives_iv_vi_role_switches_and_none_is_legacy_safe() {
+        let mut settings = Settings::default();
+        settings.add_meter();
+        let reference = settings.meters[1].id;
+        settings.meters[1].model = "KEYSIGHT_34465A".into();
+        settings.meters[1].resource = "USB0::0x2A8D::0x0101::REF::INSTR".into();
+        settings.reference_meter_id = Some(reference);
+
+        for mode in [iv_core::Mode::Iv, iv_core::Mode::Vi, iv_core::Mode::Iv] {
+            settings.config.mode = mode;
+            settings.bind_active_entries();
+            assert_eq!(settings.reference_meter_id, Some(reference));
+            assert_eq!(
+                settings
+                    .config
+                    .reference_meter
+                    .as_ref()
+                    .map(|meter| meter.model.as_str()),
+                Some("KEYSIGHT_34465A")
+            );
+            assert_eq!(
+                settings
+                    .meters
+                    .iter()
+                    .find(|entry| entry.id == reference)
+                    .unwrap()
+                    .resource,
+                "USB0::0x2A8D::0x0101::REF::INSTR"
+            );
+        }
+
+        settings.reference_meter_id = None;
+        settings.bind_active_entries();
+        assert_eq!(settings.config.reference_meter, None);
+        assert_eq!(settings.meter_id, settings.meters[0].id);
+    }
+
+    #[test]
+    fn mode_change_swaps_two_meter_engine_roles_but_preserves_quantity_identities() {
+        let mut settings = Settings::default();
+        settings.add_meter();
+        let meter_i = settings.meter_id;
+        let meter_v = settings.meters[1].id;
+        settings.reference_meter_id = Some(meter_v);
+
+        // V-I: primary is Meter(I), reference is Meter(V).
+        settings.swap_meter_roles_for_mode_change(iv_core::Mode::Iv, iv_core::Mode::Vi);
+        assert_eq!(settings.meter_id, meter_v, "I-V primary is Meter(V)");
+        assert_eq!(settings.reference_meter_id, Some(meter_i));
+        settings.swap_meter_roles_for_mode_change(iv_core::Mode::Vi, iv_core::Mode::Iv);
+        assert_eq!(settings.meter_id, meter_i, "V-I primary is Meter(I)");
+        assert_eq!(settings.reference_meter_id, Some(meter_v));
+
+        // A single legacy meter remains in place and simply changes function.
+        settings.reference_meter_id = None;
+        settings.swap_meter_roles_for_mode_change(iv_core::Mode::Iv, iv_core::Mode::Vi);
+        assert_eq!(settings.meter_id, meter_i);
+        assert_eq!(settings.reference_meter_id, None);
+    }
 }
 
 #[cfg(test)]
@@ -957,6 +1107,15 @@ mod dc_persistence_tests {
             assert!(!profile_load_allowed(&state));
         }
         assert!(profile_load_allowed(&crate::protocol::Snapshot::default()));
+    }
+
+    #[test]
+    fn reference_meter_connection_blocks_profile_replacement() {
+        let state = crate::protocol::Snapshot {
+            reference_meter_connected: true,
+            ..Default::default()
+        };
+        assert!(!profile_load_allowed(&state));
     }
     #[test]
     fn old_device_entries_get_off_by_default_dc_settings_and_saved_values_roundtrip() {

@@ -157,9 +157,19 @@ pub enum Role {
     /// ordinary IV sweep shutdown path; callers must shut it down explicitly.
     Gate,
     Meter,
+    /// Optional independent DMM used to measure the quantity sourced by the
+    /// primary source. It shares the meter catalog but has its own session
+    /// claim, range state, and recovery lifecycle.
+    ReferenceMeter,
 }
 
-const ROLES: [Role; 4] = [Role::Source, Role::Source2, Role::Gate, Role::Meter];
+const ROLES: [Role; 5] = [
+    Role::Source,
+    Role::Source2,
+    Role::Gate,
+    Role::Meter,
+    Role::ReferenceMeter,
+];
 const SOURCE_ROLES: [Role; 2] = [Role::Source, Role::Source2];
 
 fn is_source_role(role: Role) -> bool {
@@ -172,6 +182,7 @@ fn role_name(role: Role) -> &'static str {
         Role::Source2 => "source 2",
         Role::Gate => "gate",
         Role::Meter => "meter",
+        Role::ReferenceMeter => "reference meter",
     }
 }
 
@@ -419,22 +430,27 @@ pub struct DevicePair {
     pub source2_identity: String,
     pub gate_identity: String,
     pub meter_identity: String,
+    pub reference_meter_identity: String,
     pub source_model: String,
     pub source2_model: String,
     pub gate_model: String,
     pub meter_model: String,
+    pub reference_meter_model: String,
     meter_discard: bool,
+    reference_meter_discard: bool,
     paths: HelperPaths,
     source_kind: Option<ResourceKind>,
     source2_kind: Option<ResourceKind>,
     gate_kind: Option<ResourceKind>,
     meter_kind: Option<ResourceKind>,
+    reference_meter_kind: Option<ResourceKind>,
     source: Option<Endpoint>,
     source2: Option<Endpoint>,
     gate: Option<Endpoint>,
     meter: Option<Endpoint>,
+    reference_meter: Option<Endpoint>,
     usable: bool,
-    recovery_pending: [bool; 4],
+    recovery_pending: [bool; 5],
 }
 
 /// One physical helper exchange performed while translating a logical query.
@@ -471,22 +487,27 @@ impl DevicePair {
             source2_identity: String::new(),
             gate_identity: String::new(),
             meter_identity: String::new(),
+            reference_meter_identity: String::new(),
             source_model: instruments::default_model(Role::Source).into(),
             source2_model: instruments::default_model(Role::Source2).into(),
             gate_model: instruments::default_model(Role::Gate).into(),
             meter_model: instruments::default_model(Role::Meter).into(),
+            reference_meter_model: instruments::default_model(Role::ReferenceMeter).into(),
             meter_discard: false,
+            reference_meter_discard: false,
             paths: paths.clone(),
             source_kind: None,
             source2_kind: None,
             gate_kind: None,
             meter_kind: None,
+            reference_meter_kind: None,
             source: None,
             source2: None,
             gate: None,
             meter: None,
+            reference_meter: None,
             usable: true,
-            recovery_pending: [false; 4],
+            recovery_pending: [false; 5],
         }
     }
 
@@ -631,6 +652,13 @@ impl DevicePair {
                 self.meter_kind = Some(kind);
                 self.meter = Some(endpoint);
             }
+            Role::ReferenceMeter => {
+                self.reference_meter_identity = identity;
+                self.reference_meter_model = model.into();
+                self.reference_meter_discard = drivers::is_adc_meter(model);
+                self.reference_meter_kind = Some(kind);
+                self.reference_meter = Some(endpoint);
+            }
         }
         self.usable = true;
         Ok(())
@@ -642,7 +670,7 @@ impl DevicePair {
         let Some(endpoint) = self.endpoint_option(role).cloned() else {
             return Ok(());
         };
-        if role == Role::Meter && drivers::is_adc_meter(&self.meter_model) {
+        if self.is_adc_meter_role(role) {
             let mut session = lock_session(&endpoint.session)?;
             session.request(
                 "CLEAR",
@@ -651,7 +679,11 @@ impl DevicePair {
                 &[],
                 Duration::from_secs(2),
             )?;
-            let stop = if self.meter_usb() { "H0\n" } else { ":ABORt\n" };
+            let stop = if self.meter_usb(role) {
+                "H0\n"
+            } else {
+                ":ABORt\n"
+            };
             session.request(
                 "WRITE",
                 endpoint.address,
@@ -723,6 +755,12 @@ impl DevicePair {
                 self.meter_kind = None;
                 self.meter_identity.clear();
             }
+            Role::ReferenceMeter => {
+                self.reference_meter = None;
+                self.reference_meter_kind = None;
+                self.reference_meter_identity.clear();
+                self.reference_meter_discard = false;
+            }
         }
     }
 
@@ -744,6 +782,11 @@ impl DevicePair {
             })
             .or_else(|| self.gate.as_ref().filter(|endpoint| endpoint.address != 0))
             .or_else(|| self.meter.as_ref().filter(|endpoint| endpoint.address != 0))
+            .or_else(|| {
+                self.reference_meter
+                    .as_ref()
+                    .filter(|endpoint| endpoint.address != 0)
+            })
             .map(|endpoint| (&endpoint.session, endpoint.address));
         match bridge {
             Some((session, address)) => match lock_session(session).and_then(|mut session| {
@@ -768,6 +811,7 @@ impl DevicePair {
             Role::Source2 => &self.source2_model,
             Role::Gate => &self.gate_model,
             Role::Meter => &self.meter_model,
+            Role::ReferenceMeter => &self.reference_meter_model,
         }
     }
 
@@ -778,8 +822,8 @@ impl DevicePair {
             .map(|endpoint| endpoint.resource.as_str())
     }
 
-    fn meter_usb(&self) -> bool {
-        self.meter_kind.as_ref().is_some_and(|kind| match kind {
+    fn meter_usb(&self, role: Role) -> bool {
+        self.kind_option(role).is_some_and(|kind| match kind {
             ResourceKind::Usb { .. } => true,
             ResourceKind::Visa { native, .. } => {
                 matches!(native.as_ref(), ResourceKind::Usb { .. })
@@ -788,18 +832,45 @@ impl DevicePair {
         })
     }
 
-    pub fn write(&mut self, role: Role, command: &str) -> Result<(), String> {
-        self.ensure_usable()?;
-        self.validate_recovery(role)?;
-        let model = self.model(role).to_owned();
-        let commands = drivers::write_commands(role, &model, self.meter_usb(), command)?;
-        for command in commands {
-            let terminated = drivers::terminated(&command);
-            self.endpoint(role)?.request("WRITE", &terminated)?;
+    fn is_adc_meter_role(&self, role: Role) -> bool {
+        matches!(role, Role::Meter | Role::ReferenceMeter)
+            && drivers::is_adc_meter(self.model(role))
+    }
+
+    /// ADCMT's post-source-set discard is per physical meter.  A second meter
+    /// must never inherit the primary meter's pending conversion state.
+    fn meter_discard_mut(&mut self, role: Role) -> &mut bool {
+        match role {
+            Role::Meter => &mut self.meter_discard,
+            Role::ReferenceMeter => &mut self.reference_meter_discard,
+            // Driver queries for source roles never inspect this value; retain
+            // the primary field for that backwards-compatible call path.
+            Role::Source | Role::Source2 | Role::Gate => &mut self.meter_discard,
+        }
+    }
+
+    fn mark_adc_discards(&mut self, role: Role, command: &str) {
+        if !matches!(role, Role::Source | Role::Source2 | Role::Gate) {
+            return;
         }
         if drivers::source_write_marks_adc_discard(role, &self.meter_model, command) {
             self.meter_discard = true;
         }
+        if drivers::source_write_marks_adc_discard(role, &self.reference_meter_model, command) {
+            self.reference_meter_discard = true;
+        }
+    }
+
+    pub fn write(&mut self, role: Role, command: &str) -> Result<(), String> {
+        self.ensure_usable()?;
+        self.validate_recovery(role)?;
+        let model = self.model(role).to_owned();
+        let commands = drivers::write_commands(role, &model, self.meter_usb(role), command)?;
+        for command in commands {
+            let terminated = drivers::terminated(&command);
+            self.endpoint(role)?.request("WRITE", &terminated)?;
+        }
+        self.mark_adc_discards(role, command);
         Ok(())
     }
 
@@ -816,7 +887,7 @@ impl DevicePair {
             };
         }
         let model = self.model(role).to_owned();
-        let commands = match drivers::write_commands(role, &model, self.meter_usb(), command) {
+        let commands = match drivers::write_commands(role, &model, self.meter_usb(role), command) {
             Ok(commands) => commands,
             Err(error) => {
                 return RecordedQuery {
@@ -855,9 +926,7 @@ impl DevicePair {
                 };
             }
         }
-        if drivers::source_write_marks_adc_discard(role, &self.meter_model, command) {
-            self.meter_discard = true;
-        }
+        self.mark_adc_discards(role, command);
         RecordedQuery {
             result: Ok(String::new()),
             exchanges,
@@ -869,11 +938,18 @@ impl DevicePair {
         self.validate_recovery(role)?;
         let endpoint = self.endpoint(role)?.clone();
         let model = self.model(role).to_owned();
-        let usb = self.meter_usb();
+        let usb = self.meter_usb(role);
         let mut io = EndpointIo {
             endpoint: &endpoint,
         };
-        drivers::query(&mut io, role, &model, usb, &mut self.meter_discard, command)
+        drivers::query(
+            &mut io,
+            role,
+            &model,
+            usb,
+            self.meter_discard_mut(role),
+            command,
+        )
     }
 
     /// Runs the same driver path as [`Self::query`] while retaining the exact
@@ -899,12 +975,19 @@ impl DevicePair {
             }
         };
         let model = self.model(role).to_owned();
-        let usb = self.meter_usb();
+        let usb = self.meter_usb(role);
         let mut io = RecordingEndpointIo {
             endpoint: &endpoint,
             exchanges: Vec::new(),
         };
-        let result = drivers::query(&mut io, role, &model, usb, &mut self.meter_discard, command);
+        let result = drivers::query(
+            &mut io,
+            role,
+            &model,
+            usb,
+            self.meter_discard_mut(role),
+            command,
+        );
         RecordedQuery {
             result,
             exchanges: io.exchanges,
@@ -1026,6 +1109,7 @@ impl DevicePair {
             Role::Source2 => self.source2.as_ref(),
             Role::Gate => self.gate.as_ref(),
             Role::Meter => self.meter.as_ref(),
+            Role::ReferenceMeter => self.reference_meter.as_ref(),
         }
     }
 
@@ -1035,6 +1119,7 @@ impl DevicePair {
             Role::Source2 => self.source2.as_mut(),
             Role::Gate => self.gate.as_mut(),
             Role::Meter => self.meter.as_mut(),
+            Role::ReferenceMeter => self.reference_meter.as_mut(),
         }
     }
 
@@ -1044,6 +1129,7 @@ impl DevicePair {
             Role::Source2 => &self.source2_identity,
             Role::Gate => &self.gate_identity,
             Role::Meter => &self.meter_identity,
+            Role::ReferenceMeter => &self.reference_meter_identity,
         }
     }
 
@@ -1053,6 +1139,7 @@ impl DevicePair {
             Role::Source2 => self.source2_kind.as_ref(),
             Role::Gate => self.gate_kind.as_ref(),
             Role::Meter => self.meter_kind.as_ref(),
+            Role::ReferenceMeter => self.reference_meter_kind.as_ref(),
         }
     }
     fn session_is_attached_elsewhere(&self, session: &Arc<Mutex<HelperSession>>) -> bool {
@@ -1069,6 +1156,10 @@ impl DevicePair {
                 .is_some_and(|endpoint| Arc::ptr_eq(&endpoint.session, session))
             || self
                 .meter
+                .as_ref()
+                .is_some_and(|endpoint| Arc::ptr_eq(&endpoint.session, session))
+            || self
+                .reference_meter
                 .as_ref()
                 .is_some_and(|endpoint| Arc::ptr_eq(&endpoint.session, session))
     }
@@ -2229,6 +2320,7 @@ mod tests {
         assert!(source.same_physical(&ResourceKind::parse("GPIB0::3::INSTR").unwrap()));
         assert!(verify_identity(Role::Source, "YOKOGAWA,GS210,1,2").is_ok());
         assert!(verify_identity(Role::Meter, "Agilent Technologies,34411A,1,2").is_ok());
+        assert!(verify_identity(Role::ReferenceMeter, "Agilent Technologies,34411A,2,2").is_ok());
         assert!(verify_identity(Role::Meter, "YOKOGAWA,GS210,1,2").is_err());
         assert_ne!(
             normalize_identity("YOKOGAWA,GS210,91N1,2.01"),
@@ -2418,6 +2510,18 @@ done
         pair.connect(Role::Source2, "GPIB0::5::INSTR").unwrap();
         pair.connect(Role::Gate, "GPIB0::9::INSTR").unwrap();
         pair.connect(Role::Meter, "GPIB0::7::INSTR").unwrap();
+        pair.connect(Role::ReferenceMeter, "GPIB0::8::INSTR")
+            .unwrap();
+        assert!(pair.is_connected(Role::ReferenceMeter));
+        assert!(pair.query(Role::ReferenceMeter, "READ?").is_ok());
+        pair.disconnect(Role::ReferenceMeter).unwrap();
+        assert!(
+            pair.connect(Role::ReferenceMeter, "GPIB0::7::INSTR")
+                .unwrap_err()
+                .contains("different physical resources")
+        );
+        pair.connect(Role::ReferenceMeter, "GPIB0::8::INSTR")
+            .unwrap();
         assert!(pair.source2_identity.contains("GS210"));
         assert!(pair.gate_identity.contains("GS210"));
         assert_eq!(
@@ -2448,12 +2552,13 @@ done
         assert!(pair.is_connected(Role::Source2));
         assert!(pair.is_connected(Role::Gate));
         assert!(pair.is_connected(Role::Meter));
+        assert!(pair.is_connected(Role::ReferenceMeter));
         assert!(pair.query(Role::Source2, "READ?").is_ok());
         let requests = fs::read_to_string(&log).unwrap();
         assert!(!requests.contains("REN 3 30"));
         pair.close().unwrap();
         let requests = fs::read_to_string(&log).unwrap();
-        assert!(requests.contains("REN 7 30"));
+        assert!(requests.contains("REN 8 30"));
         assert!(requests.contains("EXIT 1 -"));
         fs::remove_dir_all(directory).unwrap();
     }

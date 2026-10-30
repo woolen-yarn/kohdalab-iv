@@ -50,6 +50,14 @@ pub const CSV_FIELDS: &[&str] = &[
     "meter_unit",
     "software_limit_hit",
     "quality_flags",
+    "V_source_V",
+    "V_meter_V",
+    "I_source_A",
+    "I_meter_A",
+    "R_source_ohm",
+    "R_meter_ohm",
+    "G_source_S",
+    "G_meter_S",
 ];
 
 const MAX_POINTS: usize = 1_000_000;
@@ -119,6 +127,11 @@ pub struct RunConfig {
     /// in the instrument's automatic range mode.
     #[serde(default)]
     pub meter_current_range: Option<f64>,
+    /// Optional DMM for the quantity sourced by this run: voltage for V-I
+    /// (including Dual), current for I-V. The ordinary meter remains required
+    /// and measures the opposite quantity.
+    #[serde(default)]
+    pub reference_meter: Option<ReferenceMeterConfig>,
     pub mode: Mode,
     pub pattern: Pattern,
     /// Start target, in SI units (V for IV and A for VI).
@@ -168,6 +181,7 @@ impl Default for RunConfig {
             meter_model: default_meter_model(),
             meter_voltage_range: None,
             meter_current_range: None,
+            reference_meter: None,
             mode: Mode::Iv,
             pattern: Pattern::ZeroCentered,
             start: -0.001,
@@ -185,6 +199,23 @@ impl Default for RunConfig {
             average_count: 1,
             ramp_step: 0.0001,
             ramp_wait_s: 0.02,
+        }
+    }
+}
+
+/// The optional second DMM used to measure the source-side quantity. Its
+/// range uses the existing voltage/current range settings according to the
+/// source quantity, while NPLC follows the run-wide setting.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct ReferenceMeterConfig {
+    #[serde(default = "default_meter_model")]
+    pub model: String,
+}
+
+impl Default for ReferenceMeterConfig {
+    fn default() -> Self {
+        Self {
+            model: default_meter_model(),
         }
     }
 }
@@ -485,27 +516,35 @@ fn ranges_match(expected: f64, actual: f64) -> bool {
 /// `None` is the explicit Auto mode. A model with no documented manual range
 /// list rejects fixed values instead of silently falling back to Auto.
 pub fn validate_meter_range(config: &RunConfig) -> Result<(), String> {
-    let Some(requested) = selected_meter_range(config) else {
+    validate_meter_range_for(&config.meter_model, config.mode, config)
+}
+
+fn validate_meter_range_for(model: &str, mode: Mode, config: &RunConfig) -> Result<(), String> {
+    let requested = match mode {
+        Mode::Iv => config.meter_current_range,
+        Mode::Vi => config.meter_voltage_range,
+    };
+    let Some(requested) = requested else {
         return Ok(());
     };
     if !requested.is_finite() || requested <= 0.0 {
         return Err("Fixed meter range must be finite and positive.".into());
     }
-    let ranges = meter_ranges(&config.meter_model, config.mode)?;
-    let quantity = match config.mode {
+    let ranges = meter_ranges(model, mode)?;
+    let quantity = match mode {
         Mode::Iv => "current",
         Mode::Vi => "voltage",
     };
     if ranges.is_empty() {
         return Err(format!(
             "{} has no verified fixed {} range support. Select Auto.",
-            config.meter_model, quantity
+            model, quantity
         ));
     }
     if !ranges.iter().any(|range| ranges_match(*range, requested)) {
         return Err(format!(
             "{} does not support fixed {} range {}. Choose one of: {}.",
-            config.meter_model,
+            model,
             quantity,
             requested,
             ranges
@@ -516,6 +555,35 @@ pub fn validate_meter_range(config: &RunConfig) -> Result<(), String> {
         ));
     }
     Ok(())
+}
+
+fn validate_reference_meter(config: &RunConfig) -> Result<(), String> {
+    let Some(reference) = &config.reference_meter else {
+        return Ok(());
+    };
+    let meter = meter_spec(&reference.model)?;
+    let nplc_allowed = if !meter.nplc_values.is_empty() {
+        meter
+            .nplc_values
+            .iter()
+            .any(|value| (*value - config.nplc).abs() < 1e-12)
+    } else {
+        meter.nplc_min.is_some_and(|minimum| config.nplc >= minimum)
+            && meter.nplc_max.is_some_and(|maximum| config.nplc <= maximum)
+    };
+    if !nplc_allowed {
+        return Err(format!(
+            "{} does not support nplc={} for the source reference measurement.",
+            reference.model, config.nplc
+        ));
+    }
+    // The reference DMM observes the quantity set by the source, which is the
+    // opposite mode from the ordinary DMM's measured quantity.
+    let reference_mode = match config.mode {
+        Mode::Iv => Mode::Vi,
+        Mode::Vi => Mode::Iv,
+    };
+    validate_meter_range_for(&reference.model, reference_mode, config)
 }
 
 /// Confirm that a meter stayed on the requested manual range after a range
@@ -997,6 +1065,14 @@ fn prepare_config_single(config: &RunConfig) -> Result<RunConfig, String> {
     // Validate the meter here as well so UI previews report a bad model before
     // a run is started. `plan` validates its mode-dependent limits below.
     meter_spec(&config.meter_model)?;
+    if let Some(reference) = &config.reference_meter {
+        meter_spec(&reference.model)?;
+        let reference_mode = match config.mode {
+            Mode::Iv => Mode::Vi,
+            Mode::Vi => Mode::Iv,
+        };
+        validate_meter_range_for(&reference.model, reference_mode, config)?;
+    }
     validate_meter_range(config)?;
     let (source_range, range_maximum, resolution) = select_range(
         source,
@@ -1105,6 +1181,7 @@ fn plan_single(config: &RunConfig) -> Result<Plan, String> {
             config.meter_model, config.nplc
         ));
     }
+    validate_reference_meter(config)?;
     let meter_input_limit = match config.mode {
         Mode::Iv => meter.max_input_a,
         Mode::Vi => meter.max_input_v,
@@ -1128,6 +1205,19 @@ fn plan_single(config: &RunConfig) -> Result<Plan, String> {
     } else {
         config.start.abs().max(config.stop.abs())
     };
+    if let Some(reference) = &config.reference_meter {
+        let maximum_input = match config.mode {
+            Mode::Iv => meter_spec(&reference.model)?.max_input_v,
+            Mode::Vi => meter_spec(&reference.model)?.max_input_a,
+        };
+        if maximum > maximum_input + f64::EPSILON {
+            let unit = if config.mode == Mode::Iv { "V" } else { "A" };
+            return Err(format!(
+                "Source target {} {} exceeds {} reference meter maximum input {} {}.",
+                maximum, unit, reference.model, maximum_input, unit
+            ));
+        }
+    }
     let (source_range, range_maximum, resolution) = select_range(
         source,
         &config.source_model,
@@ -1565,6 +1655,16 @@ pub fn balanced_plan(config: &RunConfig) -> Result<BalancedPlan, String> {
             maximum, differential.source_limit
         ));
     }
+    if let Some(reference) = &differential.reference_meter {
+        let maximum = decimal_to_f64(maximum, "differential reference target")?;
+        let maximum_input = meter_spec(&reference.model)?.max_input_v;
+        if maximum > maximum_input + f64::EPSILON {
+            return Err(format!(
+                "Differential source target {} V exceeds {} reference meter maximum input {} V.",
+                maximum, reference.model, maximum_input
+            ));
+        }
+    }
     let points = sweep_points(&base_points)?;
     if plan1.points.len() != points.len() || plan2.points.len() != points.len() {
         return Err("Balanced source plans do not have matching point counts.".into());
@@ -1613,6 +1713,14 @@ pub struct Record {
     pub meter_resolution: Option<f64>,
     #[serde(default)]
     pub meter_range: Option<f64>,
+    /// Optional reading from the DMM assigned to the source-side quantity.
+    /// It is a voltage reading in V-I/Dual and a current reading in I-V.
+    #[serde(default)]
+    pub reference_meter_value: Option<f64>,
+    #[serde(default)]
+    pub reference_meter_resolution: Option<f64>,
+    #[serde(default)]
+    pub reference_meter_range: Option<f64>,
     pub compliance: bool,
     pub status: String,
     pub instrument_status: String,
@@ -1639,7 +1747,9 @@ impl Record {
         fields
     }
 
-    pub fn electrical_values(&self) -> (f64, f64, &'static str, &'static str) {
+    /// Voltage and current using the source level plus the required ordinary
+    /// meter. This remains available even if no source-side DMM is assigned.
+    pub fn source_electrical_values(&self) -> (f64, f64, &'static str, &'static str) {
         let source = self.source_readback.unwrap_or(self.source_set);
         let origin = if self.source_readback.is_some() {
             "source_readback"
@@ -1651,6 +1761,35 @@ impl Record {
         } else {
             (self.meter_value, source, "meter", origin)
         }
+    }
+
+    /// Voltage and current measured by the two DMM roles. `None` means there
+    /// is no source-side DMM reading for this point; it never substitutes a
+    /// requested source level as a measurement.
+    pub fn measured_electrical_values(&self) -> Option<(f64, f64, &'static str, &'static str)> {
+        let reference = self.reference_meter_value?;
+        Some(if self.mode == Mode::Iv {
+            (reference, self.meter_value, "reference_meter", "meter")
+        } else {
+            (self.meter_value, reference, "meter", "reference_meter")
+        })
+    }
+
+    /// The legacy analysis pair uses the source quantity until a separate
+    /// reference meter is present, then uses two measured quantities.
+    pub fn electrical_values(&self) -> (f64, f64, &'static str, &'static str) {
+        self.measured_electrical_values()
+            .unwrap_or_else(|| self.source_electrical_values())
+    }
+
+    /// Resistance and conductance are valid only for finite, non-zero V and I.
+    /// Keeping the sign makes active or non-ohmic behaviour visible rather than
+    /// silently taking an absolute value.
+    pub fn resistance_conductance(voltage: f64, current: f64) -> Option<(f64, f64)> {
+        if !voltage.is_finite() || !current.is_finite() || voltage == 0.0 || current == 0.0 {
+            return None;
+        }
+        Some((voltage / current, current / voltage))
     }
 }
 
@@ -1693,6 +1832,26 @@ impl CsvWriter {
 
 fn fill_native_csv_values(record: &Record, fields: &mut [String; CSV_FIELDS.len()]) {
     let (voltage, current, voltage_origin, current_origin) = record.electrical_values();
+    let (source_voltage, source_current, _, _) = record.source_electrical_values();
+    let measured = record.measured_electrical_values();
+    let (v_source, v_meter, i_source, i_meter) = match record.mode {
+        Mode::Iv => (
+            Some(source_voltage),
+            measured.map(|(voltage, _, _, _)| voltage),
+            None,
+            Some(source_current),
+        ),
+        Mode::Vi => (
+            None,
+            Some(source_voltage),
+            Some(source_current),
+            measured.map(|(_, current, _, _)| current),
+        ),
+    };
+    let source_derived = Record::resistance_conductance(source_voltage, source_current);
+    let measured_derived = measured.and_then(|(measured_voltage, measured_current, _, _)| {
+        Record::resistance_conductance(measured_voltage, measured_current)
+    });
     for (index, value) in [
         (3, record.elapsed_s),
         (6, record.point.target),
@@ -1739,6 +1898,21 @@ fn fill_native_csv_values(record: &Record, fields: &mut [String; CSV_FIELDS.len(
         fields[index].clear();
         fields[index].push_str(value);
     }
+    for (index, value) in [
+        (18, v_source),
+        (19, v_meter),
+        (20, i_source),
+        (21, i_meter),
+        (22, source_derived.map(|(resistance, _)| resistance)),
+        (23, measured_derived.map(|(resistance, _)| resistance)),
+        (24, source_derived.map(|(_, conductance)| conductance)),
+        (25, measured_derived.map(|(_, conductance)| conductance)),
+    ] {
+        fields[index].clear();
+        if let Some(value) = value.filter(|value| value.is_finite()) {
+            shortest_sci_into(&mut fields[index], value);
+        }
+    }
 }
 
 fn shortest_sci_into(buffer: &mut String, value: f64) {
@@ -1769,6 +1943,9 @@ pub fn simulate_record(config: &RunConfig, point: &SweepPoint, elapsed_s: f64) -
             .ok()
             .and_then(|p| p.1),
         meter_range: None,
+        reference_meter_value: config.reference_meter.as_ref().map(|_| source_set),
+        reference_meter_resolution: None,
+        reference_meter_range: None,
         compliance: false,
         status: "ok".into(),
         instrument_status: String::new(),
@@ -1923,6 +2100,106 @@ mod tests {
         let decoded: RunConfig = serde_json::from_value(encoded).unwrap();
         assert_eq!(decoded.meter_voltage_range, None);
         assert_eq!(decoded.meter_current_range, None);
+        assert_eq!(decoded.reference_meter, None);
+    }
+
+    #[test]
+    fn reference_meter_uses_the_source_quantity_range_and_nplc_rules() {
+        let mut config = RunConfig {
+            reference_meter: Some(ReferenceMeterConfig {
+                model: "AGILENT_34411A".into(),
+            }),
+            meter_voltage_range: Some(10.0),
+            ..RunConfig::default()
+        };
+        // V-I sources voltage, so the reference DMM needs a voltage range.
+        assert!(plan(&config).is_ok());
+        config.meter_voltage_range = Some(0.123);
+        assert!(plan(&config).unwrap_err().contains("does not support"));
+        config.meter_voltage_range = Some(10.0);
+        config.reference_meter.as_mut().unwrap().model = "KEYSIGHT_34465A".into();
+        config.nplc = 2.0;
+        assert!(plan(&config).unwrap_err().contains("reference measurement"));
+    }
+
+    #[test]
+    fn reference_values_keep_source_and_measured_analysis_distinct() {
+        let config = RunConfig {
+            reference_meter: Some(ReferenceMeterConfig::default()),
+            ..RunConfig::default()
+        };
+        let point = plan(&config).unwrap().points[0].clone();
+        let mut record = simulate_record(&config, &point, 0.0);
+        record.source_set = 2.0;
+        record.source_readback = Some(2.0);
+        record.meter_value = 0.5;
+        record.reference_meter_value = Some(1.0);
+        assert_eq!(
+            record.source_electrical_values(),
+            (2.0, 0.5, "source_readback", "meter")
+        );
+        assert_eq!(
+            record.measured_electrical_values(),
+            Some((1.0, 0.5, "reference_meter", "meter"))
+        );
+        assert_eq!(record.electrical_values().0, 1.0);
+        assert_eq!(Record::resistance_conductance(2.0, 0.5), Some((4.0, 0.25)));
+        assert_eq!(Record::resistance_conductance(0.0, 0.5), None);
+        assert_eq!(Record::resistance_conductance(2.0, f64::NAN), None);
+    }
+
+    #[test]
+    fn reference_meter_applies_to_current_source_and_dual_voltage_plans() {
+        let current_source = RunConfig {
+            mode: Mode::Vi,
+            source_model: "YOKOGAWA_GS210".into(),
+            source_limit: 0.001,
+            compliance: 1.0,
+            meter_current_range: Some(0.001),
+            reference_meter: Some(ReferenceMeterConfig::default()),
+            ..RunConfig::default()
+        };
+        assert!(plan(&current_source).is_ok());
+
+        let dual = RunConfig {
+            reference_meter: Some(ReferenceMeterConfig::default()),
+            meter_voltage_range: Some(10.0),
+            balanced_source: Some(BalancedSourceConfig::default()),
+            ..RunConfig::default()
+        };
+        assert!(balanced_plan(&dual).is_ok());
+    }
+
+    #[test]
+    fn source_and_meter_csv_columns_are_explicit_without_fabricated_measurements() {
+        let config = RunConfig::default();
+        let point = plan(&config).unwrap().points[0].clone();
+        let mut iv = simulate_record(&config, &point, 0.0);
+        iv.source_set = 2.0;
+        iv.source_readback = Some(2.0);
+        iv.meter_value = 0.5;
+        let values = iv.native_csv_values();
+        assert_eq!(&values[18], "2e0");
+        assert_eq!(&values[19], "");
+        assert_eq!(&values[20], "");
+        assert_eq!(&values[21], "5e-1");
+        assert_eq!(&values[22], "4e0");
+        assert_eq!(&values[23], "");
+        assert_eq!(&values[24], "2.5e-1");
+        assert_eq!(&values[25], "");
+
+        let mut vi = iv.clone();
+        vi.mode = Mode::Vi;
+        vi.reference_meter_value = Some(0.25);
+        let values = vi.native_csv_values();
+        assert_eq!(&values[18], "");
+        assert_eq!(&values[19], "5e-1");
+        assert_eq!(&values[20], "2e0");
+        assert_eq!(&values[21], "2.5e-1");
+        assert_eq!(&values[22], "2.5e-1");
+        assert_eq!(&values[23], "2e0");
+        assert_eq!(&values[24], "4e0");
+        assert_eq!(&values[25], "5e-1");
     }
 
     #[test]
@@ -2708,7 +2985,7 @@ mod tests {
         let rows = reader.records().collect::<Result<Vec<_>, _>>().unwrap();
         assert_eq!(rows.len(), 2);
         for (row, record) in rows.iter().zip(expected) {
-            assert_eq!(row.len(), 18);
+            assert_eq!(row.len(), CSV_FIELDS.len());
             let inspector = record.native_csv_values();
             assert_eq!(
                 row.iter().collect::<Vec<_>>(),
@@ -2759,6 +3036,17 @@ mod tests {
             );
             assert_eq!(&row[16], "true");
             assert_eq!(&row[17], "software_limit_hit");
+            if record.mode == Mode::Iv {
+                assert_eq!(&row[18], "-0e0");
+                assert_eq!(&row[19], "");
+                assert_eq!(&row[20], "");
+                assert_eq!(&row[21], "1.2345678901234567e-12");
+            } else {
+                assert_eq!(&row[18], "");
+                assert_eq!(&row[19], "1.2345678901234567e-12");
+                assert_eq!(&row[20], "-0e0");
+                assert_eq!(&row[21], "");
+            }
         }
         std::fs::remove_file(path).unwrap();
     }

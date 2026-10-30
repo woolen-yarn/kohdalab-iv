@@ -54,6 +54,29 @@ jobs:
           $env:KOHDALAB_IV_EXE = Join-Path $PWD 'target/release/iv-cli.exe'
           python -m unittest discover -s bindings/python -p 'test_*.py' -v
           if ($LASTEXITCODE -ne 0) { throw 'Notebook/client validation failed' }
+      - name: Render both simulation GUI cases (CI-only software OpenGL)
+        shell: pwsh
+        run: |
+          # Hosted runners expose only OpenGL 1.1. Keep Mesa outside target/dist
+          # and run byte-identical copies; these DLLs never enter the packages.
+          $archive = Join-Path $env:RUNNER_TEMP 'mesa3d-26.2.4-release-msvc.7z'
+          Invoke-WebRequest 'https://github.com/pal1000/mesa-dist-win/releases/download/26.2.4/mesa3d-26.2.4-release-msvc.7z' -OutFile $archive
+          if ((Get-FileHash $archive -Algorithm SHA256).Hash.ToLowerInvariant() -ne '351fc8c8b695878ffb3eaa044b3ead08672a48b1a045e3c3e3975811df0f6695') { throw 'CI Mesa checksum mismatch' }
+          $mesa = Join-Path $env:RUNNER_TEMP 'ci-mesa'
+          & 7z x $archive "-o$mesa" -y | Out-Null
+          if ($LASTEXITCODE -ne 0) { throw 'CI Mesa extraction failed' }
+          $runtime = Join-Path $PWD 'build/gui-validation-runtime'
+          New-Item -ItemType Directory -Force $runtime | Out-Null
+          Copy-Item target/release/kohdalab-iv.exe,target/release/iv-cli.exe $runtime
+          Copy-Item (Join-Path $mesa 'x64/*.dll') $runtime
+          $env:GALLIUM_DRIVER = 'llvmpipe'
+          $v = python -c "import tomllib,pathlib; print(tomllib.loads(pathlib.Path('Cargo.toml').read_text())['workspace']['package']['version'])"
+          python scripts/verify_reference_gui.py "$runtime/kohdalab-iv.exe" --output build/gui-validation --version $v --renderer 'CI-only Mesa 26.2.4 llvmpipe; not bundled'
+          if ($LASTEXITCODE -ne 0) { throw 'GUI rendering/geometry validation failed' }
+          Remove-Item Env:GALLIUM_DRIVER
+          New-Item -ItemType Directory -Force dist | Out-Null
+          Copy-Item build/gui-validation/gui-validation.json dist/gui-validation.json
+          Copy-Item build/gui-validation/source-and-meter.png dist/iv-windows-simulation.png
       - name: Package portable, source kit and Setup
         id: package
         shell: pwsh
@@ -93,6 +116,7 @@ jobs:
           path: |
             dist/*.zip
             dist/*-Setup.exe
+            dist/*.png
             dist/*.json
             dist/SHA256SUMS.txt
 

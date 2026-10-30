@@ -1,6 +1,7 @@
 mod balanced;
 mod gate;
 mod meter;
+mod reference;
 mod safety;
 mod source_dc;
 mod workflow;
@@ -322,6 +323,7 @@ pub fn serve() -> Result<(), String> {
     let mut last_monitor = Instant::now();
     let mut monitor_mode = None;
     let mut monitor_guard = None;
+    let mut monitor_reference = None;
     let mut monitor_ranges = [None, None];
     let mut simulation_mode = Mode::Iv;
     publish(&latest, &state);
@@ -329,7 +331,8 @@ pub fn serve() -> Result<(), String> {
         if (state.source_connected
             || state.source2_connected
             || state.gate_connected
-            || state.meter_connected)
+            || state.meter_connected
+            || state.reference_meter_connected)
             && control
                 .heartbeat
                 .lock()
@@ -433,6 +436,11 @@ pub fn serve() -> Result<(), String> {
                             .filter(|_| state.output == OutputState::On);
                         let config = RunConfig {
                             mode: dc.map_or(simulation_mode, |dc| dc.mode),
+                            reference_meter: state.reference_meter_connected.then(|| {
+                                iv_core::ReferenceMeterConfig {
+                                    model: "AGILENT_34411A".into(),
+                                }
+                            }),
                             ..Default::default()
                         };
                         let point = iv_core::SweepPoint {
@@ -456,6 +464,7 @@ pub fn serve() -> Result<(), String> {
                             &mut state,
                             monitor_ranges,
                             &mut monitor_guard,
+                            &mut monitor_reference,
                         )
                     };
                     match result {
@@ -490,6 +499,8 @@ pub fn serve() -> Result<(), String> {
             Command::Connect { .. }
                 | Command::ConnectSource { .. }
                 | Command::ConnectMeter { .. }
+                | Command::ConnectReferenceMeter { .. }
+                | Command::DisconnectReferenceMeter
                 | Command::DisconnectSource
                 | Command::DisconnectMeter
                 | Command::Disconnect
@@ -498,6 +509,7 @@ pub fn serve() -> Result<(), String> {
         ) {
             monitor_mode = None;
             monitor_guard = None;
+            monitor_reference = None;
         }
         let owns_output = output_operation(&command);
         let safety_intent = safety_bit(&command);
@@ -526,6 +538,7 @@ pub fn serve() -> Result<(), String> {
                     if ranges != monitor_ranges {
                         monitor_mode = None;
                         monitor_guard = None;
+                        monitor_reference = None;
                     }
                     monitor_ranges = ranges;
                     Ok(())
@@ -629,7 +642,9 @@ pub fn serve() -> Result<(), String> {
                 ramp_step,
                 range,
             } => {
-                let prepared = if control.cancelled() {
+                let prepared = if state.reference_meter_connected && mode != simulation_mode {
+                    Err("Disconnect both Meters before changing the source function; Meter (V) and Meter (I) assignments must stay unchanged.".to_owned())
+                } else if control.cancelled() {
                     Ok(())
                 } else if state.source_connected && state.meter_connected && !state.simulation {
                     pair.as_mut()
@@ -642,6 +657,7 @@ pub fn serve() -> Result<(), String> {
                                 monitor_ranges,
                                 &mut monitor_mode,
                                 &mut monitor_guard,
+                                &mut monitor_reference,
                                 &control,
                             )
                         })
@@ -672,6 +688,26 @@ pub fn serve() -> Result<(), String> {
                 disconnect_role(&mut pair, &mut state, Role::Source2, &control)
             }
             Command::DisconnectGate => disconnect_role(&mut pair, &mut state, Role::Gate, &control),
+            Command::ConnectReferenceMeter {
+                simulation,
+                resource,
+                model,
+            } => {
+                monitor_mode = None;
+                begin_connect(&mut state, &latest);
+                connect_role(
+                    &mut pair,
+                    &mut state,
+                    Role::ReferenceMeter,
+                    simulation,
+                    &resource,
+                    &model,
+                )
+            }
+            Command::DisconnectReferenceMeter => {
+                monitor_mode = None;
+                disconnect_role(&mut pair, &mut state, Role::ReferenceMeter, &control)
+            }
             Command::ConnectMeter {
                 simulation,
                 resource,
@@ -739,7 +775,13 @@ pub fn serve() -> Result<(), String> {
             }
             Command::Disconnect => {
                 let mut errors = Vec::new();
-                for role in [Role::Source, Role::Source2, Role::Gate, Role::Meter] {
+                for role in [
+                    Role::Source,
+                    Role::Source2,
+                    Role::Gate,
+                    Role::Meter,
+                    Role::ReferenceMeter,
+                ] {
                     if let Err(error) = disconnect_role(&mut pair, &mut state, role, &control) {
                         errors.push(error);
                     }
@@ -845,6 +887,7 @@ fn clear_connections(state: &mut Snapshot) {
     state.source2_connected = false;
     state.gate_connected = false;
     state.meter_connected = false;
+    state.reference_meter_connected = false;
     state.connected = false;
     state.source_dc = None;
     state.source2_dc = None;
@@ -864,6 +907,7 @@ fn role_label(role: Role) -> &'static str {
         Role::Source2 => "source2",
         Role::Gate => "gate",
         Role::Meter => "meter",
+        Role::ReferenceMeter => "reference_meter",
     }
 }
 fn model_label(role: Role, model: &str) -> String {
@@ -871,6 +915,11 @@ fn model_label(role: Role, model: &str) -> String {
 }
 fn role_state(state: &Snapshot, role: Role) -> (bool, bool, &str) {
     match role {
+        Role::ReferenceMeter => (
+            state.reference_meter_connected,
+            state.reference_meter_simulation,
+            &state.reference_meter_resource,
+        ),
         Role::Source => (
             state.source_connected,
             state.source_simulation,
@@ -909,7 +958,7 @@ fn connect_role(
     resource: &str,
     model: &str,
 ) -> Result<(), String> {
-    let source = role != Role::Meter;
+    let source = !matches!(role, Role::Meter | Role::ReferenceMeter);
     let (connected, previous_simulation, previous_resource) = role_state(state, role);
     let previous_model = if previous_simulation {
         Some(if source {
@@ -965,6 +1014,7 @@ fn connect_role(
             Role::Source2 => device.source2_identity.clone(),
             Role::Gate => device.gate_identity.clone(),
             Role::Meter => device.meter_identity.clone(),
+            Role::ReferenceMeter => device.reference_meter_identity.clone(),
         }
     };
     let resource = if simulation {
@@ -1011,6 +1061,12 @@ fn connect_role(
                 OutputState::Unknown
             };
         }
+        Role::ReferenceMeter => {
+            state.reference_meter_connected = true;
+            state.reference_meter_simulation = simulation;
+            state.reference_meter_identity = identity.clone();
+            state.reference_meter_resource = resource;
+        }
         Role::Meter => {
             state.meter_connected = true;
             state.meter_simulation = simulation;
@@ -1036,7 +1092,7 @@ fn disconnect_role(
     }
     if role == Role::Gate {
         gate::output_off(pair.as_mut(), state)?;
-    } else if role != Role::Meter {
+    } else if !matches!(role, Role::Meter | Role::ReferenceMeter) {
         clean_output(pair.as_mut(), state, None, control);
         if state.output != OutputState::Off {
             return Err(state.error.to_string());
@@ -1059,12 +1115,14 @@ fn disconnect_role(
         Role::Source2 => state.source2_connected = false,
         Role::Gate => state.gate_connected = false,
         Role::Meter => state.meter_connected = false,
+        Role::ReferenceMeter => state.reference_meter_connected = false,
     }
     refresh_connections(state);
     if !state.source_connected
         && !state.source2_connected
         && !state.gate_connected
         && !state.meter_connected
+        && !state.reference_meter_connected
         && let Some(mut device) = pair.take()
     {
         device.close()?;
@@ -1073,6 +1131,7 @@ fn disconnect_role(
         || state.source2_connected
         || state.gate_connected
         || state.meter_connected
+        || state.reference_meter_connected
     {
         Phase::Ready
     } else {
@@ -1683,6 +1742,7 @@ fn sweep_outputs_off(state: &Snapshot) -> bool {
 
 /// Establish the loading baseline while outputs are OFF, before even the
 /// first manual DC ON. Held DC edits never reconfigure or re-prime the meter.
+#[allow(clippy::too_many_arguments)]
 fn prepare_live_meter(
     pair: &mut DevicePair,
     state: &Snapshot,
@@ -1690,6 +1750,7 @@ fn prepare_live_meter(
     ranges: [Option<f64>; 2],
     configured: &mut Option<Mode>,
     guard: &mut Option<meter::RangeGuard>,
+    reference: &mut Option<reference::Observer>,
     control: &Control,
 ) -> Result<(), String> {
     if *configured == Some(mode) && guard.is_some() {
@@ -1731,10 +1792,12 @@ fn prepare_live_meter(
         ready.check(&config, range)?;
     }
     *guard = Some(ready);
+    *reference = reference::prepare_live(pair, &config, control)?;
     *configured = Some(mode);
     Ok(())
 }
 
+#[allow(clippy::too_many_arguments)]
 fn monitor_reading(
     pair: &mut DevicePair,
     configured: &mut Option<Mode>,
@@ -1743,6 +1806,7 @@ fn monitor_reading(
     state: &mut Snapshot,
     ranges: [Option<f64>; 2],
     guard: &mut Option<meter::RangeGuard>,
+    reference: &mut Option<reference::Observer>,
 ) -> Result<Record, String> {
     let function = monitor_query(pair, Role::Source, ":SOUR:FUNC?", control)?;
     let mode = match function
@@ -1762,7 +1826,9 @@ fn monitor_reading(
         meter_current_range: ranges[1],
         ..Default::default()
     };
-    prepare_live_meter(pair, state, mode, ranges, configured, guard, control)?;
+    prepare_live_meter(
+        pair, state, mode, ranges, configured, guard, reference, control,
+    )?;
     if control.closed.load(Ordering::Acquire) || control.off.load(Ordering::Acquire) {
         return Err("Live acquisition interrupted by output-off/shutdown".into());
     }
@@ -1845,6 +1911,20 @@ fn monitor_reading(
     record.meter_resolution = meter_resolution;
     record.source_resource = model_label(Role::Source, &pair.source_model);
     record.meter_resource = model_label(Role::Meter, &pair.meter_model);
+    record.quality_flags = "live".into();
+    if let Some(observer) = reference.as_mut() {
+        observer.read_live(pair, state, control, &mut record)?;
+        let status = (|| -> Result<(), String> {
+            for secondary in [false, true] {
+                source_dc::check(Some(pair), state, secondary)?;
+            }
+            gate::check(Some(pair), state)
+        })();
+        if let Err(error) = status {
+            let off = protection_output_off(Some(pair), state).err();
+            return Err(off.map_or(error.clone(), |e| format!("{error} · {e}")));
+        }
+    }
     Ok(record)
 }
 
@@ -2251,6 +2331,7 @@ struct SweepMonitor<'a> {
     source_resolution: Option<f64>,
     meter_resolution: MeterResolutionCache,
     meter_guard: meter::RangeGuard,
+    reference: Option<reference::Observer>,
     compliance_stop: Option<Record>,
     compliance_evidence: Option<DeferredMeterEvidence>,
     source_stop: Option<SourceProtectionStop>,
@@ -2279,14 +2360,16 @@ impl SweepMonitor<'_> {
 
     fn acquire(
         &mut self,
-        pair: Option<&mut DevicePair>,
+        mut pair: Option<&mut DevicePair>,
         level: f64,
         state: &mut Snapshot,
         audit: &mut RawWriter,
         point_index: usize,
     ) -> Result<Record, String> {
         let mut record = self.record(level);
-        if let Some(device) = pair {
+        if let Some(device) = pair.as_deref_mut() {
+            reference::clear_reading(&mut record);
+            record.quality_flags = "live".into();
             // The gate is allowed to remain biased during an IV sweep, but it
             // must be polled on the same cadence as the sweep source.  A gate
             // limiter/status failure fails closed before any further meter I/O.
@@ -2442,6 +2525,30 @@ impl SweepMonitor<'_> {
             }
             record.source_resource = model_label(Role::Source, &device.source_model);
             record.meter_resource = model_label(Role::Meter, &device.meter_model);
+        }
+        if record.meter_value.abs() < self.config.compliance
+            && let Some(device) = pair
+            && let Some(observer) = self.reference.as_mut()
+        {
+            record.reference_meter_value = None;
+            if !observer.read(device, state, audit, self.control, self.begin, &mut record)? {
+                return Err("Source-quantity acquisition cancelled".into());
+            }
+            self.source_stop = check_source_protection(
+                device,
+                state,
+                audit,
+                self.begin,
+                point_index,
+                level,
+                None,
+            )?;
+            if self.source_stop.is_some() {
+                return Err(
+                    "Source protection reached during source-quantity Meter conversion".into(),
+                );
+            }
+            gate::check(Some(device), state)?;
         }
         record.compliance = record.meter_value.abs() >= self.config.compliance;
         if record.compliance {
@@ -2632,6 +2739,7 @@ fn execute(
                 .into(),
         );
     }
+    reference::validate_connections(config, state, pair.as_deref())?;
     if config.balanced_source.is_some() {
         return balanced::execute(config, path, pair, control, state, latest, events);
     }
@@ -2709,6 +2817,7 @@ fn execute(
     state.total = planned.points.len();
     state.last = None;
     state.resistance = None;
+    state.reference_resistance = None;
     state.run_id += 1;
     state.path = path.display().to_string();
     publish(latest, state);
@@ -2727,6 +2836,7 @@ fn execute(
         serde_json::json!({
             "source":{"model":device.source_model,"identity":device.source_identity,"resource":device.resource(Role::Source)},
             "meter":{"model":device.meter_model,"identity":device.meter_identity,"resource":device.resource(Role::Meter)},
+            "reference_meter":{"model":device.reference_meter_model,"identity":device.reference_meter_identity,"resource":device.resource(Role::ReferenceMeter)},
         })
     } else {
         serde_json::json!({
@@ -2789,6 +2899,7 @@ fn execute(
     let mut stopped = false;
     let mut compliance_hit = false;
     let mut fit = ResistanceFit::default();
+    let mut reference_fit = ResistanceFit::default();
     let mut last_progress = Instant::now();
     let mut actual_source_resolution = None;
     let mut live = SweepMonitor {
@@ -2800,6 +2911,7 @@ fn execute(
         source_resolution: None,
         meter_resolution: MeterResolutionCache::default(),
         meter_guard: meter::RangeGuard::new(config),
+        reference: None,
         compliance_stop: None,
         compliance_evidence: None,
         source_stop: None,
@@ -2895,6 +3007,7 @@ fn execute(
             // longer authoritative while a potentially slow query is pending.
             state.output = OutputState::Unknown;
             publish(latest, state);
+            live.reference = reference::prepare(device, config, &mut audit, begin)?;
             write_with_audit(device, Role::Source, ":OUTP ON", &mut audit, begin)?;
             let output =
                 query_with_audit(device, Role::Source, ":OUTP?", &mut audit, 0, None, begin)?;
@@ -3238,6 +3351,8 @@ fn execute(
                     // Show each actual conversion, rather than waiting for
                     // the complete average and the next saved sweep point.
                     let mut reading = live.record(level);
+                    reference::clear_reading(&mut reading);
+                    reading.quality_flags = "live".into();
                     reading.meter_value = measured;
                     reading.source_readback = None;
                     reading.source_resolution = actual_source_resolution;
@@ -3271,6 +3386,9 @@ fn execute(
                     read_level(device, &mut audit, point.point_index, begin)?
                 };
                 let mut record = simulate_record(config, point, signal_timing.completed_elapsed_s);
+                record.reference_meter_value = None;
+                record.reference_meter_range = None;
+                record.reference_meter_resolution = None;
                 record.source_set = level;
                 record.source_readback = readback;
                 record.meter_value = value;
@@ -3321,6 +3439,32 @@ fn execute(
                 record.timestamp = signal_timing.completed_at_utc;
                 record
             };
+            if !record.compliance
+                && let Some(observer) = live.reference.as_mut()
+            {
+                let device = pair
+                    .as_deref_mut()
+                    .ok_or("Source-quantity Meter transport missing")?;
+                if !observer.read(device, state, &mut audit, control, begin, &mut record)? {
+                    stopped = true;
+                    break;
+                }
+                // The second DMM conversion extends the powered interval.
+                // Recheck source protection before accepting this point.
+                live.source_stop = check_source_protection(
+                    device,
+                    state,
+                    &mut audit,
+                    begin,
+                    record.point.point_index,
+                    level,
+                    None,
+                )?;
+                if live.source_stop.is_some() {
+                    stopped = true;
+                    break;
+                }
+            }
             record.status = if record.compliance {
                 "compliance"
             } else {
@@ -3355,13 +3499,11 @@ fn execute(
             // Account for the flushed CSV row, last value and fit even if
             // the companion audit fails.
             state.points += 1;
-            let source_value = record.source_readback.unwrap_or(record.source_set);
-            let (voltage, current) = if config.mode == Mode::Iv {
-                (source_value, record.meter_value)
-            } else {
-                (record.meter_value, source_value)
-            };
-            state.resistance = fit.add(voltage, current);
+            let (source_voltage, source_current, _, _) = record.source_electrical_values();
+            state.resistance = fit.add(source_voltage, source_current);
+            if let Some((v, i, _, _)) = record.measured_electrical_values() {
+                state.reference_resistance = reference_fit.add(v, i);
+            }
             state.last = Some(record.clone());
             audit.append(&serde_json::json!({
                 "event":"csv_write", "point_index":record.point.point_index,
@@ -3787,6 +3929,7 @@ mod tests {
             source_resolution: None,
             meter_resolution: MeterResolutionCache::default(),
             meter_guard: meter::RangeGuard::new(&config),
+            reference: None,
             compliance_stop: None,
             compliance_evidence: None,
             source_stop: None,

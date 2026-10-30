@@ -53,6 +53,9 @@ jobs:
             export KOHDALAB_IV_EXE="$PWD/target/debug/iv-cli"
           fi
           python -m unittest discover -s bindings/python -p 'test_*.py' -v
+      - name: Source and reference Meter (actual Rust engine, mock GPIB only)
+        if: runner.os != 'Windows'
+        run: python scripts/test_reference_meter_engine.py --binary target/debug/iv-cli
       - name: Redistribution packaging policy
         run: python tests/test_distribution_policy.py
       - name: Windows application installation lifecycle
