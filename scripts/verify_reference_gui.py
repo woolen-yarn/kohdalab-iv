@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 from pathlib import Path
 import subprocess
@@ -12,6 +13,7 @@ def main() -> None:
     parser.add_argument("binary", type=Path)
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--version", required=True)
+    parser.add_argument("--renderer", default="system OpenGL")
     args = parser.parse_args()
     binary = args.binary.resolve(strict=True)
     cli = binary.with_name("iv-cli.exe" if binary.suffix.lower() == ".exe" else "iv-cli")
@@ -55,6 +57,9 @@ def main() -> None:
         raise RuntimeError("Assigning a Meter changed the plot geometry")
     report = {
         "version": args.version,
+        "renderer": args.renderer,
+        "binary_sha256": hashlib.sha256(binary.read_bytes()).hexdigest(),
+        "cli_sha256": hashlib.sha256(cli.read_bytes()).hexdigest(),
         "normal_gui_rendered": True,
         "same_plot_bounds": True,
         "simulation_only": True,
