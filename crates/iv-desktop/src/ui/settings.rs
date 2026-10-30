@@ -369,9 +369,16 @@ impl Settings {
 }
 
 fn user_dir() -> PathBuf {
-    std::env::var_os("USERPROFILE")
-        .or_else(|| std::env::var_os("HOME"))
-        .map(PathBuf::from)
+    user_dir_from(std::env::var_os("HOME"), std::env::var_os("USERPROFILE"))
+}
+
+fn user_dir_from(home: Option<std::ffi::OsString>, profile: Option<std::ffi::OsString>) -> PathBuf {
+    let home = if cfg!(windows) {
+        profile.or(home)
+    } else {
+        home.or(profile)
+    };
+    home.map(PathBuf::from)
         .unwrap_or_else(std::env::temp_dir)
         .join(".kohdalab")
 }
@@ -535,6 +542,29 @@ const fn default_inventory_id() -> u64 {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn configuration_uses_the_native_platform_home_when_both_are_set() {
+        let home = std::ffi::OsString::from("mac-home");
+        let profile = std::ffi::OsString::from("windows-profile");
+        assert_eq!(
+            user_dir_from(Some(home.clone()), Some(profile.clone())),
+            PathBuf::from(if cfg!(windows) {
+                "windows-profile"
+            } else {
+                "mac-home"
+            })
+            .join(".kohdalab")
+        );
+        assert_eq!(
+            user_dir_from(Some(home), None),
+            PathBuf::from("mac-home/.kohdalab")
+        );
+        assert_eq!(
+            user_dir_from(None, Some(profile)),
+            PathBuf::from("windows-profile/.kohdalab")
+        );
+    }
 
     #[test]
     fn unidentified_json_is_not_loaded_as_defaults_or_replaced_on_save() {
