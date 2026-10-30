@@ -24,7 +24,7 @@ function Run-Setup {
 }
 function Snapshot-Files {
  $hashes=@{}
- foreach($root in @((Join-Path $env:USERPROFILE '.kohdalab\config'),(Join-Path $env:USERPROFILE '.kohdalab\results'),(Join-Path $env:LOCALAPPDATA 'KohdaLab IV'))){
+ foreach($root in @((Join-Path $env:USERPROFILE '.kohdalab\iv\config'),(Join-Path $env:USERPROFILE '.kohdalab\iv\results'),(Join-Path $env:USERPROFILE '.kohdalab\iv\run'),(Join-Path $env:USERPROFILE '.kohdalab\iv\logs'),(Join-Path $env:USERPROFILE '.kohdalab\config'),(Join-Path $env:USERPROFILE '.kohdalab\results'),(Join-Path $env:LOCALAPPDATA 'KohdaLab IV'))){
   if(Test-Path -LiteralPath $root){foreach($f in Get-ChildItem -LiteralPath $root -Recurse -File){$hashes[$f.FullName]=(Get-FileHash -LiteralPath $f.FullName -Algorithm SHA256).Hash}}
  }
  return ,$hashes

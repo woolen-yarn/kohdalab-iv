@@ -53,7 +53,9 @@ try {
  Install-Fixture
  $userData=Join-Path $testRoot 'UserData\iv'
  New-Item -ItemType Directory $userData -Force | Out-Null
- $config=Join-Path $userData 'config.json'
+ $configDirectory=Join-Path $userData 'config'
+ New-Item -ItemType Directory -Force $configDirectory | Out-Null
+ $config=Join-Path $configDirectory 'config.json'
  Set-Content $config '{"keep":"user settings"}' -Encoding ASCII
  $measurement=Join-Path $userData 'results\user-measurement.csv'
  Set-Content $measurement 'voltage_V,current_A' -Encoding ASCII

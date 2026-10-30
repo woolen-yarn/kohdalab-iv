@@ -25,14 +25,14 @@ def main():
     report = args.output_dir.resolve()
     report.mkdir(parents=True, exist_ok=True)
     profile = Path(tempfile.mkdtemp(prefix='iv-gui-control-'))
-    env = dict(os.environ, USERPROFILE=str(profile))
+    env = dict(os.environ, USERPROFILE=str(profile), HOME=str(profile))
     log = (report / 'gui-control.log').open('w')
     process = subprocess.Popen([str(args.binary.resolve()), '--gui-control-smoke', '--screenshot', str(report / 'dual-gui.png')], env=env, stdout=log, stderr=log)
     (report / 'process.json').write_text(json.dumps({'pid': process.pid, 'profile': str(profile), 'command': str(args.binary.resolve()) + ' --gui-control-smoke'}))
     try:
         deadline = time.monotonic() + 20
         while True:
-            endpoints = list((profile / '.kohdalab/control').glob('iv-*.json'))
+            endpoints = list((profile / '.kohdalab/iv/run').glob('iv-*.json'))
             if endpoints:
                 break
             if process.poll() is not None:

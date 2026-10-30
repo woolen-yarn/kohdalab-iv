@@ -115,10 +115,7 @@ pub struct GuiControl {
 }
 impl GuiControl {
     pub fn start() -> Result<Self, String> {
-        let home = std::env::var_os("USERPROFILE")
-            .or_else(|| std::env::var_os("HOME"))
-            .ok_or("No user profile for GUI control")?;
-        Self::in_directory(PathBuf::from(home).join(".kohdalab/control"))
+        Self::in_directory(common::paths::AppPaths::for_app("iv")?.run_dir())
     }
     fn in_directory(directory: PathBuf) -> Result<Self, String> {
         std::fs::create_dir_all(&directory).map_err(|e| e.to_string())?;

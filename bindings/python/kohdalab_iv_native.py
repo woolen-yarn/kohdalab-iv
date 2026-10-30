@@ -484,6 +484,14 @@ class _GuiControlRejected(GuiIVError):
     """The GUI explicitly rejected a request before taking an action."""
 
 
+def _gui_descriptor_paths():
+    home = os.environ.get("USERPROFILE" if os.name == "nt" else "HOME")
+    home = Path(home) if home else Path.home()
+    # New descriptors are app-owned. Legacy directories are read-only fallbacks.
+    folders = [home / ".kohdalab/iv/run", home / ".kohdalab/control"]
+    return sorted({path for folder in folders for path in folder.glob("iv-*.json")})
+
+
 class GuiIV:
     """Attach to an already running IV GUI; never open a second device owner.
 
@@ -519,7 +527,7 @@ class GuiIV:
         if endpoint is None:
             home = Path(os.environ.get("USERPROFILE") or Path.home())
             candidates = []
-            for path in (home / ".kohdalab" / "control").glob("iv-*.json"):
+            for path in _gui_descriptor_paths():
                 try:
                     declaration = self._load_endpoint(path)
                     self._endpoint = declaration
@@ -530,7 +538,7 @@ class GuiIV:
             if not candidates:
                 raise RuntimeError("No running KohdaLab IV GUI found. Open the updated application first.")
             if len(candidates) > 1:
-                raise RuntimeError("Several IV GUIs are open. Pass endpoint= with the desired .kohdalab/control/iv-*.json file.")
+                raise RuntimeError("Several IV GUIs are open. Pass endpoint= with the desired .kohdalab/iv/run/iv-*.json file.")
             endpoint, self._endpoint = candidates[0]
         else:
             self._endpoint = self._load_endpoint(endpoint)
@@ -562,7 +570,7 @@ class GuiIV:
         while time.monotonic() < deadline:
             if process.poll() is not None:
                 raise GuiIVError("KohdaLab IV GUI exited before its API became available.", "launch_failed")
-            for path in (home / ".kohdalab" / "control").glob("iv-*.json"):
+            for path in _gui_descriptor_paths():
                 try:
                     declaration = cls._load_endpoint(path)
                 except (OSError, ValueError, json.JSONDecodeError):

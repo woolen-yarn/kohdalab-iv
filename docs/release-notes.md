@@ -1,21 +1,23 @@
-# KohdaLab IV 1.3.0-alpha.19 preview
+# KohdaLab IV 1.3.0-alpha.20 preview
 
 ## Changes
 
-The first normal GUI launch automatically creates `~/.kohdalab/iv/config.json` (`%USERPROFILE%\.kohdalab\iv\config.json` on Windows) when it is missing. You do not need to prepare JSON manually.
+The canonical configuration is `~/.kohdalab/iv/config/config.json` (Windows: `%USERPROFILE%\.kohdalab\iv\config\config.json`). Runtime API descriptors use `iv/run`; default measurements and application logs use sibling `results` and `logs` where applicable. Camera exports continue to honor the user-selected folder. The shared path definition is vendored identically in all five applications.
+
+Dual mode no longer adds an explanatory row below Mode; the split controls remain in Settings.
 
 ## Compatibility and safety
 
-Existing files are not rewritten on startup, including malformed, foreign and unsupported settings. Errors are displayed instead of silently replacing those files. Creation is atomic and cannot clobber a competing launch. Explicit configuration profiles and smoke tests do not initialize the production default. Loading/creating settings never connects instruments or enables source output. Existing acquisition, safety, CSV and external API contracts are unchanged.
+A missing default is created atomically on the first normal GUI launch. Existing settings, including invalid/foreign/unsupported files, are preserved with visible errors. Old direct-child, shared, preview and AppData profiles are not imported or removed automatically; use Browse/Load after reviewing an existing profile. Explicit profile and output paths remain respected. No device connection, source output, capture or shutter movement is added. Scientific file formats and control ownership/cleanup policies are unchanged.
 
-## Downloads
+Update the bundled Python clients/common SDK (1.0.1) with the GUI. They discover the new app-owned run directory; legacy discovery is read-only. The wire protocol stays at version 1. Existing cross-process recovery interlocks and OS driver caches retain their safety/OS-managed namespaces rather than being mistaken for GUI configuration.
 
-Use the Windows Setup or portable ZIP, macOS Apple silicon preview ZIP, or corresponding source/build kit attached to this release. Windows executables are unsigned; the Mac application uses ad hoc signing and is not notarized.
+## Downloads and validation
 
-## Validation
-
-The first-launch regression tests cover missing defaults, byte preservation, invalid/future/foreign files and an unusable configuration directory. Final platform CI, compiled GUI startup checks and artifact provenance are recorded with the release. No new physical-device qualification is claimed.
+Windows Setup/portable, supported Mac distribution and corresponding source/build kit are attached. Windows artifacts remain unsigned; supported Mac applications are ad hoc signed and not notarized. Normal GUI startup is tested in isolated user homes, including restart/invalid-file preservation and canonical config/run paths. Platform tests, installer evidence and artifact/source hashes qualify the attached builds; no new physical-device qualification is claimed.
 
 ## 日本語
 
-初回の通常GUI起動時に、標準設定がなければ自動作成します。既存・不正・未対応の設定は上書きせず、エラーを表示します。別プロファイル指定とスモークテストは通常用設定を作成しません。装置への接続・出力ON、測定・CSV・APIの仕様は変更しません。Windows版は未署名、Mac版はアドホック署名で公証されていません。
+設定は `iv/config/config.json`、実行時APIファイルは同じアプリ配下の `run` に統一します。結果・アプリログもアプリ配下の `results`・`logs` を使います（明示した保存先は保持）。初回は標準設定を自動作成します。旧設定は削除・自動移行せず、不正な設定は上書きせずエラーを表示します。装置への自動接続・出力ONや、測定・データ形式・安全動作の変更はありません。Pythonクライアントも同梱版へ更新してください。
+
+DualのMode下の説明行を削除し、配分はSettingsで引き続き設定できます。

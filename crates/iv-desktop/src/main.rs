@@ -91,8 +91,9 @@ fn run() -> Result<(), String> {
         })
         .transpose()?;
     if cfg!(windows) {
-        let home = std::env::var_os("USERPROFILE").ok_or("Windows user profile was not found")?;
-        let working = std::path::PathBuf::from(home).join(".kohdalab");
+        let working = kohdalab_control_protocol::paths::AppPaths::for_app("iv")?
+            .root()
+            .to_path_buf();
         std::fs::create_dir_all(&working)
             .map_err(|e| format!("Create user data directory: {e}"))?;
         std::env::set_current_dir(working).map_err(|e| format!("Open user data directory: {e}"))?;

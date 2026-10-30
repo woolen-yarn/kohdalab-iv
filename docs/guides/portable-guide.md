@@ -50,7 +50,7 @@ the historical acceptance observations below retain their original context.
   and a run JSON file recording configuration, identities, physical resource
   addresses, outcome, and warnings. Flush does not guarantee survival of a
   power failure.
-- App-specific settings at `~/.kohdalab/iv/config.json`, without automatic discovery or migration of old shared/preview settings. See [settings storage](../reference/settings-storage.md).
+- App-specific settings at `~/.kohdalab/iv/config/config.json`, without automatic discovery or migration of old shared/preview settings. See [settings storage](../reference/settings-storage.md).
 - Emergency shutdown sends Output Off before resetting the level. A poisoned
   helper is replaced under a bounded recovery deadline while retaining the
   device lock. The exact previously identified source must match before an
@@ -191,7 +191,7 @@ CSV 割り当て、反復スイープ計画、エンジン IPC、グラフ更新
 - 明示的シミュレーション、実計測器の識別確認、選択リソースロック、上限付き通信フレーム／キュー、ヘルパー転送期限、2 秒 GUI heartbeat リース。
 - IV／VI 計画、4 種のスイープパターン、反復、ソース範囲／分解能検証、ハードウェアコンプライアンス、ソフトウェア閾値、待機、NPLC、平均化、割込み可能ランプ、ストリーム抵抗フィット。
 - 既存の 46 列 CSV レイアウト、排他的ファイル作成、点ごとのフラッシュ、設定・識別・物理リソースアドレス・結果・警告を記録する run JSON。フラッシュは停電からの保存を保証しません。
-- 設定は `~/.kohdalab/iv/config.json` に分離します。旧版の共有設定・preview設定は自動探索・移行しません。既存ファイルは削除しません。[設定の保存先](../reference/settings-storage.md)を参照してください。
+- 設定は `~/.kohdalab/iv/config/config.json` に分離します。旧版の共有設定・preview設定は自動探索・移行しません。既存ファイルは削除しません。[設定の保存先](../reference/settings-storage.md)を参照してください。
 - 緊急停止ではレベルを戻す前に Output Off を送ります。破損ヘルパーはデバイスロックを保持した上限付き復旧期限内で置換します。OFF 再試行前に以前確認したソースの一致が必要です。ゼロレベルコマンド失敗でも、確認済み OFF 状態を破棄しません。
 - ポータブル配布、依存ライセンス、ネイティブヘルパーライセンス、完全なソースとビルドスクリプト、ファイルハッシュ、ad hoc 署名済み Mac バンドル。
 

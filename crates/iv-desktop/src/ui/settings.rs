@@ -171,7 +171,11 @@ impl Default for Settings {
             meter_id: 3,
             dc_gate_id: 0,
             next_inventory_id: 4,
-            output_dir: user_dir().join("iv").join("results").display().to_string(),
+            output_dir: kohdalab_control_protocol::paths::AppPaths::from_root(user_dir(), "iv")
+                .expect("known IV application")
+                .results_dir()
+                .display()
+                .to_string(),
             filename: "iv_run".into(),
             simulation: false,
             source_model: "YOKOGAWA_GS210".into(),
@@ -390,7 +394,9 @@ pub(super) fn settings_path() -> PathBuf {
 }
 
 fn settings_path_in(root: &Path) -> PathBuf {
-    root.join("iv").join("config.json")
+    kohdalab_control_protocol::paths::AppPaths::from_root(root, "iv")
+        .expect("known IV application")
+        .config_file()
 }
 
 /// Initialize only the missing application-owned default, then read it.
@@ -614,7 +620,7 @@ mod tests {
         }
         assert_eq!(
             settings_path_in(root.path()),
-            root.path().join("iv/config.json")
+            root.path().join("iv/config/config.json")
         );
     }
 
@@ -679,7 +685,9 @@ mod tests {
         let path = settings_path_in(root.path());
         assert!(load_settings(&std::fs::read(path).unwrap()).is_ok());
         assert_eq!(
-            std::fs::read_dir(root.path().join("iv")).unwrap().count(),
+            std::fs::read_dir(root.path().join("iv/config"))
+                .unwrap()
+                .count(),
             1
         );
     }

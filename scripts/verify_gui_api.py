@@ -26,6 +26,7 @@ def main():
     report.mkdir(parents=True, exist_ok=True)
     profile = Path(tempfile.mkdtemp(prefix="iv-api-v2-"))
     os.environ["USERPROFILE"] = str(profile)
+    os.environ["HOME"] = str(profile)
     config = profile / "profile.json"
     plan_defaults = json.loads(subprocess.check_output([str(args.binary.resolve()), "--default-config"], text=True))
     plan_defaults.update({"pattern": "linear", "start": -0.001, "stop": 0.001,
