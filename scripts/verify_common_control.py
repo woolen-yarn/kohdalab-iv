@@ -25,6 +25,7 @@ def main():
     args.output_dir.mkdir(parents=True, exist_ok=True)
     profile = Path(tempfile.mkdtemp(prefix="iv-common-simulation-"))
     os.environ["USERPROFILE"] = str(profile)
+    os.environ["HOME"] = str(profile)
     plan = json.loads(
         subprocess.check_output(
             [str(args.binary.resolve()), "--default-config"], text=True

@@ -7,22 +7,21 @@ Portable packages remain independent of installation.
 
 | Application | Windows installation directory | macOS application | User configuration |
 | --- | --- | --- | --- |
-| Camera | `KohdaLab Camera` | `KohdaLab Camera.app` | `camera/config.json` |
-| IV | `KohdaLab IV` | `KohdaLab IV.app` | `iv/config.json` |
-| TRKR | `KohdaLab TRKR` | `KohdaLab TRKR.app` | `trkr/config.json` |
-| PLE | `KohdaLab PLE` | `KohdaLab PLE.app` | `ple/config.json` |
-| Shutter | `KohdaLab Shutter` | `KohdaLab Shutter.app` | `shutter/config.json` (desktop preferences only) |
+| Camera | `KohdaLab Camera` | `KohdaLab Camera.app` | `camera/config/config.json` |
+| IV | `KohdaLab IV` | `KohdaLab IV.app` | `iv/config/config.json` |
+| TRKR | `KohdaLab TRKR` | `KohdaLab TRKR.app` | `trkr/config/config.json` |
+| PLE | `KohdaLab PLE` | `KohdaLab PLE.app` | `ple/config/config.json` |
+| Shutter | `KohdaLab Shutter` | `KohdaLab Shutter.app` | `shutter/config/config.json` (desktop preferences only) |
 
 Configuration paths are relative to `~/.kohdalab` on macOS/Linux and
-`%USERPROFILE%\.kohdalab` on Windows. TRKR Demo uses `trkr/demo.json`.
-The suite's shared API discovery/coordination directories are intentionally
-shared; they are not application configuration files.
+`%USERPROFILE%\.kohdalab` on Windows. TRKR Demo uses `trkr/config/demo.json`.
+Runtime API descriptors use the sibling `<app>/run` directory. Results and application logs use `<app>/results` and `<app>/logs` where applicable. Shared hardware coordination and OS driver caches retain their dedicated namespaces; they are not application configuration files.
 
 New saves identify their owner with `application: "kohdalab-<app>"`.
 Foreign, damaged, unidentified, or newer unsupported IV settings are rejected
 before replacement. Saves use a temporary file and atomic replacement.
 
-On normal first launch, IV creates a missing `iv/config.json` from built-in defaults using a complete temporary file and atomic no-clobber publication. Existing bytes remain unchanged, including invalid or unsupported files; load/create errors are shown in the GUI. Concurrent initialization reads the winning file rather than replacing it. Explicit profiles and smoke-test launches do not initialize the production default. Creating a profile does not connect instruments or enable output.
+On normal first launch, IV creates a missing `iv/config/config.json` from built-in defaults using a complete temporary file and atomic no-clobber publication. Existing bytes remain unchanged, including invalid or unsupported files; load/create errors are shown in the GUI. Concurrent initialization reads the winning file rather than replacing it. Explicit profiles and smoke-test launches do not initialize the production default. Creating a profile does not connect instruments or enable output.
 
 IV and TRKR read only their dedicated defaults. Files such as
 `config/iv-next.json`, `config/trkr-next.json`, `config/default.json`, and the old

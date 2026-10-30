@@ -103,7 +103,7 @@ unchanged. The context does not close the GUI.
 
 The local API binds only to 127.0.0.1 and uses a random per-instance token and
 one exclusive Python control lease. Discovery files live in
-`~/.kohdalab/control/iv-*.json` (Windows: under the user profile). Unix discovery
+`~/.kohdalab/iv/run/iv-*.json` (Windows: under the user profile). Unix discovery
 files are owner-readable only; Windows uses the user profile's inherited access
 controls. Do not share these token files. No arbitrary SCPI or shell command API
 is exposed. If several GUIs are open, pass the desired file as

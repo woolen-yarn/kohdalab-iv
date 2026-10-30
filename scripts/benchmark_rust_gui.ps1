@@ -16,7 +16,7 @@ if (Test-Path (Join-Path $OutputDir 'gui-benchmark.json')) { throw 'Existing ben
 New-Item -ItemType Directory -Force $OutputDir | Out-Null
 $rustProfile=Join-Path $OutputDir 'rust-profile'
 # Use the application-owned configuration directory in an isolated profile.
-$rustConfigDir=Join-Path $rustProfile '.kohdalab\iv'
+$rustConfigDir=Join-Path $rustProfile '.kohdalab\iv\config'
 New-Item -ItemType Directory -Force $rustConfigDir | Out-Null
 $rustSettings=@{source='';meter='';source_model='SIMULATED_SOURCE';meter_model='SIMULATED_METER';simulation=$true;output_dir=(Join-Path $OutputDir 'unused-results');filename='unused';auto_suffix=$true}
 [IO.File]::WriteAllText((Join-Path $rustConfigDir 'config.json'),($rustSettings|ConvertTo-Json -Depth 6),$utf8)
