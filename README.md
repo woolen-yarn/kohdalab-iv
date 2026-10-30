@@ -23,9 +23,9 @@ DC I-V・V-I 測定、ソース／メーターのライブ監視、USB/GPIB 計�
 
 ![KohdaLab IV interface](docs/images/kohdalab-iv.png)
 
-macOS simulation screenshot of 1.3.0-alpha.21 (2× scale; device-free GUI verification): instrument setup and live signals are on the left, sweep and plot are in the centre, and saved values/logs are on the right. The release keeps the same layout; the final package version is shown in its title bar.
+macOS simulation screenshot of 1.4.0 (2× scale; device-free GUI verification): instrument setup and live signals are on the left, sweep and plot are in the centre, and saved values/logs are on the right. The release keeps the same layout; the final package version is shown in its title bar.
 
-1.3.0-alpha.21のmacOSシミュレーション画面（2×スケール、実機を使わないGUI検証）です。左に計測器の設定とライブ信号、中央にスイープとプロット、右に保存値とログを表示します。リリース版も同じレイアウトで、最終パッケージの版番号はタイトルバーに表示されます。
+1.4.0のmacOSシミュレーション画面（2×スケール、実機を使わないGUI検証）です。左に計測器の設定とライブ信号、中央にスイープとプロット、右に保存値とログを表示します。リリース版も同じレイアウトで、最終パッケージの版番号はタイトルバーに表示されます。
 
 ### Source and measured values / Source値と実測値
 
@@ -65,15 +65,15 @@ On first normal GUI launch, IV atomically creates its missing default configurat
 
 | Channel / 配布チャネル | Version / バージョン | Platforms / 対応プラットフォーム |
 | --- | --- | --- |
-| Stable / 安定版 | [1.2.0](https://github.com/woolen-yarn/kohdalab-iv/releases/tag/portable-v1.2.0) | Windows x64 Setup / portable ZIP; macOS Apple silicon portable ZIP / Windows x64 セットアップ・ポータブル ZIP、macOS Apple silicon ポータブル ZIP |
-| Preview / プレビュー | [1.3.0-alpha.21](https://github.com/woolen-yarn/kohdalab-iv/releases/tag/preview-v1.3.0-alpha.21) | Windows x64 Setup / preview ZIP; macOS Apple silicon preview ZIP / Windows x64 セットアップ・プレビュー ZIP、macOS Apple silicon プレビュー ZIP |
+| Stable / 安定版 | [1.4.0](https://github.com/woolen-yarn/kohdalab-iv/releases/tag/portable-v1.4.0) | Windows x64 Setup / portable ZIP; macOS Apple silicon portable ZIP / Windows x64 セットアップ・ポータブル ZIP、macOS Apple silicon ポータブル ZIP |
+| Preview / プレビュー | [1.3.0-alpha.20](https://github.com/woolen-yarn/kohdalab-iv/releases/tag/preview-v1.3.0-alpha.20) | Windows x64 Setup / preview ZIP; macOS Apple silicon preview ZIP / Windows x64 セットアップ・プレビュー ZIP、macOS Apple silicon プレビュー ZIP |
 
-| Preview package / プレビューパッケージ | Kohdalab | Personal / 個人ミラー |
+| Current package / 最新パッケージ | Kohdalab | Personal / 個人ミラー |
 | --- | --- | --- |
-| Windows Setup | [Download](https://github.com/Kohdalab/kohdalab-iv/releases/download/preview-v1.3.0-alpha.21/kohdalab-iv-1.3.0-alpha.21-windows-x64-Setup.exe) | [Download](https://github.com/woolen-yarn/kohdalab-iv/releases/download/preview-v1.3.0-alpha.21/kohdalab-iv-1.3.0-alpha.21-windows-x64-Setup.exe) |
-| Windows portable | [Download](https://github.com/Kohdalab/kohdalab-iv/releases/download/preview-v1.3.0-alpha.21/kohdalab-iv-1.3.0-alpha.21-windows-x64-preview.zip) | [Download](https://github.com/woolen-yarn/kohdalab-iv/releases/download/preview-v1.3.0-alpha.21/kohdalab-iv-1.3.0-alpha.21-windows-x64-preview.zip) |
-| Mac portable (Apple silicon) | [Download](https://github.com/Kohdalab/kohdalab-iv/releases/download/preview-v1.3.0-alpha.21/kohdalab-iv-1.3.0-alpha.21-macos-arm64-preview.zip) | [Download](https://github.com/woolen-yarn/kohdalab-iv/releases/download/preview-v1.3.0-alpha.21/kohdalab-iv-1.3.0-alpha.21-macos-arm64-preview.zip) |
-| Source build kit / ソースビルドキット | [Download](https://github.com/Kohdalab/kohdalab-iv/releases/download/preview-v1.3.0-alpha.21/kohdalab-iv-1.3.0-alpha.21-build-kit.zip) | [Download](https://github.com/woolen-yarn/kohdalab-iv/releases/download/preview-v1.3.0-alpha.21/kohdalab-iv-1.3.0-alpha.21-build-kit.zip) |
+| Windows Setup | [Download](https://github.com/Kohdalab/kohdalab-iv/releases/download/portable-v1.4.0/kohdalab-iv-1.4.0-windows-x64-Setup.exe) | [Download](https://github.com/woolen-yarn/kohdalab-iv/releases/download/portable-v1.4.0/kohdalab-iv-1.4.0-windows-x64-Setup.exe) |
+| Windows portable | [Download](https://github.com/Kohdalab/kohdalab-iv/releases/download/portable-v1.4.0/kohdalab-iv-1.4.0-windows-x64-portable.zip) | [Download](https://github.com/woolen-yarn/kohdalab-iv/releases/download/portable-v1.4.0/kohdalab-iv-1.4.0-windows-x64-portable.zip) |
+| Mac portable (Apple silicon) | [Download](https://github.com/Kohdalab/kohdalab-iv/releases/download/portable-v1.4.0/kohdalab-iv-1.4.0-macos-arm64-portable.zip) | [Download](https://github.com/woolen-yarn/kohdalab-iv/releases/download/portable-v1.4.0/kohdalab-iv-1.4.0-macos-arm64-portable.zip) |
+| Source build kit / ソースビルドキット | [Download](https://github.com/Kohdalab/kohdalab-iv/releases/download/portable-v1.4.0/kohdalab-iv-1.4.0-build-kit.zip) | [Download](https://github.com/woolen-yarn/kohdalab-iv/releases/download/portable-v1.4.0/kohdalab-iv-1.4.0-build-kit.zip) |
 
 Rust and Python are not required to run the packaged application. Current Windows
 artifacts are unsigned; download packages and checksums together from Releases.
@@ -81,9 +81,9 @@ macOS bundles use ad hoc signing and are not Apple-notarized.
 
 配布アプリケーションの実行に Rust や Python は不要です。現在の Windows 配布物は未署名です。Releases からパッケージとチェックサムを必ず一緒に取得してください。macOS バンドルは ad hoc 署名であり、Apple の公証は受けていません。
 
-Preview 1.3.0-alpha.21 uses the dedicated `iv/config/config.json` default and `iv/results` output directory. Windows Setup remains in `C:\Program Files\Kohdalab\KohdaLab IV`; portable packages use the same per-user defaults. Old shared/preview profiles are not imported automatically. Save a reviewed IV profile to the new default when moving from an older version. See [settings storage](docs/reference/settings-storage.md) and [source and meter values](docs/guides/source-and-meter-values.md).
+Version 1.4.0 uses the dedicated `iv/config/config.json` default and `iv/results` output directory. Windows Setup remains in `C:\Program Files\Kohdalab\KohdaLab IV`; portable packages use the same per-user defaults. Old shared/preview profiles are not imported automatically. Save a reviewed IV profile to the new default when moving from an older version. See [settings storage](docs/reference/settings-storage.md) and [source and meter values](docs/guides/source-and-meter-values.md).
 
-Preview 1.3.0-alpha.21は、設定を専用の `iv/config/config.json`、標準の測定保存先を `iv/results` に統一します。Windowsのインストール先は `C:\Program Files\Kohdalab\KohdaLab IV` で、portable版も同じユーザー別設定を使います。旧共有設定は自動移行しません。旧版から移る際は、内容を確認したIV設定を新しい既定先へ保存してください。[Source/Meter値](docs/guides/source-and-meter-values.md)を参照してください。
+Version 1.4.0は、設定を専用の `iv/config/config.json`、標準の測定保存先を `iv/results` に統一します。Windowsのインストール先は `C:\Program Files\Kohdalab\KohdaLab IV` で、portable版も同じユーザー別設定を使います。旧共有設定は自動移行しません。旧版から移る際は、内容を確認したIV設定を新しい既定先へ保存してください。[Source/Meter値](docs/guides/source-and-meter-values.md)を参照してください。
 
 Preview 1.3.0-alpha.16 makes manual DC range selection explicit: use the central range selector and its left/right arrows to choose a documented native range before Output. The Source card then keeps a fixed, range-derived V/mV/mA display unit and precision; Output and Zero are equal-width controls. Device → live → settings remains the compact Source/Meter workflow. Meter transition protection, CSV columns, and existing output safety remain unchanged. See [manual DC operation](docs/reference/manual-dc-output.md), [meter ranging](docs/reference/meter-ranging.md), and [alpha.16 validation](docs/validation/manual-dc-alpha16.md).
 

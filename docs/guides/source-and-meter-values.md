@@ -1,6 +1,6 @@
 # Source settings and measured V/I / Source設定値と実測値
 
-KohdaLab IV 1.3.0-alpha.21 separates programmed Source quantities from optional
+KohdaLab IV 1.4.0 separates programmed Source quantities from optional
 same-quantity Meter readings. This guide describes the released software
 contract. It does not claim a new physical-device qualification.
 
@@ -83,7 +83,7 @@ with NativeIV() as iv:
     # Review source limits, compliance and sweep values before running.
 ```
 
-Use the bundled Python client that ships with 1.3.0-alpha.21. It accepts both
+Use the bundled Python client that ships with 1.4.0. It accepts both
 `analysis_v4` and legacy `analysis_v3`; an older client rejects the new schema
 rather than assuming its earlier contract. The external GUI control API supports
 `reference_meter` alongside `source`, `source2` and `meter` in device lists.

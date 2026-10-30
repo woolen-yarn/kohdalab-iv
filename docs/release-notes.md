@@ -1,4 +1,4 @@
-# KohdaLab IV 1.3.0-alpha.21 preview
+# KohdaLab IV 1.4.0
 
 ## Source and Meter values
 
@@ -35,7 +35,7 @@ silently fall back to a Source value and follows the existing safety-stop path.
 ## Distribution and qualification
 
 Windows x64 Setup/portable, macOS Apple-silicon portable, and the corresponding
-source build kit are distributed with this preview. Windows binaries are
+source build kit are distributed with this release. Windows binaries are
 unsigned. macOS bundles are ad hoc signed and are not Apple-notarized. This
 release has software, simulation, packaging, and documentation checks; it does
 not claim a new physical-device qualification for the Source/Meter feature.
@@ -56,4 +56,4 @@ Source保護、Meter limit、固定レンジ、GUIの制御権、終了処理の
 
 ### 配布と検証範囲
 
-このpreviewにはWindows x64 Setup/portable、macOS Apple silicon portable、対応するsource build kitを用意します。Windowsバイナリは未署名です。macOSバンドルはad hoc署名で、Apple公証は受けていません。今回の確認はソフトウェア・simulation・パッケージ・ドキュメントです。Source/Meter機能について、新たな実機適合確認は主張しません。
+このリリースにはWindows x64 Setup/portable、macOS Apple silicon portable、対応するsource build kitを用意します。Windowsバイナリは未署名です。macOSバンドルはad hoc署名で、Apple公証は受けていません。今回の確認はソフトウェア・simulation・パッケージ・ドキュメントです。Source/Meter機能について、新たな実機適合確認は主張しません。

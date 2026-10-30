@@ -83,12 +83,12 @@ and invalid Start requests explain the problem in an English dialog.
 
 | Platform | Kohdalab | Personal mirror |
 | --- | --- | --- |
-| macOS Apple Silicon | [Mac portable](https://github.com/Kohdalab/kohdalab-iv/releases/download/portable-v1.2.0/kohdalab-iv-1.2.0-macos-arm64-portable.zip) | [Mac portable](https://github.com/woolen-yarn/kohdalab-iv/releases/download/portable-v1.2.0/kohdalab-iv-1.2.0-macos-arm64-portable.zip) |
-| Windows x64 installer | [Windows Setup](https://github.com/Kohdalab/kohdalab-iv/releases/download/portable-v1.2.0/kohdalab-iv-1.2.0-windows-x64-Setup.exe) | [Windows Setup](https://github.com/woolen-yarn/kohdalab-iv/releases/download/portable-v1.2.0/kohdalab-iv-1.2.0-windows-x64-Setup.exe) |
-| Windows x64 | [Windows portable](https://github.com/Kohdalab/kohdalab-iv/releases/download/portable-v1.2.0/kohdalab-iv-1.2.0-windows-x64-portable.zip) | [Windows portable](https://github.com/woolen-yarn/kohdalab-iv/releases/download/portable-v1.2.0/kohdalab-iv-1.2.0-windows-x64-portable.zip) |
+| macOS Apple Silicon | [Mac portable](https://github.com/Kohdalab/kohdalab-iv/releases/download/portable-v1.4.0/kohdalab-iv-1.4.0-macos-arm64-portable.zip) | [Mac portable](https://github.com/woolen-yarn/kohdalab-iv/releases/download/portable-v1.4.0/kohdalab-iv-1.4.0-macos-arm64-portable.zip) |
+| Windows x64 installer | [Windows Setup](https://github.com/Kohdalab/kohdalab-iv/releases/download/portable-v1.4.0/kohdalab-iv-1.4.0-windows-x64-Setup.exe) | [Windows Setup](https://github.com/woolen-yarn/kohdalab-iv/releases/download/portable-v1.4.0/kohdalab-iv-1.4.0-windows-x64-Setup.exe) |
+| Windows x64 | [Windows portable](https://github.com/Kohdalab/kohdalab-iv/releases/download/portable-v1.4.0/kohdalab-iv-1.4.0-windows-x64-portable.zip) | [Windows portable](https://github.com/woolen-yarn/kohdalab-iv/releases/download/portable-v1.4.0/kohdalab-iv-1.4.0-windows-x64-portable.zip) |
 
-[Source build kit (Kohdalab)](https://github.com/Kohdalab/kohdalab-iv/releases/download/portable-v1.2.0/kohdalab-iv-1.2.0-build-kit.zip) ·
-[Source build kit (personal)](https://github.com/woolen-yarn/kohdalab-iv/releases/download/portable-v1.2.0/kohdalab-iv-1.2.0-build-kit.zip) ·
+[Source build kit (Kohdalab)](https://github.com/Kohdalab/kohdalab-iv/releases/download/portable-v1.4.0/kohdalab-iv-1.4.0-build-kit.zip) ·
+[Source build kit (personal)](https://github.com/woolen-yarn/kohdalab-iv/releases/download/portable-v1.4.0/kohdalab-iv-1.4.0-build-kit.zip) ·
 [SHA-256 checksums](https://github.com/Kohdalab/kohdalab-iv/releases/download/portable-v1.2.0/SHA256SUMS.txt)
 
 Windows: run **Setup.exe**, approve administrator access, then start **KohdaLab IV** from the desktop or Start menu. It installs to `C:\Program Files\Kohdalab\KohdaLab IV`. Run a newer Setup to update; uninstall from Windows Settings. Close IV and automation clients first. Settings, results and instrument drivers are retained.
@@ -268,11 +268,11 @@ current stable release は **v1.2.0** です。public download は personal mirr
 
 | Platform | Kohdalab | Personal mirror |
 | --- | --- | --- |
-| macOS Apple Silicon | [Mac portable](https://github.com/Kohdalab/kohdalab-iv/releases/download/portable-v1.2.0/kohdalab-iv-1.2.0-macos-arm64-portable.zip) | [Mac portable](https://github.com/woolen-yarn/kohdalab-iv/releases/download/portable-v1.2.0/kohdalab-iv-1.2.0-macos-arm64-portable.zip) |
-| Windows x64 installer | [Windows Setup](https://github.com/Kohdalab/kohdalab-iv/releases/download/portable-v1.2.0/kohdalab-iv-1.2.0-windows-x64-Setup.exe) | [Windows Setup](https://github.com/woolen-yarn/kohdalab-iv/releases/download/portable-v1.2.0/kohdalab-iv-1.2.0-windows-x64-Setup.exe) |
-| Windows x64 | [Windows portable](https://github.com/Kohdalab/kohdalab-iv/releases/download/portable-v1.2.0/kohdalab-iv-1.2.0-windows-x64-portable.zip) | [Windows portable](https://github.com/woolen-yarn/kohdalab-iv/releases/download/portable-v1.2.0/kohdalab-iv-1.2.0-windows-x64-portable.zip) |
+| macOS Apple Silicon | [Mac portable](https://github.com/Kohdalab/kohdalab-iv/releases/download/portable-v1.4.0/kohdalab-iv-1.4.0-macos-arm64-portable.zip) | [Mac portable](https://github.com/woolen-yarn/kohdalab-iv/releases/download/portable-v1.4.0/kohdalab-iv-1.4.0-macos-arm64-portable.zip) |
+| Windows x64 installer | [Windows Setup](https://github.com/Kohdalab/kohdalab-iv/releases/download/portable-v1.4.0/kohdalab-iv-1.4.0-windows-x64-Setup.exe) | [Windows Setup](https://github.com/woolen-yarn/kohdalab-iv/releases/download/portable-v1.4.0/kohdalab-iv-1.4.0-windows-x64-Setup.exe) |
+| Windows x64 | [Windows portable](https://github.com/Kohdalab/kohdalab-iv/releases/download/portable-v1.4.0/kohdalab-iv-1.4.0-windows-x64-portable.zip) | [Windows portable](https://github.com/woolen-yarn/kohdalab-iv/releases/download/portable-v1.4.0/kohdalab-iv-1.4.0-windows-x64-portable.zip) |
 
-[Source build kit (Kohdalab)](https://github.com/Kohdalab/kohdalab-iv/releases/download/portable-v1.2.0/kohdalab-iv-1.2.0-build-kit.zip) · [Source build kit (personal)](https://github.com/woolen-yarn/kohdalab-iv/releases/download/portable-v1.2.0/kohdalab-iv-1.2.0-build-kit.zip) · [SHA-256 checksums](https://github.com/Kohdalab/kohdalab-iv/releases/download/portable-v1.2.0/SHA256SUMS.txt)
+[Source build kit (Kohdalab)](https://github.com/Kohdalab/kohdalab-iv/releases/download/portable-v1.4.0/kohdalab-iv-1.4.0-build-kit.zip) · [Source build kit (personal)](https://github.com/woolen-yarn/kohdalab-iv/releases/download/portable-v1.4.0/kohdalab-iv-1.4.0-build-kit.zip) · [SHA-256 checksums](https://github.com/Kohdalab/kohdalab-iv/releases/download/portable-v1.2.0/SHA256SUMS.txt)
 
 Windows は **Setup.exe** を実行し administrator access を承認後、desktop/Start menu の **KohdaLab IV** を開始します。`C:\Program Files\Kohdalab\KohdaLab IV` に install します。newer Setup で update、Windows Settings から uninstall し、先に IV/automation client を閉じます。setting/result/instrument driver は保持されます。portable は ZIP 全体を extract し、Mac は `KohdaLab IV.app`、Windows は `kohdalab-iv.exe` を直接実行します。Python/Rust installation は不要です。instrument communication は available official 64-bit VISA runtime/native WinUSB helper を使います。app install は driver を変更せず、WinUSB が必要な device では `support/USB-Setup.exe` が separate action です。[Windows Setup distribution](application-guide.md#windows-setupexe-distribution) を参照してください。Mac bundle は ad hoc signed で Apple-notarized ではありません。
 

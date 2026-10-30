@@ -145,7 +145,7 @@ for a complete no-hardware example.
 
 ## Explicit model selection
 
-KohdaLab IV 1.3.0-alpha.21 accepts explicit models. Keep the bundled client and
+KohdaLab IV 1.4.0 accepts explicit models. Keep the bundled client and
 application at compatible release versions:
 
 ```python
@@ -403,7 +403,7 @@ Legacy IV codes remain readable aliases. Error messages and original recording e
 旧IVコードも別名として読み取れます。例外型はコードから選択し、Pythonで文面推測はしません。既存エンジンの診断分類は保護を迂回する判定には使いません。CSV列・保存済みJSONのschemaは変更しません。
 
 
-KohdaLab IV 1.3.0-alpha.21 separates Source settings from optional measured V/I;
+KohdaLab IV 1.4.0 separates Source settings from optional measured V/I;
 see [instrument assignment and CSV fields](../../docs/guides/source-and-meter-values.md).
 Use the bundled client from the same release. It reads `analysis_v4` and legacy
 `analysis_v3`; older applications and clients retain their documented schema.

@@ -1,6 +1,6 @@
 # Changelog / 変更履歴
 
-## 1.3.0-alpha.21 — 2026-10-30
+## 1.4.0 — 2026-10-30
 
 - Assign separate voltage/current Meters, including an optional source-quantity Meter in V-I, I-V and Dual. Preserve existing one-Meter operation.
 - Overlay Source/Meter traces on one plot with stable lower/upper axes; display independent fitted resistance/conductance.
