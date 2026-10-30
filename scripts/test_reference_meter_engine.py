@@ -131,7 +131,7 @@ for line in sys.stdin:
     elif upper == "SYST:ERR?\n":
         frame("0,No error")
     elif address in ranges and upper == "READ?\n":
-        if address == 8 and fault == "overload":
+        if address == 8 and (fault == "idle_overload" or (fault == "overload" and outputs[3])):
             frame("1e99")
         elif address == 8:
             reference_read_after_on = reference_read_after_on or outputs[3]
@@ -357,6 +357,15 @@ class ReferenceMeterEngineTests(unittest.TestCase):
         self.assertEqual(done["phase"], "Completed")
         row = self.csv_row(dual)
         self.assertTrue(row["V_meter_V"], "Dual must preserve source-side DMM data")
+
+    def test_idle_reference_overload_stops_without_inventing_a_run(self) -> None:
+        engine = self.engine("idle_overload")
+        self.connect(engine, reference=True)
+        state = engine.wait(lambda s: s["phase"] == "Failed", seconds=8)
+        self.assertEqual(state["output"], "Off", state)
+        self.assertIn("overload", state["error"].lower())
+        self.assertEqual(state["path"], "")
+        self.assertEqual(state["points"], 0)
 
     def test_reference_overload_turns_output_off_before_error(self) -> None:
         engine = self.engine("overload")
