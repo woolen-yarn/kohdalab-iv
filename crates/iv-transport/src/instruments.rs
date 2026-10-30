@@ -6,14 +6,14 @@ use iv_core::{InstrumentDialect, InstrumentRole, instrument_descriptor};
 fn catalog_role(role: Role) -> InstrumentRole {
     match role {
         Role::Source | Role::Source2 | Role::Gate => InstrumentRole::Source,
-        Role::Meter => InstrumentRole::Meter,
+        Role::Meter | Role::ReferenceMeter => InstrumentRole::Meter,
     }
 }
 
 pub fn default_model(role: Role) -> &'static str {
     match role {
         Role::Source | Role::Source2 | Role::Gate => "YOKOGAWA_GS210",
-        Role::Meter => "AGILENT_34411A",
+        Role::Meter | Role::ReferenceMeter => "AGILENT_34411A",
     }
 }
 pub fn valid_model(role: Role, model: &str) -> bool {

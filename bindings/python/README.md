@@ -62,7 +62,7 @@ with NativeIV() as iv:  # Finds an installed Windows or macOS application automa
 
 Use a new output filename for every run. Rust refuses to overwrite a CSV. Each
 new run also creates `.run.json` and `.raw.csv`; keep all three files
-together. The 18-column `analysis_v3` CSV preserves finite `f64` values,
+together. The 26-column `analysis_v4` CSV preserves finite `f64` values,
 accepted-reading counts, ddof=1 `meter_stddev`, and explicit quality flags; the raw CSV
 retains raw per-repeat replies and known provenance. Neither representation
 turns instrument resolution into an uncertainty claim.
@@ -240,7 +240,7 @@ with NativeIV() as iv:  # インストール済み Windows または macOS ア�
 ```
 
 実行ごとに新しい出力ファイル名を使ってください。Rust は CSV の上書きを拒否します。新しいrunでは
-`.run.json`と`.raw.csv`も作成するため、3ファイルを一緒に保管してください。18列の`analysis_v3` CSVは有限`f64`値、
+`.run.json`と`.raw.csv`も作成するため、3ファイルを一緒に保管してください。26列の`analysis_v4` CSVは有限`f64`値、
 accepted reading count、ddof=1の`meter_stddev`、quality flagを保持し、raw CSVは
 uncertaintyの主張には変えません。設定既定値は
 Python 側で別管理せず Rust から問い合わせます。`snapshot` は最新状態を返し、`live()` は新しい
@@ -400,3 +400,6 @@ All GUI exceptions inherit `GuiError`, the shared alias of the existing `GuiIVEr
 Legacy IV codes remain readable aliases. Error messages and original recording evidence are retained; exception classes are selected from codes, not Python text matching. Existing engine diagnostic categories remain diagnostic, not a decision to bypass protection. CSV columns and saved JSON configuration schemas are unchanged.
 
 旧IVコードも別名として読み取れます。例外型はコードから選択し、Pythonで文面推測はしません。既存エンジンの診断分類は保護を迂回する判定には使いません。CSV列・保存済みJSONのschemaは変更しません。
+
+
+Source settings and measured V/I are separate in the development version; see [instrument assignment and CSV fields](../../docs/guides/source-and-meter-values.md). Update this client with that application; published older packages retain their documented schema.

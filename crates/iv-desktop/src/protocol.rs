@@ -90,6 +90,13 @@ pub enum Command {
         simulation: bool,
         resource: String,
     },
+    ConnectReferenceMeter {
+        #[serde(default = "default_meter_model")]
+        model: String,
+        simulation: bool,
+        resource: String,
+    },
+    DisconnectReferenceMeter,
     DisconnectSource,
     DisconnectSource2,
     DisconnectGate,
@@ -146,6 +153,8 @@ fn is_gui_job_command(command: &Command) -> bool {
             | Command::ConnectSource2 { .. }
             | Command::ConnectGate { .. }
             | Command::ConnectMeter { .. }
+            | Command::ConnectReferenceMeter { .. }
+            | Command::DisconnectReferenceMeter
             | Command::DisconnectSource
             | Command::DisconnectSource2
             | Command::DisconnectGate
@@ -276,6 +285,14 @@ pub struct Snapshot {
     pub connected: bool,
     pub source_connected: bool,
     pub meter_connected: bool,
+    #[serde(default)]
+    pub reference_meter_connected: bool,
+    #[serde(default)]
+    pub reference_meter_simulation: bool,
+    #[serde(default)]
+    pub reference_meter_identity: String,
+    #[serde(default)]
+    pub reference_meter_resource: String,
     pub source_simulation: bool,
     pub meter_simulation: bool,
     pub simulation: bool,
@@ -288,6 +305,8 @@ pub struct Snapshot {
     pub total: usize,
     pub elapsed: f64,
     pub resistance: Option<f64>,
+    #[serde(default)]
+    pub reference_resistance: Option<f64>,
     pub last: Option<Record>,
     #[serde(default)]
     pub live: Option<Record>,
@@ -339,6 +358,10 @@ impl Default for Snapshot {
             connected: false,
             source_connected: false,
             meter_connected: false,
+            reference_meter_connected: false,
+            reference_meter_simulation: false,
+            reference_meter_identity: String::new(),
+            reference_meter_resource: String::new(),
             source_simulation: false,
             meter_simulation: false,
             simulation: false,
@@ -356,6 +379,7 @@ impl Default for Snapshot {
             source_resource: String::new(),
             meter_resource: String::new(),
             resistance: None,
+            reference_resistance: None,
             error: Failure::default(),
             activity: Activity::default(),
             protocol: ProtocolInfo::default(),

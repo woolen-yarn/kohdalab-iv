@@ -179,6 +179,7 @@ impl IvApp {
                     "initializing"
                 } else if self.state.source_connected
                     || self.state.meter_connected
+                    || self.state.reference_meter_connected
                     || self.state.source2_connected
                     || self.state.gate_connected
                 {
@@ -207,7 +208,7 @@ impl IvApp {
             }
             "capabilities" => {
                 return Ok(
-                    json!({"application":"kohdalab-iv","application_version":env!("CARGO_PKG_VERSION"),"api_version":2,"actions":["capabilities","status","config","plan","output","acquire","heartbeat","release","detach","configure","load_config","set_plan","set_output","start","result","stop","output_off","connect","disconnect","connect_gate","set_gate_voltage","gate_output_off","disconnect_gate"],"history_limit":32,"request_id":"uuid","fixed_meter_ranges":true,"safety":{"lease_timeout_seconds":10,"on_disconnect":"configurable_default_stop_and_output_off","stop_policy_defaults":{"stop_on_disconnect":true,"stop_on_error":true,"stop_on_timeout":true},"on_release":"verified_output_off","gui_stop_always_available":true}}),
+                    json!({"application":"kohdalab-iv","application_version":env!("CARGO_PKG_VERSION"),"api_version":2,"actions":["capabilities","status","config","plan","output","acquire","heartbeat","release","detach","configure","load_config","set_plan","set_output","start","result","stop","output_off","connect","disconnect","connect_gate","set_gate_voltage","gate_output_off","disconnect_gate"],"history_limit":32,"request_id":"uuid","fixed_meter_ranges":true,"source_quantity_meter":true,"csv_schema":crate::compatibility::CSV_SCHEMA,"meter_roles":{"meter":"opposite_source_quantity","reference_meter":"source_quantity"},"safety":{"lease_timeout_seconds":10,"on_disconnect":"configurable_default_stop_and_output_off","stop_policy_defaults":{"stop_on_disconnect":true,"stop_on_error":true,"stop_on_timeout":true},"on_release":"verified_output_off","gui_stop_always_available":true}}),
                 );
             }
             "status" => {
@@ -308,6 +309,7 @@ impl IvApp {
             let connected = self.state.source_connected
                 || self.state.source2_connected
                 || self.state.meter_connected
+                || self.state.reference_meter_connected
                 || self.state.gate_connected;
             if method != "set_plan" && connected {
                 return Err("Disconnect instruments before replacing the profile.".into());
@@ -342,6 +344,12 @@ impl IvApp {
                         "Change instrument models through a disconnected profile, not set_plan."
                             .into(),
                     );
+                }
+                if candidate.config.reference_meter != self.settings.config.reference_meter
+                    || (self.settings.reference_meter_id.is_some()
+                        && candidate.config.mode != self.settings.config.mode)
+                {
+                    return Err("Change Meter (V) / Meter (I) assignments or the two-Meter source function through a disconnected profile, not set_plan.".into());
                 }
                 if self.state.source2_connected
                     && (candidate.config.balanced_source.is_none()
@@ -469,11 +477,16 @@ impl IvApp {
                 }]
             }
             "connect" | "disconnect" => {
-                let devices = api_devices(
+                let mut devices = api_devices(
                     body,
                     self.settings.config.balanced_source.is_some(),
                     method == "disconnect",
                 )?;
+                if body.get("devices").is_none()
+                    && (self.settings.reference_meter_id.is_some() || method == "disconnect")
+                {
+                    devices.push("reference_meter".into());
+                }
                 let mut commands = Vec::new();
                 for device in devices {
                     let command = match (method, device.as_str()) {
@@ -495,6 +508,15 @@ impl IvApp {
                         ("disconnect", "source") => Command::DisconnectSource,
                         ("disconnect", "source2") => Command::DisconnectSource2,
                         ("disconnect", "meter") => Command::DisconnectMeter,
+                        ("disconnect", "reference_meter") => Command::DisconnectReferenceMeter,
+                        ("connect", "reference_meter") => {
+                            let entry = self.settings.reference_meter_id.and_then(|id|self.settings.meters.iter().find(|e|e.id==id)).ok_or("Assign Meter (V) / Meter (I) in Settings before connecting the source-quantity Meter")?;
+                            Command::ConnectReferenceMeter {
+                                model: entry.model.clone(),
+                                resource: entry.resource.clone(),
+                                simulation: entry.model == "SIMULATED_METER",
+                            }
+                        }
                         _ => return Err("Unsupported device role".into()),
                     };
                     commands.push(command);
@@ -615,10 +637,15 @@ fn api_devices(body: &Value, dual: bool, disconnect: bool) -> Result<Vec<String>
     let mut seen = std::collections::HashSet::new();
     if devices.is_empty()
         || devices.iter().any(|v| {
-            !matches!(v.as_str(), "source" | "source2" | "meter") || !seen.insert(v.clone())
+            !matches!(
+                v.as_str(),
+                "source" | "source2" | "meter" | "reference_meter"
+            ) || !seen.insert(v.clone())
         })
     {
-        return Err("devices must contain unique source, source2 or meter roles".into());
+        return Err(
+            "devices must contain unique source, source2, meter or reference_meter roles".into(),
+        );
     }
     Ok(devices)
 }
@@ -643,6 +670,10 @@ mod tests {
         assert_eq!(
             api_devices(&json!({}), true, false).unwrap(),
             vec!["source", "source2", "meter"]
+        );
+        assert_eq!(
+            api_devices(&json!({"devices":["reference_meter"]}), false, false).unwrap(),
+            vec!["reference_meter"]
         );
         for devices in [
             json!([]),

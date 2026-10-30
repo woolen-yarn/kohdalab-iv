@@ -383,7 +383,10 @@ impl IvApp {
                 super::widgets::dc_editor(ui, id, |ui| {
                     ui.add_enabled_ui(editable, |ui| {
                         if role == CardRole::Source {
-                            ui.add_enabled_ui(!on, |ui| {
+                            if !on && self.state.reference_meter_connected && settings.mode != self.settings.config.mode {
+                                settings.reset_function(self.settings.config.mode);
+                            }
+                            ui.add_enabled_ui(!on && !self.state.reference_meter_connected, |ui| {
                                 let before = settings.mode;
                                 egui::ComboBox::from_id_salt(("dc_mode", id))
                                     .width(ui.available_width())
@@ -407,7 +410,7 @@ impl IvApp {
                                 if settings.mode != before {
                                     settings.reset_function(settings.mode);
                                 }
-                            });
+                            }).response.on_hover_text("With both Meters connected, keep their voltage/current assignments fixed. Disconnect them before changing the source function.");
                         } else {
                             settings.mode = Mode::Iv;
                         }

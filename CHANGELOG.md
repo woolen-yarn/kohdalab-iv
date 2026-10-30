@@ -1,5 +1,11 @@
 # Changelog / 変更履歴
 
+## Unreleased
+
+- Assign separate voltage/current Meters, including an optional source-quantity Meter in V-I, I-V and Dual. Preserve existing one-Meter operation.
+- Overlay Source/Meter traces on one plot with stable lower/upper axes; display independent fitted resistance/conductance.
+- Append explicit Source/Meter V/I and per-point R/G columns in analysis_v4, without fabricating missing measurements. Settings schema 4 and run metadata 9 distinguish this contract; update bundled Notebook clients.
+
 ## 1.3.0-alpha.20
 
 - Remove the explanatory row beneath Dual mode while keeping the split controls in Settings.

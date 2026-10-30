@@ -73,6 +73,7 @@ struct Run<'a> {
     levels: [f64; 2],
     meter_precision: MeterResolutionCache,
     meter_guard: meter::RangeGuard,
+    reference: Option<reference::Observer>,
     point_readbacks: Option<[f64; 2]>,
 }
 impl Run<'_> {
@@ -239,6 +240,9 @@ impl Run<'_> {
             &live_point,
             self.begin.elapsed().as_secs_f64(),
         );
+        if self.pair.is_some() {
+            reference::clear_reading(&mut record);
+        }
         record.source_readback = None; // Commanded levels, not fabricated readbacks.
         record.source_resolution = Some(self.planned.differential_resolution);
         record.quality_flags = if self.pair.is_some() {
@@ -344,6 +348,28 @@ impl Run<'_> {
             }
         }
         record.status = "live".into();
+        if !record.compliance
+            && let Some(observer) = self.reference.as_mut()
+        {
+            record.reference_meter_value = None;
+            let pair = self
+                .pair
+                .as_deref_mut()
+                .ok_or("Dual reference Meter transport missing")?;
+            if !observer.read(
+                pair,
+                self.state,
+                self.audit,
+                self.control,
+                self.begin,
+                &mut record,
+            )? {
+                return Ok(false);
+            }
+            if !self.check(point)? {
+                return Ok(false);
+            }
+        }
         self.state.live = Some(record);
         publish(self.latest, self.state);
         Ok(true)
@@ -456,6 +482,12 @@ impl Run<'_> {
                 return Err(format!("Meter configuration: {error}"));
             }
             meter::verify(config, |command| self.query(Role::Meter, command, 0))?;
+            self.reference = reference::prepare(
+                self.pair.as_deref_mut().ok_or("Dual transport missing")?,
+                config,
+                self.audit,
+                self.begin,
+            )?;
             if meter::monitored(config) && iv_core::selected_meter_range(config).is_none() {
                 self.meter_guard.observed(
                     self.pair
@@ -499,6 +531,9 @@ impl Run<'_> {
     ) -> Result<Option<Record>, String> {
         self.point_readbacks = None;
         let mut record = simulate_record(config, point, self.begin.elapsed().as_secs_f64());
+        if self.pair.is_some() {
+            reference::clear_reading(&mut record);
+        }
         record.source_resource = format!(
             "{} | {}",
             self.state.source_resource, self.state.source2_resource
@@ -659,6 +694,28 @@ impl Run<'_> {
                     positive_reading(&self.query(Role::Meter, resolution, point.point_index)?);
             }
         }
+        if !record.compliance
+            && let Some(observer) = self.reference.as_mut()
+        {
+            record.reference_meter_value = None;
+            let pair = self
+                .pair
+                .as_deref_mut()
+                .ok_or("Dual reference Meter transport missing")?;
+            if !observer.read(
+                pair,
+                self.state,
+                self.audit,
+                self.control,
+                self.begin,
+                &mut record,
+            )? {
+                return Ok(None);
+            }
+            if !self.check(point.point_index)? {
+                return Ok(None);
+            }
+        }
         if record.compliance {
             record.source_readback = None;
             record.source_resolution = None;
@@ -709,7 +766,7 @@ pub(super) fn execute(
     let raw_path = path.with_extension("raw.csv");
     let mut audit = RawWriter::create(&raw_path, &run_id)?;
     let manifest = path.with_extension("run.json");
-    let instruments = serde_json::json!({"source1":{"identity":state.source_identity,"resource":state.source_resource},"source2":{"identity":state.source2_identity,"resource":state.source2_resource},"meter":{"identity":state.meter_identity,"resource":state.meter_resource},"gate":{"identity":state.gate_identity,"resource":state.gate_resource,"output":state.gate_output,"setting_V":state.gate_voltage}});
+    let instruments = serde_json::json!({"source1":{"identity":state.source_identity,"resource":state.source_resource},"source2":{"identity":state.source2_identity,"resource":state.source2_resource},"meter":{"identity":state.meter_identity,"resource":state.meter_resource},"reference_meter":{"identity":state.reference_meter_identity,"resource":state.reference_meter_resource},"gate":{"identity":state.gate_identity,"resource":state.gate_resource,"output":state.gate_output,"setting_V":state.gate_voltage}});
     let settings = serde_json::json!({"formula":"source1 = a/(a+b) * differential; source2 = -b/(a+b) * differential","ratio":config.balanced_source.as_ref().unwrap().ratio,"source1":planned.config1,"source2":planned.config2,
         "ranges":[planned.plan1.source_range,planned.plan2.source_range],"hardware_compliances":[planned.plan1.hardware_compliance,planned.plan2.hardware_compliance],
         "update_policy":"sequential_commands_then_measure; no hardware simultaneity or actual channel-midpoint guarantee"});
@@ -718,6 +775,7 @@ pub(super) fn execute(
     state.total = planned.points.len();
     state.last = None;
     state.resistance = None;
+    state.reference_resistance = None;
     state.phase = Phase::Preparing;
     state.error.clear();
     state.balanced_active = true;
@@ -731,6 +789,7 @@ pub(super) fn execute(
     publish(latest, state);
     let begin = Instant::now();
     let mut fit = ResistanceFit::default();
+    let mut reference_fit = ResistanceFit::default();
     let mut stopped = false;
     let mut runner = Run {
         pair: pair.take(),
@@ -744,6 +803,7 @@ pub(super) fn execute(
         levels: [0.0; 2],
         meter_precision: MeterResolutionCache::default(),
         meter_guard: meter::RangeGuard::new(&planned.config1),
+        reference: None,
         point_readbacks: None,
     };
     let work = (|| -> Result<(), String> {
@@ -815,6 +875,9 @@ pub(super) fn execute(
                     record.source_readback.unwrap_or(record.source_set),
                     record.meter_value,
                 );
+                runner.state.reference_resistance = record
+                    .measured_electrical_values()
+                    .and_then(|(v, i, _, _)| reference_fit.add(v, i));
             }
             runner.state.elapsed = begin.elapsed().as_secs_f64();
             runner.state.last = Some(record.clone());

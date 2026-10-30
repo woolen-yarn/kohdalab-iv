@@ -24,7 +24,8 @@ use crate::client::Client;
 use crate::protocol::{Command, ProtectionAlert, ProtectionKind, Snapshot};
 use eframe::egui::{self, Color32, RichText, Stroke, Vec2};
 use egui_plot::{
-    Legend, Line, LineStyle, MarkerShape, Plot, PlotMemory, PlotPoint, PlotPoints, Points,
+    AxisHints, Legend, Line, LineStyle, MarkerShape, Plot, PlotMemory, PlotPoint, PlotPoints,
+    PlotUi, Points, VPlacement,
 };
 use iv_core::{
     InstrumentRole, Mode, Pattern, RunConfig, instrument_catalog, instrument_descriptor,
@@ -66,9 +67,16 @@ pub struct IvApp {
     previous_log: String,
     state_revision: u64,
     run_id: u64,
+    /// Lower plot: commanded/read-back source quantity vs the mandatory
+    /// opposite-quantity meter.
     samples: Vec<(f64, f64, String, [Option<f64>; 2])>,
     plot_series: [Vec<PlotPoint>; 3],
     plot_extent: [f64; 2],
+    /// Upper x axis: optional source-quantity reference DMM vs the mandatory
+    /// opposite-quantity meter.  It stays empty for legacy one-meter runs.
+    reference_samples: Vec<(f64, f64, String, [Option<f64>; 2])>,
+    reference_plot_series: [Vec<PlotPoint>; 3],
+    reference_plot_extent: [f64; 2],
     live_samples: VecDeque<LiveSample>,
     source2_samples: VecDeque<LiveSample>,
     live_reading: Option<iv_core::Record>,
@@ -185,11 +193,27 @@ impl IvApp {
         if settings.simulation {
             settings.source_model = "SIMULATED_SOURCE".into();
             settings.meter_model = "SIMULATED_METER".into();
+            if let Some(id) = settings.reference_meter_id
+                && let Some(entry) = settings.meters.iter_mut().find(|entry| entry.id == id)
+            {
+                entry.model = "SIMULATED_METER".into();
+            }
             if settings.config.balanced_source.is_some() {
                 settings.source2_model = "SIMULATED_SOURCE".into();
             }
             // Legacy simulation settings have only scalar device fields.
             settings.store_active_entries();
+        }
+        if smoke && std::env::args().any(|arg| arg == "--gui-reference-smoke") {
+            // Give the source-quantity observer its own simulated physical
+            // device.  This exercises the optional DMM data path rather than
+            // merely drawing an assigned-but-empty Meter axis.
+            settings.add_meter();
+            let reference = settings.meters.last_mut().expect("meter added");
+            reference.model = "SIMULATED_METER".into();
+            reference.resource = "SIMULATED_REFERENCE_METER".into();
+            settings.reference_meter_id = Some(reference.id);
+            settings.bind_active_entries();
         }
         let dc_smoke = smoke && std::env::args().any(|arg| arg == "--gui-dc-smoke");
         if dc_smoke {
@@ -253,6 +277,9 @@ impl IvApp {
             samples: vec![],
             plot_series: std::array::from_fn(|_| Vec::new()),
             plot_extent: [0.0; 2],
+            reference_samples: vec![],
+            reference_plot_series: std::array::from_fn(|_| Vec::new()),
+            reference_plot_extent: [0.0; 2],
             live_samples: VecDeque::new(),
             source2_samples: VecDeque::new(),
             live_reading: None,
@@ -389,6 +416,9 @@ impl IvApp {
                 self.samples.clear();
                 self.plot_series.iter_mut().for_each(Vec::clear);
                 self.plot_extent = [0.0; 2];
+                self.reference_samples.clear();
+                self.reference_plot_series.iter_mut().for_each(Vec::clear);
+                self.reference_plot_extent = [0.0; 2];
                 self.notice.clear();
             }
             for (record_run, point) in client.drain_points() {
@@ -399,6 +429,9 @@ impl IvApp {
                     self.samples.clear();
                     self.plot_series.iter_mut().for_each(Vec::clear);
                     self.plot_extent = [0.0; 2];
+                    self.reference_samples.clear();
+                    self.reference_plot_series.iter_mut().for_each(Vec::clear);
+                    self.reference_plot_extent = [0.0; 2];
                     self.run_id = record_run;
                 }
                 let source = point.source_readback.unwrap_or(point.source_set);
@@ -414,9 +447,31 @@ impl IvApp {
                 self.samples.push((
                     xy.0,
                     xy.1,
-                    point.point.direction,
+                    point.point.direction.clone(),
                     [point.source_resolution, point.meter_resolution],
                 ));
+                if let Some(reference) = point.reference_meter_value {
+                    extend_plot_extent(
+                        &mut self.reference_plot_extent,
+                        reference,
+                        point.meter_value,
+                    );
+                    append_plot_point(
+                        &mut self.reference_plot_series,
+                        self.reference_samples
+                            .last()
+                            .map(|sample| sample.2.as_str()),
+                        reference,
+                        point.meter_value,
+                        &point.point.direction,
+                    );
+                    self.reference_samples.push((
+                        reference,
+                        point.meter_value,
+                        point.point.direction.clone(),
+                        [point.reference_meter_resolution, point.meter_resolution],
+                    ));
+                }
             }
             if self.samples.len() > 50000 {
                 let mut reduced = Vec::with_capacity(16000);
@@ -447,6 +502,11 @@ impl IvApp {
                 }
                 self.samples = reduced;
                 self.rebuild_plot_series();
+            }
+            if self.reference_samples.len() > 50000 {
+                self.reference_samples =
+                    self.reference_samples.iter().step_by(2).cloned().collect();
+                self.rebuild_reference_plot_series();
             }
             if Some(next.phase) != self.previous_phase {
                 self.phase_start = Instant::now();
@@ -504,6 +564,14 @@ impl IvApp {
         self.plot_extent = [0.0; 2];
         for (x, y, _, _) in &self.samples {
             extend_plot_extent(&mut self.plot_extent, *x, *y);
+        }
+    }
+
+    fn rebuild_reference_plot_series(&mut self) {
+        self.reference_plot_series = plot_series(&self.reference_samples);
+        self.reference_plot_extent = [0.0; 2];
+        for (x, y, _, _) in &self.reference_samples {
+            extend_plot_extent(&mut self.reference_plot_extent, *x, *y);
         }
     }
 
@@ -654,6 +722,10 @@ impl IvApp {
                                     // not displace its live monitor below gates.
                                     ui.add_space(4.0);
                                     self.instrument(ui, false);
+                                    if self.settings.reference_meter_id.is_some() {
+                                        ui.add_space(4.0);
+                                        self.reference_meter_instrument(ui);
+                                    }
                                     for id in inactive_sources {
                                         ui.add_space(4.0);
                                         self.inactive_instrument(ui, true, id);
@@ -662,7 +734,11 @@ impl IvApp {
                                         .settings
                                         .meters
                                         .iter()
-                                        .filter(|entry| entry.id != self.settings.meter_id)
+                                        .filter(|entry| {
+                                            entry.id != self.settings.meter_id
+                                                && Some(entry.id)
+                                                    != self.settings.reference_meter_id
+                                        })
                                         .map(|entry| entry.id)
                                         .collect::<Vec<_>>();
                                     for id in inactive_meters {
@@ -733,6 +809,7 @@ impl IvApp {
                                 if settings.simulation {
                                     settings.source_model = "SIMULATED_SOURCE".into();
                                     settings.meter_model = "SIMULATED_METER".into();
+            if let Some(id)=settings.reference_meter_id && let Some(entry)=settings.meters.iter_mut().find(|entry|entry.id==id){entry.model="SIMULATED_METER".into();}
                                 }
                                 settings.migrate_inventory();
                                 self.settings = settings;
@@ -767,6 +844,9 @@ impl IvApp {
                             self.connect_secondary();
                         }
                         self.connect_instrument(false);
+                        if self.settings.reference_meter_id.is_some() {
+                            self.connect_reference_meter();
+                        }
                     }
                     if button(
                         ui,
@@ -775,6 +855,7 @@ impl IvApp {
                         self.state.source_connected
                             || self.state.source2_connected
                             || self.state.meter_connected
+                            || self.state.reference_meter_connected
                             || self.state.gate_connected,
                     )
                     .clicked()
@@ -1076,6 +1157,42 @@ impl IvApp {
                 resource,
             });
         }
+        self.send_meter_ranges();
+    }
+
+    fn connect_reference_meter(&mut self) {
+        let Some(id) = self.settings.reference_meter_id else {
+            return;
+        };
+        let Some(entry) = self.settings.meters.iter().find(|entry| entry.id == id) else {
+            return;
+        };
+        if !model_supported(&entry.model) {
+            self.report(format!(
+                "{} is not yet supported in the Rust preview.",
+                entry.model
+            ));
+            return;
+        }
+        if entry.id == self.settings.meter_id {
+            self.report("Choose different devices for Meter (V) and Meter (I).".into());
+            return;
+        }
+        if self
+            .settings
+            .meters
+            .iter()
+            .find(|candidate| candidate.id == self.settings.meter_id)
+            .is_some_and(|primary| !entry.resource.is_empty() && primary.resource == entry.resource)
+        {
+            self.report("Meter (V) and Meter (I) cannot use the same physical resource.".into());
+            return;
+        }
+        self.send(Command::ConnectReferenceMeter {
+            model: entry.model.clone(),
+            simulation: entry.model.starts_with("SIMULATED_"),
+            resource: entry.resource.clone(),
+        });
         self.send_meter_ranges();
     }
 
@@ -1435,7 +1552,11 @@ impl IvApp {
                 format!("Source {index}")
             }
         } else {
-            format!("Meter {index}")
+            if self.settings.config.mode == Mode::Iv {
+                format!("Meter (I) · {index}")
+            } else {
+                format!("Meter (V) · {index}")
+            }
         };
         section(ui, &title, |ui| {
             let connected = if source {
@@ -1506,6 +1627,231 @@ impl IvApp {
                 self.live_monitor(ui, false);
                 self.meter_measurement_controls(ui);
             }
+        });
+    }
+
+    /// The optional reference DMM measures the same quantity generated by the
+    /// source.  It is intentionally a separate card: the primary Meter stays
+    /// the mandatory opposite-quantity measurement used by legacy runs.
+    fn reference_meter_instrument(&mut self, ui: &mut egui::Ui) {
+        let Some(id) = self.settings.reference_meter_id else {
+            return;
+        };
+        let Some(entry) = self.settings.meters.iter().find(|entry| entry.id == id) else {
+            return;
+        };
+        let (model, resource) = (entry.model.clone(), entry.resource.clone());
+        let title = if self.settings.config.mode == Mode::Iv {
+            "Meter (V)"
+        } else {
+            "Meter (I)"
+        };
+        let connected = self.state.reference_meter_connected;
+        section(ui, title, |ui| {
+            ui.painter().text(
+                ui.max_rect().right_top() + Vec2::new(-2.0, -18.0),
+                egui::Align2::RIGHT_TOP,
+                if connected {
+                    "Connected"
+                } else {
+                    "Disconnected"
+                },
+                egui::FontId::proportional(10.0),
+                if connected { TEAL } else { MUTED },
+            );
+            let summary = device_summary(&model);
+            let key = ui.make_persistent_id(("reference_meter_device_disclosure", id));
+            let mut open = ui
+                .ctx()
+                .data_mut(|data| data.get_persisted::<bool>(key))
+                .unwrap_or(false);
+            ui.horizontal(|ui| {
+                widgets::device_disclosure(ui, summary, widgets::device_width(ui), &mut open)
+                    .on_hover_text(format!("{model}\n{}", resource_summary(&resource)));
+            });
+            ui.ctx().data_mut(|data| data.insert_persisted(key, open));
+            if open {
+                self.reference_meter_connection_controls(ui, id, connected);
+            }
+            self.reference_meter_live_reading(ui, connected);
+        });
+    }
+
+    fn reference_meter_connection_controls(&mut self, ui: &mut egui::Ui, id: u64, connected: bool) {
+        let idle = !self.busy();
+        let width = (ui.available_width() - 65.0).max(140.0);
+        let Some(selected) = self.settings.meters.iter().find(|entry| entry.id == id) else {
+            return;
+        };
+        // Edit local fields first so button actions below do not borrow the
+        // inventory and the command queue at the same time.
+        let mut model = selected.model.clone();
+        let mut resource = selected.resource.clone();
+        let resources = self.state.resources.clone();
+        let mut refresh = false;
+        let mut connect = false;
+        let mut disconnect = false;
+        egui::Grid::new(("reference_meter_instrument", id))
+            .num_columns(2)
+            .spacing([6.0, 6.0])
+            .show(ui, |ui| {
+                form_label(ui, "Device", 57.0);
+                ui.add_enabled_ui(idle && !connected, |ui| {
+                    egui::ComboBox::from_id_salt(("reference_meter_device", id))
+                        .width(width)
+                        .selected_text(model.as_str())
+                        .show_ui(ui, |ui| {
+                            for descriptor in instrument_catalog(InstrumentRole::Meter) {
+                                ui.add_enabled_ui(model_supported(descriptor.id), |ui| {
+                                    ui.selectable_value(
+                                        &mut model,
+                                        descriptor.id.to_owned(),
+                                        descriptor.id,
+                                    );
+                                });
+                            }
+                        });
+                });
+                ui.end_row();
+                form_label(ui, "Resource", 57.0);
+                ui.horizontal(|ui| {
+                    let resource_width = (width - 76.0).max(65.0);
+                    ui.add_enabled_ui(idle && !connected, |ui| {
+                        let summary = resource_summary(&resource);
+                        compact_field(
+                            ui,
+                            ("reference_meter_resource", id),
+                            &mut resource,
+                            resource_width - 28.0,
+                            summary,
+                        );
+                        egui::ComboBox::from_id_salt(("reference_meter_resources", id))
+                            .width(20.0)
+                            .selected_text("")
+                            .show_ui(ui, |ui| {
+                                ui.set_min_width(470.0);
+                                for discovered in &resources {
+                                    ui.selectable_value(
+                                        &mut resource,
+                                        discovered.resource.clone(),
+                                        &discovered.resource,
+                                    )
+                                    .on_hover_text(&discovered.label);
+                                }
+                            });
+                    });
+                    if button(ui, "Refresh", 68.0, idle).clicked() {
+                        refresh = true;
+                    }
+                });
+                ui.end_row();
+                form_label(ui, "", 57.0);
+                ui.horizontal(|ui| {
+                    let valid = instrument_descriptor(&model)
+                        .is_some_and(|device| device.supports_mode(self.settings.config.mode))
+                        && (model.starts_with("SIMULATED_") || !resource.is_empty());
+                    if button(
+                        ui,
+                        "Connect",
+                        (width - 8.0) / 2.0,
+                        idle && !connected && valid,
+                    )
+                    .clicked()
+                    {
+                        connect = true;
+                    }
+                    if button(ui, "Disconnect", (width - 8.0) / 2.0, idle && connected).clicked() {
+                        disconnect = true;
+                    }
+                });
+                ui.end_row();
+            });
+        // The reference observes the source quantity, i.e. voltage in V-I
+        // and current in I-V.  Reuse the normal meter range widget with the
+        // flipped measurement function so its range and input-resistance
+        // wording remains device-specific.
+        let reference_mode = if self.settings.config.mode == Mode::Iv {
+            Mode::Vi
+        } else {
+            Mode::Iv
+        };
+        let range_locked_by_operation = self.busy() || self.python_locked();
+        let range_edit = ui.add_enabled_ui(
+            !range_locked_by_operation && crate::gui_control::outputs_off(&self.state),
+            |ui| {
+                ui.horizontal(|ui| {
+                    form_label(ui, "Range", 57.0);
+                    match reference_mode {
+                        Mode::Iv => widgets::meter_range_choice(
+                            ui,
+                            "reference_meter_current_range",
+                            &model,
+                            reference_mode,
+                            &mut self.settings.config.meter_current_range,
+                        ),
+                        Mode::Vi => widgets::meter_range_choice(
+                            ui,
+                            "reference_meter_voltage_range",
+                            &model,
+                            reference_mode,
+                            &mut self.settings.config.meter_voltage_range,
+                        ),
+                    }
+                })
+                .inner
+            },
+        );
+        range_edit
+            .response
+            .on_disabled_hover_text(if range_locked_by_operation {
+                "Wait for the current operation or external control to finish."
+            } else {
+                "Turn all source outputs OFF before changing the meter range."
+            });
+        if let Some(entry) = self.settings.meters.iter_mut().find(|entry| entry.id == id) {
+            entry.model = model;
+            entry.resource = resource;
+        }
+        self.settings.bind_active_entries();
+        if refresh {
+            self.send(Command::Discover);
+        }
+        if connect {
+            self.connect_reference_meter();
+        }
+        if disconnect {
+            self.send(Command::DisconnectReferenceMeter);
+        }
+        if range_edit.inner {
+            self.send_meter_ranges();
+        }
+    }
+
+    fn reference_meter_live_reading(&self, ui: &mut egui::Ui, connected: bool) {
+        let unit = if self.settings.config.mode == Mode::Iv {
+            "V"
+        } else {
+            "A"
+        };
+        let value = self
+            .live_reading
+            .as_ref()
+            .and_then(|record| record.reference_meter_value);
+        ui.horizontal(|ui| {
+            ui.label(
+                RichText::new(if connected { "REFERENCE" } else { "WAITING" })
+                    .size(9.0)
+                    .color(if connected { TEAL } else { MUTED }),
+            );
+            ui.label(
+                RichText::new(
+                    value
+                        .map(|v| fmt_quantity(v, unit))
+                        .unwrap_or_else(|| format!("— {unit}")),
+                )
+                .monospace()
+                .color(TEAL),
+            );
         });
     }
 
@@ -1664,6 +2010,8 @@ impl IvApp {
                     1
                 };
                 let mode_editable = !self.busy() && !self.state.source2_connected;
+                let meter_role_locked = self.settings.reference_meter_id.is_some()
+                    && (self.state.meter_connected || self.state.reference_meter_connected);
                 let response = ui.add_enabled_ui(mode_editable, |ui| {
                     egui::ComboBox::from_id_salt("mode")
                         .width(width)
@@ -1675,13 +2023,31 @@ impl IvApp {
                         })
                         .show_ui(ui, |ui| {
                             ui.set_min_width(250.0);
-                            ui.selectable_value(&mut choice, 0, mode_name(Mode::Iv));
-                            ui.selectable_value(&mut choice, 1, mode_name(Mode::Vi));
-                            ui.selectable_value(&mut choice, 2, "Dual V-I · differential voltage");
+                            // V-I and Dual share the same source quantity, so
+                            // they do not require swapping Meter(V/I) roles.
+                            ui.add_enabled_ui(!meter_role_locked || old_mode == Mode::Iv, |ui| {
+                                ui.selectable_value(&mut choice, 0, mode_name(Mode::Iv));
+                                ui.selectable_value(
+                                    &mut choice,
+                                    2,
+                                    "Dual V-I · differential voltage",
+                                );
+                            })
+                            .response
+                            .on_disabled_hover_text("Disconnect both Meters before changing measurement function.");
+                            ui.add_enabled_ui(!meter_role_locked || old_mode == Mode::Vi, |ui| {
+                                ui.selectable_value(&mut choice, 1, mode_name(Mode::Vi));
+                            })
+                            .response
+                            .on_disabled_hover_text("Disconnect both Meters before changing measurement function.");
                         })
                 });
                 response.response.on_disabled_hover_text(
-                    "Disconnect Source 2 before leaving Dual mode. Wait for the current operation to finish.",
+                    if meter_role_locked {
+                        "Disconnect both Meters before changing measurement function."
+                    } else {
+                        "Disconnect Source 2 before leaving Dual mode. Wait for the current operation to finish."
+                    },
                 );
                 ui.end_row();
                 if choice == 2 && !was_dual && self.dc_gate_matches(self.settings.source2_id) {
@@ -1699,6 +2065,12 @@ impl IvApp {
                 {
                     self.settings.store_active_protection();
                     let next_mode = if choice == 1 { Mode::Vi } else { Mode::Iv };
+                    // Meter(V) and Meter(I) remain bound to the same saved
+                    // physical instruments after the engine's role changes.
+                    // The UI prohibits this path while both-role assignments
+                    // are connected, so this never rebinding a live device.
+                    self.settings
+                        .swap_meter_roles_for_mode_change(old_mode, next_mode);
                     if old_mode != next_mode {
                         let definition = measurement_definition(next_mode);
                         let ranges = (self.settings.config.meter_voltage_range, self.settings.config.meter_current_range);
@@ -1714,10 +2086,14 @@ impl IvApp {
                     }
                     self.settings.config.balanced_source =
                         (choice == 2).then(iv_core::BalancedSourceConfig::default);
+                    // `default_config` above intentionally rebuilds the run
+                    // settings, so reapply both active DMM bindings here.
                     self.settings.bind_active_entries();
                     self.settings.activate_mode_protection();
                     self.samples.clear();
+                    self.reference_samples.clear();
                     self.rebuild_plot_series();
+                    self.rebuild_reference_plot_series();
                     self.custom_text.clear();
                     self.live_samples.clear();
                     self.live_reading = None;
@@ -2063,6 +2439,7 @@ impl IvApp {
             && !self.state.source_connected
             && !self.state.source2_connected
             && !self.state.meter_connected
+            && !self.state.reference_meter_connected
             && !self.state.gate_connected;
         ui.horizontal(|ui| {
             if button(ui, "+ Source", 82.0, editable)
@@ -2095,6 +2472,7 @@ impl IvApp {
                 || self.state.source_connected
                 || self.state.source2_connected
                 || self.state.meter_connected
+                || self.state.reference_meter_connected
                 || self.state.gate_connected;
             let source_choices = self
                 .settings
@@ -2170,17 +2548,64 @@ impl IvApp {
                             ui.end_row();
                         }
 
-                        form_label(ui, "Meter", 65.0);
+                        let source_quantity = if self.settings.config.mode == Mode::Iv {
+                            "Meter (V)"
+                        } else {
+                            "Meter (I)"
+                        };
+                        let measured_quantity = if self.settings.config.mode == Mode::Iv {
+                            "Meter (I)"
+                        } else {
+                            "Meter (V)"
+                        };
+                        form_label(ui, measured_quantity, 65.0);
                         let before = self.settings.meter_id;
                         egui::ComboBox::from_id_salt("meter_binding")
                             .width(ui.available_width())
                             .selected_text(self.inventory_name(false, before))
                             .show_ui(ui, |ui| {
                                 for (id, label) in &meter_choices {
-                                    ui.selectable_value(&mut self.settings.meter_id, *id, label);
+                                    ui.add_enabled_ui(
+                                        self.settings.reference_meter_id != Some(*id),
+                                        |ui| {
+                                            ui.selectable_value(
+                                                &mut self.settings.meter_id,
+                                                *id,
+                                                label,
+                                            );
+                                        },
+                                    );
                                 }
                             });
                         changed |= before != self.settings.meter_id;
+                        ui.end_row();
+
+                        form_label(ui, source_quantity, 65.0);
+                        let before = self.settings.reference_meter_id;
+                        egui::ComboBox::from_id_salt("reference_meter_binding")
+                            .width(ui.available_width())
+                            .selected_text(
+                                before
+                                    .map(|id| self.inventory_name(false, id))
+                                    .unwrap_or_else(|| "Source value only".into()),
+                            )
+                            .show_ui(ui, |ui| {
+                                ui.selectable_value(
+                                    &mut self.settings.reference_meter_id,
+                                    None,
+                                    "Source value only",
+                                );
+                                for (id, label) in &meter_choices {
+                                    ui.add_enabled_ui(*id != self.settings.meter_id, |ui| {
+                                        ui.selectable_value(
+                                            &mut self.settings.reference_meter_id,
+                                            Some(*id),
+                                            label,
+                                        );
+                                    });
+                                }
+                            });
+                        changed |= before != self.settings.reference_meter_id;
                         ui.end_row();
                     });
                 if let Some(dual) = &mut self.settings.config.balanced_source {
@@ -2224,6 +2649,29 @@ impl IvApp {
                         .iter()
                         .find(|entry| entry.id != self.settings.source1_id)
                         .map_or(self.settings.source1_id, |entry| entry.id);
+                }
+                if self.settings.reference_meter_id == Some(self.settings.meter_id) {
+                    self.settings.reference_meter_id = None;
+                }
+                if let Some(reference_id) = self.settings.reference_meter_id {
+                    let primary_resource = self
+                        .settings
+                        .meters
+                        .iter()
+                        .find(|entry| entry.id == self.settings.meter_id)
+                        .map(|entry| entry.resource.as_str());
+                    let reference_resource = self
+                        .settings
+                        .meters
+                        .iter()
+                        .find(|entry| entry.id == reference_id)
+                        .map(|entry| entry.resource.as_str());
+                    if primary_resource.zip(reference_resource).is_some_and(
+                        |(primary, reference)| !primary.is_empty() && primary == reference,
+                    ) {
+                        self.settings.reference_meter_id = None;
+                        self.report("The same physical resource cannot be assigned to both Meter (V) and Meter (I).".into());
+                    }
                 }
                 self.settings.bind_active_entries();
             }
@@ -2810,39 +3258,81 @@ impl IvApp {
             } else {
                 format!("{}/{}", self.state.points, self.state.total)
             });
-            ui.add_space(8.0);
-            ui.label(RichText::new("Resistance").color(MUTED));
-            ui.label(
-                self.state
-                    .resistance
-                    .map(|r| fmt_quantity(r, "Ohm"))
-                    .unwrap_or_else(|| "-".into()),
-            );
-            ui.add_space(8.0);
-            ui.label(RichText::new("Conductance").color(MUTED));
-            ui.label(
-                self.state
-                    .resistance
-                    .filter(|r| *r != 0.0)
-                    .map(|r| fmt_quantity(1.0 / r, "S"))
-                    .unwrap_or_else(|| "-".into()),
-            );
+        });
+        // Fixed-width cells keep numeric values from widening the central panel.
+        // Both cells remain present before acquisition and without an optional DMM.
+        ui.columns(2, |columns| {
+            for (index, label, value) in [(0,"Source R/G",self.state.resistance),(1,"Meter R/G",self.state.reference_resistance)] {
+                let text=format_resistance_conductance(value.filter(|r|r.is_finite() && *r!=0.0).map(|r|(r,1.0/r)));
+                columns[index].label(RichText::new(label).small().color(MUTED))
+                    .on_hover_text("Independent sweep fit: R = slope of V against I; G = 1/R. CSV R/G columns are per-point ratios.");
+                let width=columns[index].available_width();
+                columns[index].add_sized([width,20.0],egui::Label::new(&text).truncate()).on_hover_text(text);
+            }
         });
         ui.add_space(8.0);
-        let graph_height = (ui.clip_rect().bottom() - ui.cursor().top() - 2.0).max(320.0);
         let [x_axis, y_axis] = measurement_definition(self.settings.config.mode).axes;
-        let (x_name, x_unit, y_name, y_unit) = (
+        let (source_x_name, x_unit, y_name, y_unit) = (
             if self.settings.config.balanced_source.is_some() {
-                "Differential voltage"
+                "V_source · differential"
+            } else if self.settings.config.mode == Mode::Iv {
+                "V_source"
             } else {
-                x_axis.name
+                "I_source"
             },
             x_axis.unit,
             y_axis.name,
             y_axis.unit,
         );
-        let mut extent = self.plot_extent;
-        if self.samples.is_empty() {
+        let available = shared_plot_height(ui.clip_rect().bottom() - ui.cursor().top() - 2.0);
+        let meter_x_name = if self.settings.config.balanced_source.is_some() {
+            "V_meter · differential"
+        } else if self.settings.config.mode == Mode::Iv {
+            "V_meter"
+        } else {
+            "I_meter"
+        };
+        // `custom_x_axes` below permanently reserves the actual top Meter
+        // axis; no separate header row is needed or allowed to shift the plot.
+        self.render_sweep_plot(
+            ui,
+            "iv_plot",
+            source_x_name,
+            meter_x_name,
+            x_unit,
+            y_name,
+            y_unit,
+            &self.samples,
+            &self.plot_series,
+            self.plot_extent,
+            &self.reference_samples,
+            &self.reference_plot_series,
+            self.reference_plot_extent,
+            available,
+            true,
+        );
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn render_sweep_plot(
+        &self,
+        ui: &mut egui::Ui,
+        id: &'static str,
+        source_x_name: &str,
+        meter_x_name: &str,
+        x_unit: &str,
+        y_name: &str,
+        y_unit: &str,
+        samples: &[(f64, f64, String, [Option<f64>; 2])],
+        series: &[Vec<PlotPoint>; 3],
+        mut extent: [f64; 2],
+        reference_samples: &[(f64, f64, String, [Option<f64>; 2])],
+        reference_series: &[Vec<PlotPoint>; 3],
+        reference_extent: [f64; 2],
+        height: f32,
+        use_sweep_extent_when_empty: bool,
+    ) {
+        if samples.is_empty() && use_sweep_extent_when_empty {
             extent[0] = self
                 .settings
                 .config
@@ -2850,7 +3340,10 @@ impl IvApp {
                 .abs()
                 .max(self.settings.config.stop.abs());
         }
-        let plot_id = ui.make_persistent_id(egui::Id::new("iv_plot"));
+        for (axis, value) in reference_extent.into_iter().enumerate() {
+            extent[axis] = extent[axis].max(value);
+        }
+        let plot_id = ui.make_persistent_id(egui::Id::new(id));
         if let Some(memory) = PlotMemory::load(ui.ctx(), plot_id) {
             for (axis, maximum) in extent.iter_mut().enumerate() {
                 if !memory.auto_bounds[axis] {
@@ -2865,22 +3358,50 @@ impl IvApp {
         }
         let x_scale = AxisScale::for_magnitude(extent[0]);
         let y_scale = AxisScale::for_magnitude(extent[1]);
-        let samples = &self.samples;
-        let plotted = Plot::new("iv_plot")
+        let top_scale = x_scale;
+        let meter_label = match (
+            self.settings.reference_meter_id,
+            reference_samples.is_empty(),
+        ) {
+            (None, _) => format!("{meter_x_name} (not assigned)"),
+            (Some(_), true) => format!("{meter_x_name} (waiting)"),
+            (Some(_), false) => meter_x_name.to_owned(),
+        };
+        let plotted = Plot::new(id)
+            .width((ui.clip_rect().right() - ui.cursor().left()).max(100.0))
             .id(plot_id)
-            .height(graph_height)
+            .height(height)
             .show_background(false)
             .grid_spacing(16.0..=12000.0)
-            .x_axis_label(format!("{x_name} ({}{x_unit})", x_scale.prefix))
+            .custom_x_axes(vec![
+                AxisHints::new_x()
+                    .label(format!("{source_x_name} ({}{x_unit})", x_scale.prefix))
+                    .placement(VPlacement::Bottom)
+                    .formatter(move |mark, _| x_scale.tick(mark.value, mark.step_size)),
+                AxisHints::new_x()
+                    .label(format!("{meter_label} ({}{x_unit})", top_scale.prefix))
+                    .placement(VPlacement::Top)
+                    .formatter(move |mark, _| top_scale.tick(mark.value, mark.step_size)),
+            ])
             .y_axis_label(format!("{y_name} ({}{y_unit})", y_scale.prefix))
-            .x_axis_formatter(move |mark, _| x_scale.tick(mark.value, mark.step_size))
             .y_axis_formatter(move |mark, _| y_scale.tick(mark.value, mark.step_size))
             .label_formatter(move |name, point| {
-                let resolution = samples
+                let meter_trace = name.starts_with("meter");
+                let readings = if meter_trace {
+                    reference_samples
+                } else {
+                    samples
+                };
+                let x_name = if meter_trace {
+                    meter_x_name
+                } else {
+                    source_x_name
+                };
+                let resolution = readings
                     .iter()
                     .rev()
-                    .find(|s| s.0 == point.x && s.1 == point.y)
-                    .map(|s| s.3)
+                    .find(|sample| sample.0 == point.x && sample.1 == point.y)
+                    .map(|sample| sample.3)
                     .unwrap_or([None; 2]);
                 format!(
                     "{name}\n{x_name}: {}\n{y_name}: {}",
@@ -2896,43 +3417,23 @@ impl IvApp {
             .include_y(0.0)
             .auto_bounds(true)
             .show(ui, |plot_ui| {
-                for (values, (name, color)) in self.plot_series.iter().zip([
-                    ("forward", BLUE),
-                    ("backward", PURPLE),
-                    ("custom", TEAL),
-                ]) {
-                    // NaN is an internal segment delimiter, never a renderer
-                    // coordinate: path tessellation otherwise drops end edges.
-                    for segment in values
-                        .split(|p| !p.x.is_finite() || !p.y.is_finite())
-                        .filter(|s| !s.is_empty())
-                    {
-                        plot_ui.line(
-                            Line::new(name, PlotPoints::Borrowed(segment))
-                                .color(color)
-                                .width(if name == "forward" { 3.0_f32 } else { 2.0_f32 })
-                                .style(if name == "backward" {
-                                    LineStyle::dashed_dense()
-                                } else {
-                                    LineStyle::Solid
-                                }),
-                        );
-                        plot_ui.points(
-                            Points::new(name, PlotPoints::Borrowed(segment))
-                                .color(color)
-                                .radius(if name == "backward" { 4.0_f32 } else { 2.5_f32 })
-                                .shape(if name == "backward" {
-                                    MarkerShape::Diamond
-                                } else {
-                                    MarkerShape::Circle
-                                })
-                                .filled(name != "backward"),
-                        );
-                    }
+                draw_sweep_series(plot_ui, series, "source", false);
+                // The two x quantities intentionally share raw SI bounds. Do
+                // not remap or normalize the reference curve: differences are
+                // scientific signal, not UI decoration.
+                if !reference_samples.is_empty() {
+                    draw_sweep_series(plot_ui, reference_series, "meter", true);
                 }
             });
-        // Zoom/pan bounds are applied during show. If a prefix changed, finish
-        // the label transition on the next frame even after input becomes idle.
+        if self.smoke {
+            let frame = plotted.transform.frame();
+            ui.ctx().data_mut(|data| {
+                data.insert_temp(
+                    egui::Id::new("reference_plot_bounds"),
+                    [frame.min.x, frame.min.y, frame.max.x, frame.max.y],
+                )
+            });
+        }
         if let Some(memory) = PlotMemory::load(ui.ctx(), plot_id) {
             for (axis, scale) in [x_scale, y_scale].into_iter().enumerate() {
                 if !memory.auto_bounds[axis] {
@@ -3023,6 +3524,9 @@ impl eframe::App for IvApp {
             if self.settings.config.balanced_source.is_some() {
                 self.connect_secondary();
             }
+            if self.settings.reference_meter_id.is_some() {
+                self.connect_reference_meter();
+            }
         }
         let control_smoke = self.smoke && std::env::args().any(|arg| arg == "--gui-control-smoke");
         let dc_smoke = self.smoke && std::env::args().any(|arg| arg == "--gui-dc-smoke");
@@ -3034,6 +3538,8 @@ impl eframe::App for IvApp {
             && !control_smoke
             && !dc_smoke
             && self.state.connected
+            && (self.settings.config.reference_meter.is_none()
+                || self.state.reference_meter_connected)
             && (self.settings.config.balanced_source.is_none() || self.state.source2_connected)
             && self.state.run_id == 0
             && !self.pending_run
@@ -3064,7 +3570,15 @@ impl eframe::App for IvApp {
                     .as_ref()
                     .is_some_and(|alert| alert.kind == ProtectionKind::MeasurementLimit)
         } else {
-            self.state.phase == Phase::Completed && self.state.points == self.state.total
+            self.state.phase == Phase::Completed
+                && self.state.points == self.state.total
+                && (!std::env::args().any(|arg| arg == "--gui-reference-smoke")
+                    || self
+                        .state
+                        .last
+                        .as_ref()
+                        .and_then(|record| record.reference_meter_value)
+                        .is_some())
         };
         if self.screenshot.is_some()
             && !self.screenshot_requested
@@ -3110,7 +3624,7 @@ impl eframe::App for IvApp {
                     println!(
                         "{}",
                         serde_json::json!({"gui_smoke":"passed","points":self.state.points,"output":self.state.output,"elapsed_s":self.started.elapsed().as_secs_f64(),"csv":self.state.path,
-                    "first_ui_update_s":self.first_frame_s,"mean_ui_cpu_ms":self.ui_cpu_s*1000.0/self.ui_frames.max(1) as f64})
+                    "plot_bounds":ctx.data(|data|data.get_temp::<[f32;4]>(egui::Id::new("reference_plot_bounds"))),"reference_meter_assigned":self.settings.reference_meter_id.is_some(),"first_ui_update_s":self.first_frame_s,"mean_ui_cpu_ms":self.ui_cpu_s*1000.0/self.ui_frames.max(1) as f64})
                     );
                 }
                 ctx.send_viewport_cmd(egui::ViewportCommand::Close);
@@ -3126,6 +3640,75 @@ impl eframe::App for IvApp {
         self.settings.store_active_entries();
         self.ui_cpu_s += ui_start.elapsed().as_secs_f64();
         self.ui_frames += 1;
+    }
+}
+
+fn format_resistance_conductance(values: Option<(f64, f64)>) -> String {
+    values
+        .map(|(resistance, conductance)| {
+            format!(
+                "{} / {}",
+                fmt_quantity(resistance, "Ohm"),
+                fmt_quantity(conductance, "S")
+            )
+        })
+        .unwrap_or_else(|| "—".into())
+}
+
+/// Draw source and reference measurements with direction encoded by color.
+/// The reference line is dotted so it remains distinguishable without adding
+/// a second, potentially misleading axis scale.
+fn draw_sweep_series<'a>(
+    plot_ui: &mut PlotUi<'a>,
+    series: &'a [Vec<PlotPoint>; 3],
+    origin: &str,
+    reference: bool,
+) {
+    for (values, (direction, color)) in
+        series
+            .iter()
+            .zip([("forward", BLUE), ("backward", PURPLE), ("custom", TEAL)])
+    {
+        for segment in values
+            .split(|point| !point.x.is_finite() || !point.y.is_finite())
+            .filter(|segment| !segment.is_empty())
+        {
+            let name = format!("{origin} {direction}");
+            let style = if reference {
+                LineStyle::dotted_dense()
+            } else if direction == "backward" {
+                LineStyle::dashed_dense()
+            } else {
+                LineStyle::Solid
+            };
+            plot_ui.line(
+                Line::new(name.clone(), PlotPoints::Borrowed(segment))
+                    .color(color)
+                    .width(if direction == "forward" {
+                        3.0_f32
+                    } else {
+                        2.0_f32
+                    })
+                    .style(style),
+            );
+            plot_ui.points(
+                Points::new(name, PlotPoints::Borrowed(segment))
+                    .color(color)
+                    .radius(if direction == "backward" {
+                        4.0_f32
+                    } else {
+                        2.5_f32
+                    })
+                    .shape(if reference {
+                        MarkerShape::Square
+                    } else if direction == "backward" {
+                        MarkerShape::Diamond
+                    } else {
+                        MarkerShape::Circle
+                    })
+                    .filled(!reference && direction != "backward"),
+            );
+        }
     }
 }
 
@@ -3320,6 +3903,12 @@ fn pattern_name(pattern: Pattern) -> &'static str {
         .label
 }
 
+/// The optional reference curve shares the one scientific plot; assignment
+/// changes axes and data only, never the central panel's plot allocation.
+fn shared_plot_height(available: f32) -> f32 {
+    available.max(180.0)
+}
+
 #[cfg(test)]
 impl SweepPreview {
     fn route_text(&self) -> String {
@@ -3370,6 +3959,11 @@ fn load_gui_profile(bytes: &[u8]) -> Result<Settings, String> {
     if settings.simulation {
         settings.source_model = "SIMULATED_SOURCE".into();
         settings.meter_model = "SIMULATED_METER".into();
+        if let Some(id) = settings.reference_meter_id
+            && let Some(entry) = settings.meters.iter_mut().find(|entry| entry.id == id)
+        {
+            entry.model = "SIMULATED_METER".into();
+        }
         if settings.config.balanced_source.is_some() {
             settings.source2_model = "SIMULATED_SOURCE".into();
         }
@@ -3501,7 +4095,15 @@ mod tests {
                 "",
                 "A",
                 "false",
-                "normal"
+                "normal",
+                "1e-3",
+                "",
+                "",
+                "1e-6",
+                "1.0000000000000001e3",
+                "",
+                "1e-3",
+                ""
             ]
             .map(str::to_string)
         );

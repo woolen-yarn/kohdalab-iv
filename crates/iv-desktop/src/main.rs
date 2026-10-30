@@ -116,6 +116,7 @@ fn run() -> Result<(), String> {
                 || a == "--gui-settings-smoke"
                 || a == "--gui-limit-smoke"
                 || a == "--gui-balanced-smoke"
+                || a == "--gui-reference-smoke"
                 || a == "--gui-control-smoke"
                 || a == "--gui-dc-smoke"
         });
