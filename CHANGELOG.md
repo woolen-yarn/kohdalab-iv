@@ -1,5 +1,12 @@
 # Changelog / 変更履歴
 
+## Unreleased / 未公開
+
+- Ignore empty home-directory environment values and use the valid platform fallback consistently in the GUI and common Python client. / GUIと共通Pythonクライアントで、空のホーム環境変数を除外して有効な代替先を使います。
+- Search only newly received bytes for the common API response delimiter, preserving existing size limits and error handling. / 共通APIの受信済みデータを繰り返し走査せず、新しい断片だけで区切りを検出します。サイズ制限とエラー処理は維持します。
+- Keep the GUI responsive while selecting files or copying a completed run, with one pending operation and unchanged export evidence files. / ファイル選択と終了済み測定のコピーを非同期化し、同時操作を制限して画面の応答と既存の記録ファイルを保ちます。
+- Explain incomplete or non-finite custom-point input without clearing the last valid settings; require valid input before accepting the dialog. / カスタム測定点の未完成入力や非有限値を説明し、直前の有効な設定を消さずに不正な入力の確定を防ぎます。
+
 ## 1.4.0 — 2026-10-30
 
 - Assign separate voltage/current Meters, including an optional source-quantity Meter in V-I, I-V and Dual. Preserve existing one-Meter operation.
