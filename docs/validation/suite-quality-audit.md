@@ -1,6 +1,6 @@
 # Suite quality audit: KohdaLab IV / 品質点検
 
-2026-11-05 · Unreleased branch `codex/suite-quality-audit` / 未公開の作業ブランチ
+2026-11-05 · Release candidate 1.4.1 on `codex/suite-quality-audit`; publication remains pending CI and artifact verification. / `codex/suite-quality-audit`上の1.4.1リリース候補です。公開はCIと配布物の確認後に行います。
 
 Base / 基点: `6bbcc671790275ebc1f1abaea2fc6442b5e68a58`. This records source and software checks, not hardware qualification or a published release. / ソースとソフトウェア検証の記録であり、実機認定や公開済みリリースの記録ではありません。
 

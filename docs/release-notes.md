@@ -1,21 +1,24 @@
-# KohdaLab IV 1.4.0
+# KohdaLab IV 1.4.1
 
-## Source and Meter values
+## Responsive file operations and validated custom points
 
-Settings can now assign Source, Meter (V), and Meter (I) independently. V-I and
-Dual V-I may use an optional voltage Meter; I-V may use an optional current
-Meter. Existing single-Meter operation remains available. The central plot keeps
-one shared SI coordinate scale, with Source on the lower axis and Meter on the
-reserved upper axis. Source- and Meter-based traces overlay, the legend shows
-only forward/backward direction, and the one-line status display reports their
-independent fitted R/G values.
+Config and Output pickers now use native asynchronous sheets, and Save copies a
+finished run outside the GUI update loop. The GUI remains responsive while a
+selection or copy is pending. A selected copy destination is protected from
+ordinary window close until its export finishes; pending operations also reject
+conflicting external-control changes.
 
-The main CSV is now 26-column `analysis_v4`; the original 18 fields are retained
-in order and eight Source/Meter V/I and per-point R/G fields are appended. Raw
-audit CSV remains 18-column `raw_csv_v1`. Settings schema is 4 and run metadata
-schema is 9. Missing optional Meter values remain blank; no terminal measurement
-is inferred from a source setting. The bundled Python client reads both
-`analysis_v4` and legacy `analysis_v3`.
+Custom sweep points retain the last valid setting while text is incomplete or
+non-finite. The dialog explains the invalid entry and cannot accept it until the
+list is valid. CSV schemas, units, calibration, scan plans, source protection,
+and instrument initialization are unchanged.
+
+## Paths, compatibility and safety
+
+An empty native home-directory variable now falls back to the valid platform
+alternative. The common Python client makes the same choice and avoids repeated
+full-buffer response scans. The shared control wire protocol remains version 1;
+existing settings, result files, and external clients need no migration.
 
 ## Compatibility and safety
 
@@ -42,11 +45,15 @@ not claim a new physical-device qualification for the Source/Meter feature.
 
 ## 日本語
 
-### Source/Meter値
+### 応答を保つファイル操作とカスタム測定点検証
 
-SettingsでSource、Meter (V)、Meter (I)を別々に割り当てられます。V-I／Dual V-Iでは任意の電圧Meter、I-Vでは任意の電流Meterを使え、従来のMeter 1台だけの運用も維持します。中央プロットは同じSIスケールで下軸にSource、上軸にMeterを表示します。Source/Meter由来の線は重ねて表示され、凡例はforward/backwardのみ、1行のstatusにはそれぞれの掃引フィットによるR/Gを表示します。
+Config・Outputの選択画面をネイティブ非同期化し、終了済み測定のSaveコピーもGUI更新処理とは別に実行します。選択・コピー中もGUIは応答を保ちます。コピー先を選んだ後は、export終了まで通常のウィンドウ終了を防ぎ、処理中の外部制御による競合も拒否します。
 
-main CSVは26列の`analysis_v4`です。元の18列を順序どおり維持し、Source/MeterのV/Iと点ごとのR/Gの8列を末尾に追加します。raw監査CSVは18列の`raw_csv_v1`のままです。settings schemaは4、run metadata schemaは9です。任意Meterが未割当または取得失敗なら値は空欄で、Source設定値から端子実測を推定して書き込みません。同梱Pythonクライアントは`analysis_v4`と旧`analysis_v3`を読めます。
+カスタム掃引点は入力途中や非有限値のときも直前の有効な設定を保持します。無効な入力はその場で説明し、有効なリストになるまで確定できません。CSVスキーマ・単位・校正・走査計画・Source保護・計測器初期化は変更しません。
+
+### パス・互換性・安全性
+
+OS固有のホーム環境変数が空の場合は有効な代替先を使います。共通Pythonクライアントも同じ優先順を使い、API応答の全バッファ再走査を避けます。共通制御プロトコルはversion 1のままで、既存設定・結果ファイル・外部クライアントの移行は不要です。
 
 ### 互換性と安全性
 
