@@ -18,6 +18,7 @@ impl IvApp {
             || self.closing
             || self.timing_open
             || self.save_notice.is_some()
+            || self.file_task_pending()
             || self.protection_dialog.is_some()
             || self.start_error.is_some()
         {

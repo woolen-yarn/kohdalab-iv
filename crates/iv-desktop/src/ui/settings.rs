@@ -437,6 +437,8 @@ fn user_dir() -> PathBuf {
 }
 
 fn user_dir_from(home: Option<std::ffi::OsString>, profile: Option<std::ffi::OsString>) -> PathBuf {
+    let home = home.filter(|path| !path.is_empty());
+    let profile = profile.filter(|path| !path.is_empty());
     let home = if cfg!(windows) {
         profile.or(home)
     } else {
@@ -629,6 +631,22 @@ mod tests {
         assert_eq!(
             user_dir_from(None, Some(profile)),
             PathBuf::from("windows-profile/.kohdalab")
+        );
+    }
+
+    #[test]
+    fn configuration_ignores_empty_home_variables() {
+        assert_eq!(
+            user_dir_from(Some("".into()), Some("profile".into())),
+            PathBuf::from("profile/.kohdalab")
+        );
+        assert_eq!(
+            user_dir_from(Some("home".into()), Some("".into())),
+            PathBuf::from("home/.kohdalab")
+        );
+        assert_eq!(
+            user_dir_from(Some("".into()), Some("".into())),
+            std::env::temp_dir().join(".kohdalab")
         );
     }
 

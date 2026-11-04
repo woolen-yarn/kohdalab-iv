@@ -32,11 +32,16 @@ use iv_core::{
     measurement_definition, sweep_definitions,
 };
 use std::collections::VecDeque;
+use std::future::Future;
 use std::path::{Path, PathBuf};
+use std::pin::pin;
 use std::sync::{
     Arc,
     atomic::{AtomicBool, Ordering},
+    mpsc::{self, Receiver, TryRecvError},
 };
+use std::task::{Context, Poll, Wake, Waker};
+use std::thread;
 use std::time::{Duration, Instant};
 
 const SNAPSHOT_FIELDS: &[&str] = iv_core::CSV_FIELDS;
@@ -56,6 +61,100 @@ struct SweepPreview {
     route: Vec<f64>,
     unit: &'static str,
     custom: bool,
+}
+
+/// A single file chooser or export running outside the egui update thread.
+///
+/// Explorer/portal dialogs and copies on a network share can wait for seconds.
+/// Keeping one operation in flight makes its result unambiguous while leaving
+/// the measurement engine and Stop button responsive.
+enum FileTaskResult {
+    Config(Option<PathBuf>),
+    OutputDirectory(Option<PathBuf>),
+    SaveDestination {
+        source: PathBuf,
+        destination: Option<PathBuf>,
+        points: usize,
+    },
+    SaveCopy {
+        destination: PathBuf,
+        result: Result<(), String>,
+        points: usize,
+    },
+}
+
+struct PendingFileTask {
+    description: &'static str,
+    result: Receiver<FileTaskResult>,
+    /// Only a copy worker has created (or may create) measurement files.
+    /// Pickers are intentionally still safe to close normally.
+    blocks_close: bool,
+}
+
+fn file_task_blocks_close(pending: Option<&PendingFileTask>) -> bool {
+    pending.is_some_and(|pending| pending.blocks_close)
+}
+
+#[derive(Debug, PartialEq, Eq)]
+enum SaveCopyCompletion {
+    Cancelled,
+    Saved(String),
+    Failed { log: String, notice: String },
+}
+
+fn save_copy_completion(
+    destination: &Path,
+    result: Result<(), String>,
+    points: usize,
+) -> SaveCopyCompletion {
+    match result {
+        Ok(()) => SaveCopyCompletion::Saved(format!(
+            "Saved {points} points to {}\nThe companion .run.json contains settings and .readings.jsonl retains acquisition evidence.",
+            destination.display()
+        )),
+        Err(error) => SaveCopyCompletion::Failed {
+            log: format!("Save failed: {error}"),
+            notice: format!(
+                "Could not save the measurement copy.\n\n{error}\n\nThe original measurement files are unchanged."
+            ),
+        },
+    }
+}
+
+fn selected_save_destination(
+    source: PathBuf,
+    destination: Option<PathBuf>,
+    points: usize,
+) -> Result<(PathBuf, PathBuf, usize), SaveCopyCompletion> {
+    destination
+        .map(|destination| (source, destination, points))
+        .ok_or(SaveCopyCompletion::Cancelled)
+}
+
+struct DialogWaker(thread::Thread);
+
+impl Wake for DialogWaker {
+    fn wake(self: Arc<Self>) {
+        self.0.unpark();
+    }
+
+    fn wake_by_ref(self: &Arc<Self>) {
+        self.0.unpark();
+    }
+}
+
+/// Await rfd's native async sheet from a worker without a runtime dependency.
+/// The sheet itself is created on the egui main thread before this runs.
+fn wait_for_dialog<T>(future: impl Future<Output = T>) -> T {
+    let waker = Waker::from(Arc::new(DialogWaker(thread::current())));
+    let mut context = Context::from_waker(&waker);
+    let mut future = pin!(future);
+    loop {
+        match future.as_mut().poll(&mut context) {
+            Poll::Ready(value) => return value,
+            Poll::Pending => thread::park(),
+        }
+    }
 }
 
 pub struct IvApp {
@@ -94,6 +193,7 @@ pub struct IvApp {
     start_error: Option<String>,
     protection_dialog: Option<ProtectionAlert>,
     save_notice: Option<String>,
+    pending_file_task: Option<PendingFileTask>,
     logs: Vec<String>,
     started: Instant,
     phase_start: Instant,
@@ -297,6 +397,7 @@ impl IvApp {
             start_error: startup_error,
             protection_dialog: None,
             save_notice: None,
+            pending_file_task: None,
             logs: vec![],
             started: Instant::now(),
             phase_start: Instant::now(),
@@ -593,12 +694,162 @@ impl IvApp {
         self.table_points = self.state.points;
     }
 
+    fn file_task_pending(&self) -> bool {
+        self.pending_file_task.is_some()
+    }
+
+    fn start_file_task(
+        &mut self,
+        ctx: &egui::Context,
+        description: &'static str,
+        blocks_close: bool,
+        task: impl FnOnce() -> FileTaskResult + Send + 'static,
+    ) {
+        debug_assert!(self.pending_file_task.is_none());
+        let (send, receive) = mpsc::sync_channel(1);
+        let repaint = ctx.clone();
+        thread::spawn(move || {
+            let outcome = task();
+            let _ = send.send(outcome);
+            repaint.request_repaint();
+        });
+        self.pending_file_task = Some(PendingFileTask {
+            description,
+            result: receive,
+            blocks_close,
+        });
+        self.report(format!("{description}…"));
+    }
+
+    fn file_copy_in_progress(&self) -> bool {
+        file_task_blocks_close(self.pending_file_task.as_ref())
+    }
+
+    fn poll_file_task(&mut self, ctx: &egui::Context) {
+        let Some(pending) = self.pending_file_task.as_ref() else {
+            return;
+        };
+        let description = pending.description;
+        let outcome = match pending.result.try_recv() {
+            Ok(outcome) => outcome,
+            Err(TryRecvError::Empty) => return,
+            Err(TryRecvError::Disconnected) => {
+                self.pending_file_task = None;
+                self.report(format!("{description} did not complete."));
+                return;
+            }
+        };
+        self.pending_file_task = None;
+        match outcome {
+            FileTaskResult::Config(Some(path)) => {
+                if self.busy() || self.python_locked() {
+                    self.report("Configuration selection ignored because the application is busy or controlled externally.".into());
+                } else {
+                    self.config_path = path.display().to_string();
+                    self.report("Configuration file selected.".into());
+                }
+            }
+            FileTaskResult::OutputDirectory(Some(path)) => {
+                if self.busy() || self.python_locked() {
+                    self.report("Output-directory selection ignored because the application is busy or controlled externally.".into());
+                } else {
+                    self.settings.output_dir = path.display().to_string();
+                    self.report("Output directory selected.".into());
+                }
+            }
+            FileTaskResult::SaveDestination {
+                source,
+                destination,
+                points,
+            } => match selected_save_destination(source, destination, points) {
+                Ok((source, destination, points)) => {
+                    self.start_save_copy(ctx, source, destination, points)
+                }
+                Err(SaveCopyCompletion::Cancelled) => {
+                    self.report("Save measurement copy cancelled.".into())
+                }
+                Err(_) => unreachable!("only cancellation is possible before copying"),
+            },
+            FileTaskResult::SaveCopy {
+                destination,
+                result,
+                points,
+            } => match save_copy_completion(&destination, result, points) {
+                SaveCopyCompletion::Cancelled => {
+                    self.report("Save measurement copy cancelled.".into())
+                }
+                SaveCopyCompletion::Saved(message) => {
+                    self.report(message.clone());
+                    self.save_notice = Some(message);
+                }
+                SaveCopyCompletion::Failed { log, notice } => {
+                    self.report(log);
+                    self.save_notice = Some(notice);
+                }
+            },
+            FileTaskResult::Config(None) | FileTaskResult::OutputDirectory(None) => {
+                self.report("Selection cancelled.".into());
+            }
+        }
+    }
+
+    fn choose_config(&mut self, ctx: &egui::Context) {
+        let initial = PathBuf::from(&self.config_path)
+            .parent()
+            .map(Path::to_path_buf)
+            .unwrap_or_else(|| PathBuf::from("."));
+        // Start the native sheet on the main thread, then await it on a
+        // worker. rfd's synchronous macOS picker calls run_modal on the
+        // main thread even when invoked from a worker.
+        let dialog = rfd::AsyncFileDialog::new()
+            .set_title("Configuration file")
+            .add_filter("JSON", &["json"])
+            .set_directory(initial)
+            .pick_file();
+        self.start_file_task(ctx, "Configuration picker", false, move || {
+            FileTaskResult::Config(wait_for_dialog(dialog).map(|file| file.path().to_path_buf()))
+        });
+    }
+
+    fn choose_output_directory(&mut self, ctx: &egui::Context) {
+        let initial = PathBuf::from(&self.settings.output_dir);
+        let dialog = rfd::AsyncFileDialog::new()
+            .set_title("Output directory")
+            .set_directory(initial)
+            .pick_folder();
+        self.start_file_task(ctx, "Output-directory picker", false, move || {
+            FileTaskResult::OutputDirectory(
+                wait_for_dialog(dialog).map(|folder| folder.path().to_path_buf()),
+            )
+        });
+    }
+
+    fn start_save_copy(
+        &mut self,
+        ctx: &egui::Context,
+        source: PathBuf,
+        destination: PathBuf,
+        points: usize,
+    ) {
+        // Register the copy as close-blocking before its worker starts. This
+        // leaves no interval where a selected destination can be written as
+        // the process exits.
+        self.start_file_task(ctx, "Saving measurement copy", true, move || {
+            let result = crate::run_export::save_run_copy(&source, &destination);
+            FileTaskResult::SaveCopy {
+                destination,
+                result,
+                points,
+            }
+        });
+    }
+
     fn start_run(&mut self) {
         self.start_run_impl(true);
     }
 
     fn start_run_impl(&mut self, save_preferences: bool) {
-        if self.pending_run {
+        if self.pending_run || self.file_task_pending() {
             return;
         }
         if let Some(reason) = start_block_reason(
@@ -763,7 +1014,7 @@ impl IvApp {
 
     fn profile(&mut self, ui: &mut egui::Ui) {
         section(ui, "Config", |ui| {
-            let enabled = !self.busy();
+            let enabled = !self.busy() && !self.file_task_pending();
             ui.add_enabled_ui(enabled, |ui| {
                 ui.horizontal(|ui| {
                     let field_width = (ui.available_width() - 70.0 - ui.spacing().item_spacing.x).max(40.0);
@@ -775,18 +1026,8 @@ impl IvApp {
                         field_width,
                         summary,
                     );
-                    if button(ui, "Browse", 70.0, true).clicked()
-                        && let Some(path) = rfd::FileDialog::new()
-                            .set_title("Configuration file")
-                            .add_filter("JSON", &["json"])
-                            .set_directory(
-                                Path::new(&self.config_path)
-                                    .parent()
-                                    .unwrap_or(Path::new(".")),
-                            )
-                            .pick_file()
-                    {
-                        self.config_path = path.display().to_string();
+                    if button(ui, "Browse", 70.0, true).clicked() {
+                        self.choose_config(ui.ctx());
                     }
                 });
                 ui.add_space(6.0);
@@ -2378,53 +2619,53 @@ impl IvApp {
     fn measurement_controls(&mut self, ui: &mut egui::Ui) {
         section(ui, "Measurement", |ui| {
             ui.columns(2, |columns| {
-                columns[0]
-                    .add_enabled_ui(!self.busy() && !self.python_locked(), |ui| self.sweep(ui));
+                columns[0].add_enabled_ui(
+                    !self.busy() && !self.python_locked() && !self.file_task_pending(),
+                    |ui| self.sweep(ui),
+                );
                 section(&mut columns[1], "Output", |ui| {
-                    ui.add_enabled_ui(!self.busy() && !self.python_locked(), |ui| {
-                        let width = (ui.available_width() - 62.0).max(150.0);
-                        egui::Grid::new("output_files")
-                            .num_columns(2)
-                            .spacing([6.0, 8.0])
-                            .show(ui, |ui| {
-                                form_label(ui, "Directory", 54.0);
-                                ui.horizontal(|ui| {
-                                    let summary = path_summary(&self.settings.output_dir);
-                                    compact_field(
-                                        ui,
-                                        "output_dir",
-                                        &mut self.settings.output_dir,
-                                        (width - 118.0).max(35.0),
-                                        summary,
-                                    );
-                                    if button(ui, "Browse", 104.0, true).clicked()
-                                        && let Some(path) = rfd::FileDialog::new()
-                                            .set_title("Output directory")
-                                            .set_directory(&self.settings.output_dir)
-                                            .pick_folder()
-                                    {
-                                        self.settings.output_dir = path.display().to_string();
-                                    }
+                    ui.add_enabled_ui(
+                        !self.busy() && !self.python_locked() && !self.file_task_pending(),
+                        |ui| {
+                            let width = (ui.available_width() - 62.0).max(150.0);
+                            egui::Grid::new("output_files")
+                                .num_columns(2)
+                                .spacing([6.0, 8.0])
+                                .show(ui, |ui| {
+                                    form_label(ui, "Directory", 54.0);
+                                    ui.horizontal(|ui| {
+                                        let summary = path_summary(&self.settings.output_dir);
+                                        compact_field(
+                                            ui,
+                                            "output_dir",
+                                            &mut self.settings.output_dir,
+                                            (width - 118.0).max(35.0),
+                                            summary,
+                                        );
+                                        if button(ui, "Browse", 104.0, true).clicked() {
+                                            self.choose_output_directory(ui.ctx());
+                                        }
+                                    });
+                                    ui.end_row();
+                                    form_label(ui, "File", 54.0);
+                                    ui.horizontal(|ui| {
+                                        ui.add(
+                                            egui::TextEdit::singleline(&mut self.settings.filename)
+                                                .margin(egui::Margin::symmetric(3, 3))
+                                                .desired_width((width - 118.0).max(35.0)),
+                                        );
+                                        ui.add_sized(
+                                            [104.0, 24.0],
+                                            egui::Checkbox::new(
+                                                &mut self.settings.auto_suffix,
+                                                "Auto suffix",
+                                            ),
+                                        );
+                                    });
+                                    ui.end_row();
                                 });
-                                ui.end_row();
-                                form_label(ui, "File", 54.0);
-                                ui.horizontal(|ui| {
-                                    ui.add(
-                                        egui::TextEdit::singleline(&mut self.settings.filename)
-                                            .margin(egui::Margin::symmetric(3, 3))
-                                            .desired_width((width - 118.0).max(35.0)),
-                                    );
-                                    ui.add_sized(
-                                        [104.0, 24.0],
-                                        egui::Checkbox::new(
-                                            &mut self.settings.auto_suffix,
-                                            "Auto suffix",
-                                        ),
-                                    );
-                                });
-                                ui.end_row();
-                            });
-                    });
+                        },
+                    );
                 });
                 columns[1].add_space(8.0);
                 section(&mut columns[1], "Run", |ui| self.run_controls(ui));
@@ -2698,7 +2939,12 @@ impl IvApp {
             .unwrap_or_else(|| format!("{role} unavailable"))
     }
 
-    fn save_measurement(&mut self) {
+    fn save_measurement(&mut self, ctx: &egui::Context) {
+        if self.file_task_pending() {
+            self.save_notice =
+                Some("Wait for the current file operation to finish before saving a copy.".into());
+            return;
+        }
         if self.busy() || self.pending_run {
             self.save_notice = Some(
                 "Stop the measurement and wait for output cleanup before saving a copy.".into(),
@@ -2714,40 +2960,33 @@ impl IvApp {
             .file_stem()
             .and_then(|name| name.to_str())
             .unwrap_or("iv_run");
-        let Some(destination) = rfd::FileDialog::new()
+        let output_directory = PathBuf::from(&self.settings.output_dir);
+        let default_name = format!("{stem}_copy.csv");
+        let points = self.state.points;
+        let dialog = rfd::AsyncFileDialog::new()
             .set_title("Save measurement copy")
             .add_filter("CSV measurement", &["csv"])
-            .set_directory(&self.settings.output_dir)
-            .set_file_name(format!("{stem}_copy.csv"))
-            .save_file()
-        else {
-            return;
-        };
-        let destination = if destination
-            .extension()
-            .is_some_and(|ext| ext.eq_ignore_ascii_case("csv"))
-        {
-            destination
-        } else {
-            destination.with_extension("csv")
-        };
-        match crate::run_export::save_run_copy(&source, &destination) {
-            Ok(()) => {
-                let message = format!(
-                    "Saved {} points to {}\nThe companion .run.json contains settings and .readings.jsonl retains acquisition evidence.",
-                    self.state.points,
-                    destination.display()
-                );
-                self.report(message.clone());
-                self.save_notice = Some(message);
+            .set_directory(output_directory)
+            .set_file_name(default_name)
+            .save_file();
+        self.start_file_task(ctx, "Save measurement location", false, move || {
+            let destination = wait_for_dialog(dialog).map(|file| {
+                let path = file.path().to_path_buf();
+                if path
+                    .extension()
+                    .is_some_and(|ext| ext.eq_ignore_ascii_case("csv"))
+                {
+                    path
+                } else {
+                    path.with_extension("csv")
+                }
+            });
+            FileTaskResult::SaveDestination {
+                source,
+                destination,
+                points,
             }
-            Err(error) => {
-                self.report(format!("Save failed: {error}"));
-                self.save_notice = Some(format!(
-                    "Could not save the measurement copy.\n\n{error}\n\nThe original measurement files are unchanged."
-                ));
-            }
-        }
+        });
     }
 
     fn save_dialog(&mut self, ctx: &egui::Context) {
@@ -2782,7 +3021,10 @@ impl IvApp {
                 });
             if ui
                 .add_enabled(
-                    !self.busy() && !self.pending_run && !self.python_locked(),
+                    !self.busy()
+                        && !self.pending_run
+                        && !self.python_locked()
+                        && !self.file_task_pending(),
                     start_button,
                 )
                 .on_disabled_hover_text("Wait for the current operation to finish, or use Stop.")
@@ -2806,7 +3048,10 @@ impl IvApp {
                 ui,
                 "Save",
                 width,
-                !self.busy() && !self.pending_run && !self.python_locked(),
+                !self.busy()
+                    && !self.pending_run
+                    && !self.python_locked()
+                    && !self.file_task_pending(),
             )
             .on_hover_text("Save a complete copy of the acquired CSV and run settings.")
             .on_disabled_hover_text(
@@ -2814,7 +3059,7 @@ impl IvApp {
             )
             .clicked()
             {
-                self.save_measurement();
+                self.save_measurement(ui.ctx());
             }
         });
     }
@@ -2979,6 +3224,11 @@ impl IvApp {
             return;
         }
         let mut accepted = false;
+        let mut custom_error = if self.settings.config.pattern == Pattern::CustomList {
+            parse_custom_points(&self.custom_text).err()
+        } else {
+            None
+        };
         let response = egui::Modal::new(egui::Id::new("measurement_settings"))
             .frame(egui::Frame::popup(&ctx.style()).fill(BG).inner_margin(16))
             .show(ctx, |ui| {
@@ -3036,7 +3286,16 @@ impl IvApp {
                             ui.add_space(8.0);
                             ui.label(if self.settings.config.mode == Mode::Iv { "Custom points (V, comma separated)" } else { "Custom points (A, comma separated)" });
                             if ui.add(egui::TextEdit::multiline(&mut self.custom_text).desired_rows(2).desired_width(340.0)).changed() {
-                                self.settings.config.custom_points = self.custom_text.split(',').map(|v| v.trim().parse::<f64>()).collect::<Result<Vec<_>, _>>().unwrap_or_default();
+                                match parse_custom_points(&self.custom_text) {
+                                    Ok(points) => {
+                                        self.settings.config.custom_points = points;
+                                        custom_error = None;
+                                    }
+                                    Err(error) => custom_error = Some(error),
+                                }
+                            }
+                            if let Some(error) = &custom_error {
+                                ui.label(RichText::new(error).small().color(RED));
                             }
                         }
                     });
@@ -3046,7 +3305,7 @@ impl IvApp {
                 ui.add_space(8.0);
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                     if button(ui, "Cancel", 76.0, true).clicked() { ui.close(); }
-                    if button(ui, "OK", 76.0, !self.busy()).clicked() { accepted = true; ui.close(); }
+                    if button(ui, "OK", 76.0, !self.busy() && custom_error.is_none()).clicked() { accepted = true; ui.close(); }
                 });
             });
         if response.should_close() {
@@ -3493,6 +3752,7 @@ impl eframe::App for IvApp {
         if self.first_frame_s.is_none() {
             self.first_frame_s = Some(self.boot.elapsed().as_secs_f64());
         }
+        self.poll_file_task(ctx);
         self.sync();
         // Reconcile the idle live channel after closing DC or finishing a
         // sweep. This changes only an already-OFF source function, never ON.
@@ -3515,14 +3775,19 @@ impl eframe::App for IvApp {
         self.external_control();
         self.python_banner(ctx);
         ctx.request_repaint_after(Duration::from_millis(100));
-        if ctx.input(|i| i.viewport().close_requested()) && self.active() {
+        if ctx.input(|i| i.viewport().close_requested())
+            && (self.active() || self.file_copy_in_progress())
+        {
             ctx.send_viewport_cmd(egui::ViewportCommand::CancelClose);
-            if self.send(Command::Stop) {
+            if self.active() && self.send(Command::Stop) {
                 self.closing = true;
                 self.notice = "Stopping and cleaning up before closing…".into();
+            } else if self.file_copy_in_progress() {
+                self.closing = true;
+                self.notice = "Finishing the measurement copy before closing…".into();
             }
         }
-        if self.closing && !self.active() {
+        if self.closing && !self.active() && !self.file_copy_in_progress() {
             ctx.send_viewport_cmd(egui::ViewportCommand::Close);
         }
         self.sidebar(ctx);
@@ -3866,6 +4131,22 @@ fn preserve_source_on_meter_edit_for_mode(
     }
 }
 
+fn parse_custom_points(text: &str) -> Result<Vec<f64>, String> {
+    text.split(',')
+        .enumerate()
+        .map(|(index, value)| {
+            value
+                .trim()
+                .parse::<f64>()
+                .ok()
+                .filter(|value| value.is_finite())
+                .ok_or_else(|| {
+                    format!("Point {}: enter a finite number between commas.", index + 1)
+                })
+        })
+        .collect()
+}
+
 fn start_block_reason(config: &RunConfig, connected: bool, matching_modes: bool) -> Option<String> {
     if !connected {
         return Some("Connect both Source and Meter before starting. Click Refresh, select the correct resources, then click All Connect.".into());
@@ -4050,6 +4331,78 @@ fn load_gui_profile(bytes: &[u8]) -> Result<Settings, String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn file_task_states_keep_picker_cancellation_and_copy_close_protection_distinct() {
+        let (_send, receive) = mpsc::sync_channel(1);
+        let picker = PendingFileTask {
+            description: "Save measurement location",
+            result: receive,
+            blocks_close: false,
+        };
+        assert!(!file_task_blocks_close(Some(&picker)));
+        assert!(selected_save_destination(PathBuf::from("run.csv"), None, 4).is_err());
+
+        let (_send, receive) = mpsc::sync_channel(1);
+        let copy = PendingFileTask {
+            description: "Saving measurement copy",
+            result: receive,
+            blocks_close: true,
+        };
+        assert!(file_task_blocks_close(Some(&copy)));
+        assert!(!file_task_blocks_close(None));
+    }
+
+    #[test]
+    fn save_copy_completion_preserves_success_and_failure_messages() {
+        let destination = Path::new("export.csv");
+        assert_eq!(
+            save_copy_completion(destination, Ok(()), 7),
+            SaveCopyCompletion::Saved(
+                "Saved 7 points to export.csv\nThe companion .run.json contains settings and .readings.jsonl retains acquisition evidence."
+                    .into()
+            )
+        );
+        assert_eq!(
+            save_copy_completion(destination, Err("disk full".into()), 7),
+            SaveCopyCompletion::Failed {
+                log: "Save failed: disk full".into(),
+                notice: "Could not save the measurement copy.\n\ndisk full\n\nThe original measurement files are unchanged.".into(),
+            }
+        );
+    }
+
+    #[test]
+    fn dialog_worker_can_complete_an_already_ready_native_future() {
+        assert_eq!(wait_for_dialog(async { 17_u8 }), 17);
+    }
+
+    #[test]
+    fn dialog_worker_does_not_lose_a_wakeup_before_parking() {
+        // Native completion can arrive between poll returning Pending and the
+        // worker parking. Exercise that transition without opening a dialog.
+        struct WakesDuringPoll(bool);
+        impl Future for WakesDuringPoll {
+            type Output = u8;
+            fn poll(mut self: std::pin::Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<u8> {
+                if self.0 {
+                    Poll::Ready(23)
+                } else {
+                    self.0 = true;
+                    cx.waker().wake_by_ref();
+                    Poll::Pending
+                }
+            }
+        }
+        let (sender, receiver) = mpsc::channel();
+        thread::spawn(move || {
+            sender
+                .send(wait_for_dialog(WakesDuringPoll(false)))
+                .unwrap()
+        });
+        assert_eq!(receiver.recv_timeout(Duration::from_secs(2)).unwrap(), 23);
+    }
+
     #[test]
     fn compact_cards_follow_sweep_and_dc_function_without_mixing_ranges() {
         assert_eq!(card_mode(Mode::Iv, false, None, None), Mode::Iv);
@@ -4161,6 +4514,24 @@ mod tests {
                 ""
             ]
             .map(str::to_string)
+        );
+    }
+
+    #[test]
+    fn custom_point_drafts_accept_scientific_values_and_explain_invalid_entries() {
+        assert_eq!(
+            parse_custom_points(" -1e-3, 0,\n2.5E-3 ").unwrap(),
+            vec![-0.001, 0.0, 0.0025]
+        );
+        for text in [
+            "", "1,", "1,,2", "1,NaN", "1,inf", "1,-inf", "1,1e999", "1,text",
+        ] {
+            assert!(parse_custom_points(text).is_err(), "{text:?}");
+        }
+        assert!(
+            parse_custom_points("1,")
+                .unwrap_err()
+                .starts_with("Point 2:")
         );
     }
 
