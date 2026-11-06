@@ -1951,12 +1951,38 @@ fn write_json_new(path: &Path, value: &impl serde::Serialize) -> std::io::Result
         .write(true)
         .create_new(true)
         .open(path)?;
-    {
-        let mut buffered = std::io::BufWriter::with_capacity(65536, &mut file);
-        serde_json::to_writer_pretty(&mut buffered, value).map_err(std::io::Error::other)?;
-        buffered.flush()?;
+    let mut buffered = std::io::BufWriter::with_capacity(65536, &mut file);
+    serde_json::to_writer_pretty(&mut buffered, value).map_err(std::io::Error::other)?;
+    buffered.flush()?;
+    buffered.get_ref().sync_all()
+}
+
+// Startup errors deliberately retain partial evidence. Deleting an output by
+// pathname could remove a file another process replaced after create_new.
+fn check_recording_destinations(path: &Path) -> Result<(), String> {
+    for (candidate, kind) in [
+        (path.to_path_buf(), "analysis CSV"),
+        (path.with_extension("raw.csv"), "raw acquisition evidence"),
+        (path.with_extension("run.json"), "run settings"),
+    ] {
+        match std::fs::symlink_metadata(&candidate) {
+            Ok(_) => {
+                return Err(format!(
+                    "Cannot create {kind} before enabling output: {} already exists",
+                    candidate.display()
+                ));
+            }
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => (),
+            Err(error) => {
+                return Err(format!(
+                    "Cannot inspect {kind} before enabling output: {error}"
+                ));
+            }
+        }
     }
-    file.sync_all()
+    // create_new still arbitrates races after this preflight. A late failure
+    // retains partial evidence instead of attempting pathname-based rollback.
+    Ok(())
 }
 
 fn replace_json(path: &Path, value: &impl serde::Serialize) -> std::io::Result<()> {
@@ -2825,6 +2851,7 @@ fn execute(
         std::fs::create_dir_all(parent).map_err(|e| format!("Create result folder: {e}"))?;
     }
     let run_id = raw_csv::new_run_id();
+    check_recording_destinations(path)?;
     let mut writer = CsvWriter::create(path)?;
     let manifest = path.with_extension("run.json");
     let raw_path = path.with_extension("raw.csv");
@@ -2862,18 +2889,17 @@ fn execute(
     let mut audit = match RawWriter::create(&raw_path, &run_id) {
         Ok(audit) => audit,
         Err(error) => {
-            let _ = std::fs::remove_file(path);
+            drop(writer);
             return Err(format!(
-                "Cannot create raw acquisition evidence before enabling output: {error}"
+                "Cannot create raw acquisition evidence before enabling output: {error}. Partial files retained; choose a new output name"
             ));
         }
     };
     if let Err(error) = audit.append(&audit_start) {
         drop(audit);
-        let _ = std::fs::remove_file(path);
-        let _ = std::fs::remove_file(&raw_path);
+        drop(writer);
         return Err(format!(
-            "Cannot initialize raw acquisition evidence before enabling output: {error}"
+            "Cannot initialize raw acquisition evidence before enabling output: {error}. Partial files retained; choose a new output name"
         ));
     }
     if let Some(verification) = preflight_output_verification {
@@ -2888,10 +2914,10 @@ fn execute(
         initial_metadata["git_commit"] = serde_json::Value::String(commit.into());
     }
     if let Err(error) = write_json_new(&manifest, &initial_metadata) {
-        let _ = std::fs::remove_file(path);
-        let _ = std::fs::remove_file(&raw_path);
+        drop(audit);
+        drop(writer);
         return Err(format!(
-            "Cannot save settings before enabling output: {error}"
+            "Cannot save settings before enabling output: {error}. Partial files retained; choose a new output name"
         ));
     }
     let begin = Instant::now();
@@ -3660,6 +3686,37 @@ fn execute(
             )
         };
     }
+    // Output cleanup above must not wait for disk persistence.  Once the
+    // sweep is safe, make the analysis file durable before calculating its
+    // checksum or publishing a terminal outcome.
+    if let Err(error) = writer.finish() {
+        let previous = if state.error.is_empty() {
+            String::new()
+        } else {
+            format!("{} · ", state.error)
+        };
+        let kind = if state.error.is_empty() {
+            ErrorKind::Storage
+        } else {
+            state.error.kind
+        };
+        state.error = Failure::new(
+            kind,
+            format!("{previous}{error} · analysis CSV may be incomplete"),
+        );
+        state.phase = Phase::Failed;
+        state.message = format!(
+            "{} · {} points saved · output {}",
+            state.phase,
+            state.points,
+            state.output.to_lowercase()
+        );
+        state.warnings.push(
+            "The analysis CSV could not be finalized; retain the partial CSV file with this run."
+                .into(),
+        );
+        shutdown_gate_for_recording_failure(pair.as_deref_mut(), state);
+    }
     let audit_finish = audit.append(&serde_json::json!({
         "event":"run_finished", "outcome":state.phase.to_string(), "points_saved":state.points,
         "in_progress":false, "error":if state.error.is_empty() { None::<String> } else { Some(state.error.to_string()) },
@@ -3758,6 +3815,26 @@ fn recording_hashes(main: &Path, raw: &Path) -> Result<serde_json::Value, String
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn initial_json_failure_retains_partial_evidence_and_keeps_existing_files() {
+        struct FailsSerialization;
+        impl serde::Serialize for FailsSerialization {
+            fn serialize<S: serde::Serializer>(&self, _: S) -> Result<S::Ok, S::Error> {
+                Err(serde::ser::Error::custom("injected serialization failure"))
+            }
+        }
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("run.run.json");
+        assert!(super::write_json_new(&path, &FailsSerialization).is_err());
+        assert!(path.exists());
+        std::fs::write(&path, "previous experiment").unwrap();
+        assert!(super::write_json_new(&path, &serde_json::json!({"new":true})).is_err());
+        assert_eq!(
+            std::fs::read_to_string(&path).unwrap(),
+            "previous experiment"
+        );
+    }
+
     #[test]
     fn checksum_failure_is_explicit_and_sample_dispersion_uses_ddof_one() {
         let dir = tempfile::tempdir().unwrap();

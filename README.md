@@ -33,6 +33,12 @@ In Settings, assign the Source, required opposite-quantity Meter, and optional s
 
 Settingsでは、Source、反対量を測る必須Meter、同じ物理量を測る任意の **Meter (V)** / **Meter (I)** を割り当てます。任意MeterはV-I／Dual V-Iでは電圧Meter、I-Vでは電流Meterです。中央プロットは同じSIスケールを共有し、下軸はSource、上軸は任意Meterです。任意Meterがなくても上軸領域を保持するため、グラフ位置は変わりません。Source/Meter由来の線を重ね、凡例は `forward` と `backward` のみを示します。1行のstatusにはSource/Meter別の掃引フィットによる抵抗・コンダクタンスを表示し、CSVには点ごとの比を別に保存します。取得できない実測値をSource設定値から推定して埋めることはありません。[Source/Meter値](docs/guides/source-and-meter-values.md)と[CSV仕様](docs/reference/csv-format.md)を参照してください。
 
+### Recording durability / 記録の耐久性
+
+Before output is enabled, IV creates the analysis CSV, raw audit CSV, and initial run metadata without replacing existing names; a collision aborts the run and keeps the earlier file. Startup errors also retain partial files; retry with a new output name. After output cleanup, both CSV streams are flushed and `sync_all` is requested before checksums and final outcome metadata are written. A synchronization failure marks the recording failed and preserves the partial files for review. This is an operating-system persistence request, not a universal guarantee against sudden power loss or a per-point crash journal.
+
+出力ON前に、IVは解析CSV・raw監査CSV・初期run metadataを既存ファイルを置換せずに作成します。同名ファイルとの衝突時は実行を中止し、先行ファイルを保持します。開始失敗時の部分ファイルも残すため、再試行時は新しい出力名を使用してください。出力後処理後、両CSVをflushして`sync_all`を要求してから、チェックサムと最終結果metadataを書き込みます。同期に失敗した場合は記録を失敗として扱い、調査用に部分ファイルを残します。これはOSへの永続化要求であり、突然の電源断に対する万能な保証や点ごとのクラッシュジャーナルではありません。
+
 <details>
 <summary>Manual DC output / 手動DC出力</summary>
 

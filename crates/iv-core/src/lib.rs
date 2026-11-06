@@ -1828,6 +1828,18 @@ impl CsvWriter {
             .flush()
             .map_err(|e| format!("cannot flush CSV row: {e}"))
     }
+
+    /// Flush all buffered rows and ask the operating system to persist the
+    /// analysis CSV before it is hashed or its run is finalized.
+    pub fn finish(&mut self) -> Result<(), String> {
+        self.writer
+            .flush()
+            .map_err(|e| format!("cannot flush CSV before finalization: {e}"))?;
+        self.writer
+            .get_ref()
+            .sync_all()
+            .map_err(|e| format!("cannot sync CSV before finalization: {e}"))
+    }
 }
 
 fn fill_native_csv_values(record: &Record, fields: &mut [String; CSV_FIELDS.len()]) {
@@ -2976,7 +2988,7 @@ mod tests {
             writer.append(&record).unwrap();
             expected.push(record);
         }
-        drop(writer);
+        writer.finish().unwrap();
         let mut reader = csv::Reader::from_path(&path).unwrap();
         assert_eq!(
             reader.headers().unwrap().iter().collect::<Vec<_>>(),
@@ -3061,13 +3073,13 @@ mod tests {
                 .unwrap()
                 .as_nanos()
         ));
-        let writer = CsvWriter::create(&path).unwrap();
+        let mut writer = CsvWriter::create(&path).unwrap();
         assert!(CsvWriter::create(&path).is_err());
         assert_eq!(
             std::fs::read_to_string(&path).unwrap().trim(),
             CSV_FIELDS.join(",")
         );
-        drop(writer);
+        writer.finish().unwrap();
         std::fs::remove_file(path).unwrap();
     }
 }

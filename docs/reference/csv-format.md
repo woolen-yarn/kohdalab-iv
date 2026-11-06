@@ -116,21 +116,27 @@ The CSV serializes every finite in-memory `f64` using shortest round-trip scient
 
 ## Metadata durability
 
-The CSV header, raw CSV audit and JSON run settings are created before output is enabled.
-Failure to create the settings file aborts preparation. Initial JSON includes
+The CSV header, raw CSV audit and JSON run settings are created before output is enabled,
+using create-new semantics. A name collision aborts preparation without replacing the
+existing file; partial files from that failed attempt are retained, and retry requires a new output name. Failure to create
+the settings file also aborts preparation. Initial JSON includes
 configuration, identities, resource addresses, expected point count, source
 range setting and hardware compliance setting. `in_progress: true` means the
 metadata has not been finalized; it does not indicate current physical output.
 
-Final metadata is written to a separate temporary file, synchronized and renamed
-over the initial JSON after output cleanup. If final writing fails, initial
-settings remain and a warning is reported. The CSV, JSON and audit should be retained
-together for reproducibility. Copying only the CSV omits configuration and raw acquisition context.
+After output cleanup, the analysis CSV and raw audit are flushed and `sync_all` is requested
+before their checksums and the terminal outcome are assembled. A CSV synchronization failure
+marks the recording failed, retains the partial files, and requests the same fail-closed gate
+shutdown used for other recording failures. Final metadata is then written to a separate
+temporary file, synchronized and renamed over the initial JSON. If final writing fails, initial
+settings remain and a warning is reported. The CSV, JSON and audit should be retained together
+for reproducibility. Copying only the CSV omits configuration and raw acquisition context.
 
 CSV continues to flush each point. Range/resolution changes are indexed by point
 in final JSON. An abrupt process/system failure can lose the final change history,
 final outcome and latest diagnostics even though initial settings and flushed CSV
-rows exist; this is not a crash-proof per-point metadata journal.
+rows exist; neither `sync_all` nor the metadata replacement is a universal power-loss guarantee,
+and this is not a crash-proof per-point metadata journal.
 
 ## Validation
 
@@ -184,11 +190,11 @@ CSVはengine内の有限`f64`を最短往復可能な指数表記で直列化し
 
 ### Metadataの耐久性
 
-出力ON前にCSVヘッダー、raw CSV audit、JSON設定を生成します。設定ファイルを作れなければ準備を中止します。初期JSONは設定、識別、リソース、予定点数、出力レンジ、機器コンプライアンス設定を含みます。`in_progress: true`はmetadataが未確定という意味で、実際の出力状態を示しません。
+出力ON前にCSVヘッダー、raw CSV audit、JSON設定を`create_new`相当で生成します。同名ファイルがあれば既存ファイルを置換せずに準備を中止し、その試行で作成した部分ファイルも保持します。再試行時は新しい出力名を選んでください。設定ファイルを作れない場合も準備を中止します。初期JSONは設定、識別、リソース、予定点数、出力レンジ、機器コンプライアンス設定を含みます。`in_progress: true`はmetadataが未確定という意味で、実際の出力状態を示しません。
 
-出力後処理後、最終metadataを別の一時ファイルへ書込み、同期して初期JSONへrenameします。最終書込みが失敗しても初期設定を残し警告します。再現性のためCSV・JSON・auditを一緒に保持してください。CSVだけでは設定・raw acquisition contextが欠けます。
+出力後処理後、解析CSVとraw auditをflushし、チェックサムと最終結果を組み立てる前に`sync_all`を要求します。CSV同期に失敗した場合は記録を失敗として扱い、部分ファイルを残し、他の記録失敗と同様にgateをfail-closedでOFF要求します。続いて最終metadataを別の一時ファイルへ書込み、同期して初期JSONへrenameします。最終書込みが失敗しても初期設定を残し警告します。再現性のためCSV・JSON・auditを一緒に保持してください。CSVだけでは設定・raw acquisition contextが欠けます。
 
-CSVは各点でflushします。range・resolution変更は最終JSONに点番号付きで記録します。プロセス・OSの突然の停止では、初期設定とflush済みCSVがあっても、最終変更履歴・結果・最新診断を失う可能性があります。クラッシュに耐える点ごとのmetadataジャーナルではありません。
+CSVは各点でflushします。range・resolution変更は最終JSONに点番号付きで記録します。プロセス・OSの突然の停止では、初期設定とflush済みCSVがあっても、最終変更履歴・結果・最新診断を失う可能性があります。`sync_all`やmetadata置換も突然の電源断に対する万能な保証ではなく、クラッシュに耐える点ごとのmetadataジャーナルでもありません。
 
 ### 検証
 
