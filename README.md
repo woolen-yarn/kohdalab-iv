@@ -71,15 +71,15 @@ On first normal GUI launch, IV atomically creates its missing default configurat
 
 | Channel / 配布チャネル | Version / バージョン | Platforms / 対応プラットフォーム |
 | --- | --- | --- |
-| Stable / 安定版 | [1.4.1](https://github.com/woolen-yarn/kohdalab-iv/releases/tag/portable-v1.4.1) | Windows x64 Setup / portable ZIP; macOS Apple silicon portable ZIP / Windows x64 セットアップ・ポータブル ZIP、macOS Apple silicon ポータブル ZIP |
+| Stable / 安定版 | [1.4.2](https://github.com/woolen-yarn/kohdalab-iv/releases/tag/portable-v1.4.2) | Windows x64 Setup / portable ZIP; macOS Apple silicon portable ZIP / Windows x64 セットアップ・ポータブル ZIP、macOS Apple silicon ポータブル ZIP |
 | Preview / プレビュー | [1.3.0-alpha.20](https://github.com/woolen-yarn/kohdalab-iv/releases/tag/preview-v1.3.0-alpha.20) | Windows x64 Setup / preview ZIP; macOS Apple silicon preview ZIP / Windows x64 セットアップ・プレビュー ZIP、macOS Apple silicon プレビュー ZIP |
 
-| Current package / 最新パッケージ | Kohdalab | Personal / 個人ミラー |
+| Current package / 最新パッケージ | Kohdalab legacy mirror 1.4.1 / Kohdalab旧ミラー 1.4.1 | Personal current 1.4.2 / 個人ミラー最新版 1.4.2 |
 | --- | --- | --- |
-| Windows Setup | [Download](https://github.com/Kohdalab/kohdalab-iv/releases/download/portable-v1.4.1/kohdalab-iv-1.4.1-windows-x64-Setup.exe) | [Download](https://github.com/woolen-yarn/kohdalab-iv/releases/download/portable-v1.4.1/kohdalab-iv-1.4.1-windows-x64-Setup.exe) |
-| Windows portable | [Download](https://github.com/Kohdalab/kohdalab-iv/releases/download/portable-v1.4.1/kohdalab-iv-1.4.1-windows-x64-portable.zip) | [Download](https://github.com/woolen-yarn/kohdalab-iv/releases/download/portable-v1.4.1/kohdalab-iv-1.4.1-windows-x64-portable.zip) |
-| Mac portable (Apple silicon) | [Download](https://github.com/Kohdalab/kohdalab-iv/releases/download/portable-v1.4.1/kohdalab-iv-1.4.1-macos-arm64-portable.zip) | [Download](https://github.com/woolen-yarn/kohdalab-iv/releases/download/portable-v1.4.1/kohdalab-iv-1.4.1-macos-arm64-portable.zip) |
-| Source build kit / ソースビルドキット | [Download](https://github.com/Kohdalab/kohdalab-iv/releases/download/portable-v1.4.1/kohdalab-iv-1.4.1-build-kit.zip) | [Download](https://github.com/woolen-yarn/kohdalab-iv/releases/download/portable-v1.4.1/kohdalab-iv-1.4.1-build-kit.zip) |
+| Windows Setup | [1.4.1](https://github.com/Kohdalab/kohdalab-iv/releases/download/portable-v1.4.1/kohdalab-iv-1.4.1-windows-x64-Setup.exe) | [Download](https://github.com/woolen-yarn/kohdalab-iv/releases/download/portable-v1.4.2/kohdalab-iv-1.4.2-windows-x64-Setup.exe) |
+| Windows portable | [1.4.1](https://github.com/Kohdalab/kohdalab-iv/releases/download/portable-v1.4.1/kohdalab-iv-1.4.1-windows-x64-portable.zip) | [Download](https://github.com/woolen-yarn/kohdalab-iv/releases/download/portable-v1.4.2/kohdalab-iv-1.4.2-windows-x64-portable.zip) |
+| Mac portable (Apple silicon) | [1.4.1](https://github.com/Kohdalab/kohdalab-iv/releases/download/portable-v1.4.1/kohdalab-iv-1.4.1-macos-arm64-portable.zip) | [Download](https://github.com/woolen-yarn/kohdalab-iv/releases/download/portable-v1.4.2/kohdalab-iv-1.4.2-macos-arm64-portable.zip) |
+| Source build kit / ソースビルドキット | [1.4.1](https://github.com/Kohdalab/kohdalab-iv/releases/download/portable-v1.4.1/kohdalab-iv-1.4.1-build-kit.zip) | [Download](https://github.com/woolen-yarn/kohdalab-iv/releases/download/portable-v1.4.2/kohdalab-iv-1.4.2-build-kit.zip) |
 
 Rust and Python are not required to run the packaged application. Current Windows
 artifacts are unsigned; download packages and checksums together from Releases.
