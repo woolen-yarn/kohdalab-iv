@@ -15,6 +15,7 @@ struct SourcePoints<'a> {
     path: &'a Path,
     expected_points: usize,
 }
+
 impl serde::Serialize for SourcePoints<'_> {
     fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
         use serde::ser::{Error, SerializeSeq};
@@ -761,10 +762,21 @@ pub(super) fn execute(
     if let Some(parent) = path.parent() {
         std::fs::create_dir_all(parent).map_err(|e| e.to_string())?;
     }
+    check_recording_destinations(path)?;
     let mut writer = CsvWriter::create(path)?;
     let run_id = raw_csv::new_run_id();
     let raw_path = path.with_extension("raw.csv");
-    let mut audit = RawWriter::create(&raw_path, &run_id)?;
+    let mut audit = match RawWriter::create(&raw_path, &run_id) {
+        Ok(audit) => audit,
+        Err(error) => {
+            // Retain incomplete evidence and any colliding output; never unlink
+            // a path that another process may have replaced.
+            drop(writer);
+            return Err(format!(
+                "Cannot create raw acquisition evidence before enabling output: {error}. Partial files retained; choose a new output name"
+            ));
+        }
+    };
     let manifest = path.with_extension("run.json");
     let instruments = serde_json::json!({"source1":{"identity":state.source_identity,"resource":state.source_resource},"source2":{"identity":state.source2_identity,"resource":state.source2_resource},"meter":{"identity":state.meter_identity,"resource":state.meter_resource},"reference_meter":{"identity":state.reference_meter_identity,"resource":state.reference_meter_resource},"gate":{"identity":state.gate_identity,"resource":state.gate_resource,"output":state.gate_output,"setting_V":state.gate_voltage}});
     let settings = serde_json::json!({"formula":"source1 = a/(a+b) * differential; source2 = -b/(a+b) * differential","ratio":config.balanced_source.as_ref().unwrap().ratio,"source1":planned.config1,"source2":planned.config2,
@@ -785,7 +797,17 @@ pub(super) fn execute(
         planned.plan2.source_range,
     );
     state.path = path.display().to_string();
-    write_json_new(&manifest,&serde_json::json!({"schema_version":RUN_METADATA_SCHEMA_VERSION,"csv_schema":CSV_SCHEMA,"csv":path.display().to_string(),"in_progress":true,"requested_config":requested,"config":config,"balanced_drive":settings,"instruments":instruments,"run_id":run_id})).map_err(|e|e.to_string())?;
+    if let Err(error) = write_json_new(
+        &manifest,
+        &serde_json::json!({"schema_version":RUN_METADATA_SCHEMA_VERSION,"csv_schema":CSV_SCHEMA,"csv":path.display().to_string(),"in_progress":true,"requested_config":requested,"config":config,"balanced_drive":settings,"instruments":instruments,"run_id":run_id}),
+    ) {
+        // Preserve partial files, including a partially written manifest.
+        drop(audit);
+        drop(writer);
+        return Err(format!(
+            "Cannot save settings before enabling output: {error}. Partial files retained; choose a new output name"
+        ));
+    }
     publish(latest, state);
     let begin = Instant::now();
     let mut fit = ResistanceFit::default();
@@ -932,10 +954,24 @@ pub(super) fn execute(
         runner.state.output.to_lowercase()
     );
     let mut recording_error = None;
-    if let Err(error)=runner.audit.append(&serde_json::json!({"event":"run_finished","outcome":runner.state.phase,"output":runner.state.output,"points_saved":runner.state.points})).and_then(|()|runner.audit.finish()) {recording_error=Some(error);}
+    if let Err(error) = writer.finish() {
+        recording_error = Some(format!("Analysis CSV finalization failed: {error}"));
+        // The final audit event must not describe a run as completed when its
+        // analysis file could not be made durable.
+        runner.state.phase = Phase::Failed;
+    }
+    if let Err(error)=runner.audit.append(&serde_json::json!({"event":"run_finished","outcome":runner.state.phase,"output":runner.state.output,"points_saved":runner.state.points})).and_then(|()|runner.audit.finish()) {
+        recording_error = Some(match recording_error {
+            Some(previous) => format!("{previous} · {error}"),
+            None => error,
+        });
+    }
     let hashes = recording_hashes(path, &raw_path);
     if let Err(error) = &hashes {
-        recording_error = Some(error.clone());
+        recording_error = Some(match recording_error {
+            Some(previous) => format!("{previous} · {error}"),
+            None => error.clone(),
+        });
     }
     if recording_error.is_some()
         && let Err(error) = shutdown_gate(runner.pair.as_deref_mut(), runner.state)
