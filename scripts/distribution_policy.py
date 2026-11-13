@@ -66,21 +66,79 @@ def inspect_zip(data: bytes, prefix: str = "", depth: int = 0) -> set[str]:
     return seen
 
 
+def inspect_tree(files: dict[str, bytes]) -> set[str]:
+    """Check an already-unpacked outer payload (Linux tarball or DEB data)."""
+    seen = set()
+    for name, payload in files.items():
+        check_member(name, payload)
+        seen.add(name)
+        if name.lower().endswith(".zip"):
+            seen.update(inspect_zip(payload, name + "!", 1))
+    return seen
+
+
+def tar_members(payload: bytes) -> dict[str, bytes]:
+    files = {}
+    with tarfile.open(fileobj=io.BytesIO(payload), mode="r:*") as archive:
+        for member in archive:
+            if member.isfile():
+                stream = archive.extractfile(member)
+                assert stream is not None
+                files[member.name.removeprefix("./")] = stream.read()
+    return files
+
+
+def deb_members(payload: bytes) -> dict[str, bytes]:
+    """Return the files of a DEB's data archive (ar container, data.tar.*)."""
+    if not payload.startswith(b"!<arch>\n"):
+        raise ValueError("Not a Debian ar archive")
+    offset = 8
+    while offset + 60 <= len(payload):
+        header = payload[offset : offset + 60]
+        name = header[:16].decode().strip().rstrip("/")
+        size = int(header[48:58].decode().strip())
+        body = payload[offset + 60 : offset + 60 + size]
+        if name.startswith("data.tar"):
+            if name.endswith(".zst"):
+                raise ValueError("zstd DEB data is unsupported; build with xz")
+            return tar_members(body)
+        offset += 60 + size + (size & 1)
+    raise ValueError("DEB has no data.tar member")
+
+
+def outer_files(path: Path, payload: bytes) -> dict[str, bytes]:
+    name = path.name.lower()
+    if name.endswith(".deb"):
+        return deb_members(payload)
+    if name.endswith((".tar.gz", ".tgz", ".tar.xz")):
+        return tar_members(payload)
+    with ZipFile(io.BytesIO(payload)) as archive:
+        return {
+            item.filename: archive.read(item)
+            for item in archive.infolist()
+            if not item.is_dir()
+        }
+
+
 def validate_archive(path: Path) -> None:
     payload = path.read_bytes()
-    inspect_zip(payload)  # Reject excluded content at every archive depth.
-    with ZipFile(io.BytesIO(payload)) as archive:
-        outer = {name for name in archive.namelist() if not name.endswith("/")}
-        for required in ("REDISTRIBUTION.md", "THIRD_PARTY_NOTICES.md", *LICENSES):
-            if not any(name == required or name.endswith("/" + required) for name in outer):
-                raise ValueError(f"Missing outer redistribution material: {required}")
-        if "build-kit" in path.name:
-            source = outer
-        else:
-            sources = [name for name in outer if name.endswith("/support/SOURCE.zip")]
-            if len(sources) != 1:
-                raise ValueError("Portable must carry exactly one corresponding support/SOURCE.zip")
-            source = inspect_zip(archive.read(sources[0]))
+    files = outer_files(path, payload)
+    # Reject excluded content at every archive depth.
+    if path.suffix.lower() == ".zip":
+        inspect_zip(payload)
+    else:
+        inspect_tree(files)
+    outer = set(files)
+    for required in ("REDISTRIBUTION.md", "THIRD_PARTY_NOTICES.md", *LICENSES):
+        if not any(name == required or name.endswith("/" + required) for name in outer):
+            raise ValueError(f"Missing outer redistribution material: {required}")
+    if "build-kit" in path.name:
+        source = outer
+    else:
+        sources = [name for name in outer if name.endswith("/support/SOURCE.zip")]
+        if len(sources) != 1:
+            raise ValueError("Portable must carry exactly one corresponding support/SOURCE.zip")
+        source = inspect_zip(files[sources[0]])
     for required in SOURCE_FILES:
         if not any(name == required or name.endswith("/" + required) for name in source):
             raise ValueError(f"Missing redistribution material: {required}")

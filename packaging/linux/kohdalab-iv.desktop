@@ -1,0 +1,11 @@
+[Desktop Entry]
+Type=Application
+Name=KohdaLab IV (Simulation)
+GenericName=IV measurement simulator
+Comment=KohdaLab IV with simulated instruments only; hardware connections are disabled
+Exec=/opt/kohdalab-iv/kohdalab-iv
+Icon=kohdalab-iv
+Terminal=false
+Categories=Science;Education;
+Keywords=IV;measurement;simulation;KohdaLab;
+StartupWMClass=kohdalab-iv

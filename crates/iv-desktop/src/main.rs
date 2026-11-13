@@ -151,7 +151,15 @@ fn run() -> Result<(), String> {
     let success = Arc::new(AtomicBool::new(false));
     let gui_success = success.clone();
     eframe::run_native(
-        concat!("KohdaLab IV v", env!("CARGO_PKG_VERSION")),
+        if iv_transport::SIMULATION_ONLY {
+            concat!(
+                "KohdaLab IV v",
+                env!("CARGO_PKG_VERSION"),
+                " · Simulation only"
+            )
+        } else {
+            concat!("KohdaLab IV v", env!("CARGO_PKG_VERSION"))
+        },
         options,
         Box::new(move |cc| {
             Ok(Box::new(

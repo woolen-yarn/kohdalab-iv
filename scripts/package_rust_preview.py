@@ -70,6 +70,7 @@ def source_archive(path: Path) -> None:
             "docs",
             "tests",
             "packaging/windows",
+            "packaging/linux",
             "packaging/licenses",
             "README.md",
             "LICENSE",
