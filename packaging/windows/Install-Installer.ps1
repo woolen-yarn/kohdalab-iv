@@ -6,6 +6,19 @@ param(
  [Parameter(Mandatory=$true)][ValidatePattern('^\d+\.\d+\.\d+(?:-[A-Za-z0-9.-]+)?$')][string]$ApplicationVersion
 )
 $ErrorActionPreference='Stop'
+
+function Get-Sha256([string]$Path) {
+    # Windows PowerShell 5.1 defines Get-FileHash in a script module that an
+    # inherited PowerShell 7 PSModulePath can hide, so hash with .NET directly.
+    $stream = [IO.File]::Open($Path, [IO.FileMode]::Open, [IO.FileAccess]::Read, [IO.FileShare]::Read)
+    try {
+        $sha = [Security.Cryptography.SHA256]::Create()
+        try {
+            return ([BitConverter]::ToString($sha.ComputeHash($stream))).Replace('-', '').ToLowerInvariant()
+        } finally { $sha.Dispose() }
+    } finally { $stream.Dispose() }
+}
+
 $ProgressPreference='SilentlyContinue'
 $logDirectory=Join-Path $env:LOCALAPPDATA 'KohdaLab IV Installer'
 $logPath=Join-Path $logDirectory 'setup.log'
@@ -75,7 +88,7 @@ try {
   if([IO.Path]::IsPathRooted($name) -or $name.Contains(':') -or @($name.Replace('\','/').Split('/') | Where-Object {$_ -in @('','..','.')}).Count){throw 'Unsafe package manifest path.'}
   if($entry.Value -notmatch '^[0-9a-fA-F]{64}$'){throw 'Invalid package checksum.'}
   $source=Join-Path $package $name
-  if((Get-FileHash -LiteralPath $source -Algorithm SHA256).Hash -ne $entry.Value){throw "Package checksum mismatch: $name"}
+  if((Get-Sha256 $source) -ne $entry.Value){throw "Package checksum mismatch: $name"}
   $manifest[$name]=$entry.Value
  }
  $actual=@(Get-ChildItem -LiteralPath $package -Recurse -File | Where-Object Name -ne 'FILES.json')
@@ -84,15 +97,15 @@ try {
  New-Item -ItemType Directory -Path $prepared | Out-Null
  foreach($item in Get-ChildItem -LiteralPath $package -Force){Copy-Item -LiteralPath $item.FullName -Destination $prepared -Recurse -Force}
  Copy-Item -LiteralPath $UninstallerSource -Destination (Join-Path $prepared 'Uninstall.exe')
- $manifest['Uninstall.exe']=(Get-FileHash -LiteralPath (Join-Path $prepared 'Uninstall.exe') -Algorithm SHA256).Hash.ToLowerInvariant()
+ $manifest['Uninstall.exe']=(Get-Sha256 (Join-Path $prepared 'Uninstall.exe'))
  $state=[ordered]@{application='org.kohdalab.iv';version=$ApplicationVersion;installation=$installed;desktop=(Join-Path $desktop 'KohdaLab IV.lnk');menu=$menu}
  $state | ConvertTo-Json | Set-Content -LiteralPath (Join-Path $prepared 'installer-state.json') -Encoding UTF8
- $manifest['installer-state.json']=(Get-FileHash -LiteralPath (Join-Path $prepared 'installer-state.json') -Algorithm SHA256).Hash.ToLowerInvariant()
+ $manifest['installer-state.json']=(Get-Sha256 (Join-Path $prepared 'installer-state.json'))
  $manifest | ConvertTo-Json -Depth 4 | Set-Content -LiteralPath (Join-Path $prepared 'FILES.json') -Encoding UTF8
  $register = {
   param($InstallPath)
  # Verify activation before creating Windows application registration.
- if((Get-FileHash -LiteralPath (Join-Path $installed 'Uninstall.exe')).Hash -ne $manifest['Uninstall.exe']){throw 'Installed uninstaller verification failed.'}
+ if((Get-Sha256 (Join-Path $installed 'Uninstall.exe')) -ne $manifest['Uninstall.exe']){throw 'Installed uninstaller verification failed.'}
  New-Item -ItemType Directory -Path $menu -Force | Out-Null
  $shell=New-Object -ComObject WScript.Shell
  foreach($path in @((Join-Path $menu 'KohdaLab IV.lnk'),(Join-Path $desktop 'KohdaLab IV.lnk'))){
