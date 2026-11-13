@@ -39,6 +39,17 @@ FORBIDDEN = (
     "gpib-probe",
     "usbtmc-probe",
 )
+DRIVER_SUFFIXES = (".exe", ".dll", ".so", ".rules", ".ko")
+NOTICE_DIR = "support/licenses/"
+NOTICE_SUFFIXES = (".txt", ".md")
+BINARY_MAGICS = (
+    b"\x7fELF",
+    b"MZ",
+    b"\xcf\xfa\xed\xfe",
+    b"\xce\xfa\xed\xfe",
+    b"\xca\xfe\xba\xbe",
+    b"PK\x03\x04",
+)
 REQUIRED = (
     "kohdalab-iv",
     "iv-cli",
@@ -67,6 +78,26 @@ def fail(message: str) -> None:
     raise SystemExit(f"FAIL: {message}")
 
 
+def is_text_notice(path: Path, relative: str) -> bool:
+    """A plain-text license notice, e.g. support/licenses/libwdi-COPYING.txt.
+
+    Only the forbidden *name* check is relaxed: the file must live under
+    support/licenses/, carry a text suffix, decode as UTF-8 without NUL bytes and
+    not start with an executable magic. The ELF and executable-bit checks below
+    still apply to every file.
+    """
+    if not relative.startswith(NOTICE_DIR) or not path.name.lower().endswith(NOTICE_SUFFIXES):
+        return False
+    data = path.read_bytes()
+    if data.startswith(BINARY_MAGICS) or b"\x00" in data:
+        return False
+    try:
+        data.decode("utf-8")
+    except UnicodeDecodeError:
+        return False
+    return True
+
+
 def payload_files(root: Path) -> dict[str, str]:
     return {
         f.relative_to(root).as_posix(): digest(f)
@@ -90,7 +121,9 @@ def check_payload(root: Path, label: str) -> dict[str, str]:
     for relative in files:
         path = root / relative
         lower = path.name.lower()
-        if lower.startswith(FORBIDDEN) or lower.endswith((".exe", ".dll", ".so", ".rules", ".ko")):
+        if lower.endswith(DRIVER_SUFFIXES) or (
+            lower.startswith(FORBIDDEN) and not is_text_notice(path, relative)
+        ):
             fail(f"{label}: hardware helper or driver must not ship: {relative}")
         with path.open("rb") as handle:
             elf = handle.read(4) == b"\x7fELF"
