@@ -19,6 +19,8 @@ DC I-V・V-I 測定、ソース／メーターのライブ監視、USB/GPIB 計�
 - ライブ監視、ソース保護、解析CSV・raw CSV・ライフサイクルlog・条件manifestの4ファイル測定bundle。
 - デスクトップ GUI と任意の Python/Jupyter クライアントで共通の Rust エンジン。
 
+[Try without hardware / 機器なしで試す](docs/guides/quick-start.md) · [Hardware and connections / 機器と接続](docs/reference/hardware.md) · [Python and API / PythonとAPI](docs/reference/common-control-api.md)
+
 ## Interface / 画面
 
 ![KohdaLab IV interface](docs/images/kohdalab-iv.png)
