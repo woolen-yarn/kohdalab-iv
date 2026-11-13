@@ -136,12 +136,21 @@ jobs:
         run: bash scripts/build-macos.command
       - name: Validate native GUI common control in simulation
         run: python3 scripts/verify_common_control.py target/release/kohdalab-iv --output-dir dist/common-control-validation
+      - name: Build and verify DMG from the portable app payload
+        run: |
+          set -euo pipefail
+          v=$(python3 -c "import tomllib,pathlib; print(tomllib.loads(pathlib.Path('Cargo.toml').read_text())['workspace']['package']['version'])")
+          case "$v" in *-*) edition=preview ;; *) edition=portable ;; esac
+          payload="dist/kohdalab-iv-$v-macos-arm64-$edition"
+          python3 scripts/build_macos_dmg.py --payload-dir "$payload" --zip "$payload.zip" --version "$v" --output "dist/kohdalab-iv-$v-macos-arm64.dmg" | tee dist/macos-dmg-verification.json
       - name: Record build origin and checksums
         run: |
           python3 - <<'PYCODE'
           import hashlib, json, os, pathlib
           root = pathlib.Path("dist")
-          archives = sorted(root.glob("*.zip"))
+          archives = sorted([*root.glob("*.zip"), *root.glob("*.dmg")])
+          if not any(path.suffix == ".dmg" for path in archives):
+              raise SystemExit("macOS DMG missing")
           (root / "SHA256SUMS.txt").write_text("".join(hashlib.sha256(path.read_bytes()).hexdigest() + "  " + path.name + "\n" for path in archives))
           (root / "BUILD-ORIGIN.json").write_text(json.dumps({key: os.environ.get(key) for key in ["GITHUB_REPOSITORY", "GITHUB_SHA", "GITHUB_RUN_ID", "GITHUB_RUN_ATTEMPT", "GITHUB_WORKFLOW"]}, indent=2) + "\n")
           PYCODE
@@ -153,6 +162,9 @@ jobs:
           retention-days: 14
           path: |
             dist/*.zip
+            dist/*.dmg
+            dist/*.dmg.sha256
+            dist/macos-dmg-verification.json
             dist/common-control-validation*/**
             dist/BUILD-ORIGIN.json
             dist/SHA256SUMS.txt
