@@ -100,6 +100,15 @@ jobs:
           ./scripts/check_windows_metadata.ps1 -Directory $payload -Version $v -ReportPath dist/windows-metadata.json
           ./scripts/check_windows_signatures.ps1 -Directory $payload -ReportPath dist/windows-signatures.json
           python -c "import pathlib,hashlib,json,os; p=pathlib.Path('dist'); fs=sorted([*p.glob('*.zip'),*p.glob('*-Setup.exe')]); (p/'SHA256SUMS.txt').write_text(''.join(hashlib.sha256(f.read_bytes()).hexdigest()+'  '+f.name+'\n' for f in fs)); (p/'BUILD-ORIGIN.json').write_text(json.dumps({k:os.environ.get(k) for k in ['GITHUB_REPOSITORY','GITHUB_SHA','GITHUB_RUN_ID','GITHUB_RUN_ATTEMPT','GITHUB_WORKFLOW']},indent=2)+'\n')"
+          "version=$v" | Out-File -FilePath $env:GITHUB_OUTPUT -Append -Encoding utf8
+      - name: Setup silent install, hash, simulation and uninstall lifecycle
+        # Disposable hosted runner only: Setup ignores /D and installs to Program
+        # Files. No instrument is opened and USB-Setup.exe is never run.
+        shell: pwsh
+        run: |
+          $v = '${{ steps.package.outputs.version }}'
+          $payload = '${{ steps.package.outputs.payload }}'
+          ./scripts/verify_windows_setup_lifecycle.ps1 -SetupPath "dist/kohdalab-iv-$v-windows-x64-Setup.exe" -PortableZip "$payload.zip" -ExpectedVersion $v -ReportPath dist/windows-setup-lifecycle.json
       - name: Upload exact first-party signing input (unsigned)
         id: signing-input
         uses: actions/upload-artifact@v7
