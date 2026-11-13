@@ -64,6 +64,13 @@ impl Engine {
         writeln!(self.input, "{value}").unwrap();
         self.input.flush().unwrap();
     }
+    /// Deliver several commands in one pipe write, so the engine reader sees
+    /// them back to back regardless of how the test thread is scheduled.
+    fn send_all(&mut self, values: &[Value]) {
+        let batch: String = values.iter().map(|value| format!("{value}\n")).collect();
+        self.input.write_all(batch.as_bytes()).unwrap();
+        self.input.flush().unwrap();
+    }
     fn wait(&mut self, check: impl Fn(&Value) -> bool) -> Value {
         let end = Instant::now() + Duration::from_secs(10);
         let mut last = Value::Null;
@@ -1406,12 +1413,17 @@ fn native_slow_dc_off_blocks_later_run_before_any_output_resume() {
         .unwrap();
     let output = path("dc-off-race");
     let run = config("YOKOGAWA_GS210", METERS[1].0, iv_core::Mode::Iv, 0.0, 1);
-    engine.send(json!({
-        "command":"set_source_dc", "mode":"dc_iv", "value":0.0,
-        "compliance":0.2, "ramp_step":0.0001
-    }));
-    engine.send(json!({"command":"source_dc_off"}));
-    engine.send(json!({"command":"run","config":run,"path":output}));
+    // The Run must reach the engine while OFF is still pending.  With separate
+    // writes, a descheduled test thread can let the engine finish OFF first;
+    // the Run is then legitimately admitted and the test's premise is lost.
+    engine.send_all(&[
+        json!({
+            "command":"set_source_dc", "mode":"dc_iv", "value":0.0,
+            "compliance":0.2, "ramp_step":0.0001
+        }),
+        json!({"command":"source_dc_off"}),
+        json!({"command":"run","config":run,"path":output}),
+    ]);
     let _rejected = engine.wait(|s| {
         s["error"]
             .as_str()
