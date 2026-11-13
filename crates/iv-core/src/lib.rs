@@ -19,7 +19,6 @@ pub use instrument_specs::{
 mod catalog;
 mod measurements;
 mod model_spec;
-use model_spec::{MeterModelSpec, RangeCommand, SourceModelSpec, SourceRange};
 pub use catalog::{
     InstrumentCapabilities, InstrumentDescriptor, InstrumentDialect, InstrumentProfile,
     InstrumentRole, MeterCapabilities, MeterProfile, NplcProfile, SourceCapabilities,
@@ -30,6 +29,7 @@ pub use measurements::{
     MeasurementDefinition, ParameterDefinition, ParameterUnit, PlotAxis, SweepDefinition,
     measurement_definition, parameter_definition, sweep_definitions,
 };
+use model_spec::{MeterModelSpec, RangeCommand, SourceModelSpec, SourceRange};
 
 /// Analysis result schema: one row per saved sweep point.
 pub const CSV_FIELDS: &[&str] = &[
@@ -1964,14 +1964,22 @@ mod tests {
         }
         assert!(meter_ranges("ADCMT_7461A", Mode::Iv).unwrap().is_empty());
         // Only the hardware-verified GPIB SCPI subset; not the full DCV table.
-        assert_eq!(meter_ranges("ADCMT_7461A", Mode::Vi).unwrap(), vec![0.1, 1.0]);
+        assert_eq!(
+            meter_ranges("ADCMT_7461A", Mode::Vi).unwrap(),
+            vec![0.1, 1.0]
+        );
     }
 
     #[test]
     fn adcmt_voltage_readback_and_fixed_ranges_are_limited_to_the_verified_subset() {
         assert!(meter_range_readback("ADCMT_7461A", Mode::Vi));
         assert!(!meter_range_readback("ADCMT_7461A", Mode::Iv));
-        for model in ["AGILENT_34401A", "KEYSIGHT_34465A", "SIMULATED_METER", "unknown"] {
+        for model in [
+            "AGILENT_34401A",
+            "KEYSIGHT_34465A",
+            "SIMULATED_METER",
+            "unknown",
+        ] {
             assert!(!meter_range_readback(model, Mode::Vi), "{model}");
         }
         // DCV input resistance is not taken from a primary datasheet yet.

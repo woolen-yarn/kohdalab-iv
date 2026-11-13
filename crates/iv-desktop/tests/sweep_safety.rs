@@ -1869,20 +1869,17 @@ fn auto_voltage_priming_bridge(fault: &str) -> Bridge {
     for name in ["kohdalab-gpib-helper", "kohdalab-usbtmc-helper"] {
         let file = bridge.dir.join(name);
         let script = std::fs::read_to_string(&file).unwrap();
-        assert!(script.contains(" response=''\n"), "missing fake response hook");
+        assert!(
+            script.contains(" response=''\n"),
+            "missing fake response hook"
+        );
         std::fs::write(file, script.replacen(" response=''\n", &hook, 1)).unwrap();
     }
     bridge
 }
 
 fn auto_voltage_run() -> iv_core::RunConfig {
-    let mut run = config(
-        "YOKOGAWA_GS210",
-        METERS[0].0,
-        iv_core::Mode::Vi,
-        0.0,
-        1,
-    );
+    let mut run = config("YOKOGAWA_GS210", METERS[0].0, iv_core::Mode::Vi, 0.0, 1);
     run.source_limit = 0.01;
     assert!(run.meter_voltage_range.is_none(), "fixture must use Auto");
     run
@@ -1933,13 +1930,22 @@ fn auto_voltage_baseline_is_primed_with_source_verified_off_before_output_on() {
         Some(&format!("QUERY 7 {}", hex("SENS:VOLT:DC:RANG?\n"))),
         "actual range must be observed right after the priming READ?: {commands:?}"
     );
-    assert!(read + 1 < on, "priming must finish before OUTP ON: {commands:?}");
+    assert!(
+        read + 1 < on,
+        "priming must finish before OUTP ON: {commands:?}"
+    );
     let raw = std::fs::read_to_string(output.with_extension("raw.csv")).unwrap();
-    assert!(raw.contains("meter_baseline_output_off_confirmation"), "{raw}");
+    assert!(
+        raw.contains("meter_baseline_output_off_confirmation"),
+        "{raw}"
+    );
     assert!(raw.contains("meter_range_priming_reading"), "{raw}");
     assert!(raw.contains("meter_range_baseline"), "{raw}");
     // Baseline is raw evidence only: one analysis row for one planned point.
-    assert_eq!(csv::Reader::from_path(&output).unwrap().records().count(), 1);
+    assert_eq!(
+        csv::Reader::from_path(&output).unwrap().records().count(),
+        1
+    );
     cleanup(&output);
 }
 
@@ -1957,7 +1963,10 @@ fn powered_auto_voltage_transition_with_verified_input_resistance_completes() {
     assert_eq!(state["points"], 1, "{state}");
     let commands = bridge.commands();
     let query = format!("QUERY 7 {}", hex("INP:IMP:AUTO?\n"));
-    assert_eq!(commands.get(priming_read_index(&commands) - 1), Some(&query));
+    assert_eq!(
+        commands.get(priming_read_index(&commands) - 1),
+        Some(&query)
+    );
     assert!(!commands.contains(&format!("WRITE 7 {}", hex("INP:IMP:AUTO OFF\n"))));
     let raw = std::fs::read_to_string(output.with_extension("raw.csv")).unwrap();
     assert!(raw.contains("INP:IMP:AUTO?"), "{raw}");
@@ -1977,10 +1986,7 @@ fn failed_auto_voltage_priming_never_enables_output() {
         assert_eq!(state["output"], "Off", "{fault}: {state}");
         assert_eq!(state["points"], 0, "{fault}: {state}");
         let error = state["error"].as_str().unwrap();
-        assert!(
-            error.contains("Output was not enabled"),
-            "{fault}: {state}"
-        );
+        assert!(error.contains("Output was not enabled"), "{fault}: {state}");
         let commands = bridge.commands();
         assert!(
             !commands.contains(&format!("WRITE 3 {}", hex(":OUTP ON\n"))),
@@ -2029,7 +2035,10 @@ fn adc_voltage_range_bridge(auto: &str, idle: &str, powered: &str) -> Bridge {
     for name in ["kohdalab-gpib-helper", "kohdalab-usbtmc-helper"] {
         let file = bridge.dir.join(name);
         let script = std::fs::read_to_string(&file).unwrap();
-        assert!(script.contains(" response=''\n"), "missing fake response hook");
+        assert!(
+            script.contains(" response=''\n"),
+            "missing fake response hook"
+        );
         std::fs::write(file, script.replacen(" response=''\n", &hook, 1)).unwrap();
     }
     bridge
@@ -2089,7 +2098,10 @@ fn adcmt_gpib_fixed_voltage_range_is_confirmed_before_on_and_read_back_per_sampl
             .iter()
             .position(|l| l == &range_query)
             .expect("fixed range readback");
-        assert!(set < auto && auto < confirmed && confirmed < on, "{commands:?}");
+        assert!(
+            set < auto && auto < confirmed && confirmed < on,
+            "{commands:?}"
+        );
         let off = on
             + commands[on..]
                 .iter()
@@ -2167,7 +2179,9 @@ fn adcmt_unverified_fixed_ranges_are_rejected_without_output() {
             .wait(|s| s["phase"] == "Failed" || !s["error"].as_str().unwrap_or("").is_empty());
         assert_eq!(state["points"], 0, "{mode:?}: {state}");
         assert!(
-            !bridge.commands().contains(&format!("WRITE 3 {}", hex(":OUTP ON\n"))),
+            !bridge
+                .commands()
+                .contains(&format!("WRITE 3 {}", hex(":OUTP ON\n"))),
             "{mode:?}"
         );
         cleanup(&output);
@@ -2212,7 +2226,10 @@ fn adcmt_auto_voltage_range_change_stops_off_because_input_resistance_is_unverif
         "transition must dispatch OFF before any follow-up I/O: {commands:?}"
     );
     assert_no_short_form_range_command(&commands);
-    assert_eq!(csv::Reader::from_path(&output).unwrap().records().count(), 0);
+    assert_eq!(
+        csv::Reader::from_path(&output).unwrap().records().count(),
+        0
+    );
     let raw = std::fs::read_to_string(output.with_extension("raw.csv")).unwrap();
     assert!(raw.contains("meter_range_baseline"), "{raw}");
     assert!(raw.contains("+1.00000E+00"), "{raw}");
@@ -2242,7 +2259,9 @@ fn adcmt_auto_voltage_with_a_stable_range_completes_and_current_stays_unmonitore
     assert_eq!(state["phase"], "Completed", "{state}");
     let commands = bridge.commands();
     assert!(
-        !commands.iter().any(|l| l.starts_with("QUERY 7 ") && l.contains(&hex(":RANG"))),
+        !commands
+            .iter()
+            .any(|l| l.starts_with("QUERY 7 ") && l.contains(&hex(":RANG"))),
         "DC current must keep its unmonitored Auto route: {commands:?}"
     );
     assert!(!commands.iter().any(|l| l.ends_with(&hex(ADC_RANGE_QUERY))));

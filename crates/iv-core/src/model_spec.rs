@@ -11,7 +11,9 @@ use std::sync::OnceLock;
 
 use serde::Deserialize;
 
-use crate::catalog::{InstrumentDialect, InstrumentRole, instrument_catalog, instrument_descriptor};
+use crate::catalog::{
+    InstrumentDialect, InstrumentRole, instrument_catalog, instrument_descriptor,
+};
 use crate::{MeterRangeResistance, Mode};
 
 /// Role vocabulary accepted in the `roles` arrays.
@@ -475,7 +477,10 @@ mod tests {
 
     fn strictly_increasing(values: &[f64], what: &str) {
         for pair in values.windows(2) {
-            assert!(pair[0] < pair[1], "{what} is not strictly increasing: {values:?}");
+            assert!(
+                pair[0] < pair[1],
+                "{what} is not strictly increasing: {values:?}"
+            );
         }
     }
 
@@ -520,8 +525,14 @@ mod tests {
             "duplicate meter descriptor id"
         );
         assert!(source_ids.is_disjoint(&meter_ids));
-        assert_eq!(sources.keys().map(String::as_str).collect::<BTreeSet<_>>(), source_ids);
-        assert_eq!(meters.keys().map(String::as_str).collect::<BTreeSet<_>>(), meter_ids);
+        assert_eq!(
+            sources.keys().map(String::as_str).collect::<BTreeSet<_>>(),
+            source_ids
+        );
+        assert_eq!(
+            meters.keys().map(String::as_str).collect::<BTreeSet<_>>(),
+            meter_ids
+        );
         for spec in sources.values() {
             assert_eq!(spec.roles, [SpecRole::Source]);
         }
@@ -571,8 +582,8 @@ mod tests {
     #[test]
     fn range_commands_are_typed_by_dialect() {
         for (model, spec) in source_models().unwrap() {
-            let legacy = instrument_descriptor(model).unwrap().dialect
-                == InstrumentDialect::Yokogawa7651;
+            let legacy =
+                instrument_descriptor(model).unwrap().dialect == InstrumentDialect::Yokogawa7651;
             for range in spec.voltage_ranges.iter().chain(&spec.current_ranges) {
                 match range.command {
                     RangeCommand::LegacyCode(code) => {
@@ -594,8 +605,14 @@ mod tests {
             }
         }
         let legacy = source_model("YOKOGAWA_7651").unwrap().unwrap();
-        assert_eq!(legacy.voltage_ranges[0].command, RangeCommand::LegacyCode(2));
-        assert_eq!(legacy.current_ranges[0].command, RangeCommand::LegacyCode(4));
+        assert_eq!(
+            legacy.voltage_ranges[0].command,
+            RangeCommand::LegacyCode(2)
+        );
+        assert_eq!(
+            legacy.current_ranges[0].command,
+            RangeCommand::LegacyCode(4)
+        );
         let scpi = source_model("YOKOGAWA_GS210").unwrap().unwrap();
         assert_eq!(scpi.voltage_ranges[0].command, RangeCommand::Si(0.01));
         assert!(range_command(Some(InstrumentDialect::Yokogawa7651), "m", "r", 2.5).is_err());
@@ -613,7 +630,11 @@ mod tests {
                 assert!(!ranges.is_empty(), "{model} {mode:?} has no ranges");
                 let mut names = BTreeSet::new();
                 for range in ranges {
-                    assert!(names.insert(range.name.as_str()), "{model} duplicate {}", range.name);
+                    assert!(
+                        names.insert(range.name.as_str()),
+                        "{model} duplicate {}",
+                        range.name
+                    );
                     positive(range.maximum, "range maximum");
                     positive(range.resolution, "range resolution");
                     assert!(range.resolution < range.maximum, "{model} {}", range.name);
@@ -628,11 +649,17 @@ mod tests {
                     "range maxima",
                 );
                 strictly_increasing(
-                    &ranges.iter().map(|range| range.command.value()).collect::<Vec<_>>(),
+                    &ranges
+                        .iter()
+                        .map(|range| range.command.value())
+                        .collect::<Vec<_>>(),
                     "range commands",
                 );
                 for pair in ranges.windows(2) {
-                    assert!(pair[0].resolution <= pair[1].resolution, "{model} resolution order");
+                    assert!(
+                        pair[0].resolution <= pair[1].resolution,
+                        "{model} resolution order"
+                    );
                 }
                 // The largest range reaches exactly the declared model maximum.
                 assert!(close(
@@ -671,10 +698,17 @@ mod tests {
             for range in &spec.voltage_ranges {
                 if let Some(fixed) = range.fixed_current_limit_a {
                     positive(fixed, "fixed current protection");
-                    assert!(fixed <= spec.current_limit.maximum * (1.0 + 1e-12), "{model}");
+                    assert!(
+                        fixed <= spec.current_limit.maximum * (1.0 + 1e-12),
+                        "{model}"
+                    );
                 }
             }
-            assert!(spec.current_ranges.iter().all(|r| r.fixed_current_limit_a.is_none()));
+            assert!(
+                spec.current_ranges
+                    .iter()
+                    .all(|r| r.fixed_current_limit_a.is_none())
+            );
         }
         // Only the GS210 divider ranges declare a fixed protection.
         let gs210 = source_model("YOKOGAWA_GS210").unwrap().unwrap();
@@ -695,7 +729,10 @@ mod tests {
             let Some(status) = &spec.protection_status else {
                 continue;
             };
-            assert!(status.query.as_deref().is_some_and(|q| !q.is_empty()), "{model}");
+            assert!(
+                status.query.as_deref().is_some_and(|q| !q.is_empty()),
+                "{model}"
+            );
             let masks = [
                 status.low_limiter_mask,
                 status.high_limiter_mask,
@@ -777,13 +814,19 @@ mod tests {
     fn display_precision_uses_the_known_vocabulary() {
         for (model, spec) in source_models().unwrap() {
             let precision = spec.display_precision.as_ref().unwrap();
-            assert!(DISPLAY_METHODS.contains(&precision.method.as_str()), "{model}");
+            assert!(
+                DISPLAY_METHODS.contains(&precision.method.as_str()),
+                "{model}"
+            );
             assert_eq!(precision.method, SOURCE_RANGE_TABLE, "{model}");
             assert!(precision.review_status.is_some(), "{model}");
         }
         for (model, spec) in meter_models().unwrap() {
             let precision = spec.display_precision.as_ref().unwrap();
-            assert!(DISPLAY_METHODS.contains(&precision.method.as_str()), "{model}");
+            assert!(
+                DISPLAY_METHODS.contains(&precision.method.as_str()),
+                "{model}"
+            );
             assert!(precision.review_status.is_some(), "{model}");
             if precision.method == SCPI_RANGE_RESOLUTION_QUERY {
                 for query in [
@@ -792,12 +835,18 @@ mod tests {
                     &precision.voltage_resolution_query,
                     &precision.current_resolution_query,
                 ] {
-                    assert!(query.as_deref().is_some_and(|q| q.ends_with('?')), "{model}");
+                    assert!(
+                        query.as_deref().is_some_and(|q| q.ends_with('?')),
+                        "{model}"
+                    );
                 }
             }
-            for resolution in [precision.voltage_resolution_v, precision.current_resolution_a]
-                .into_iter()
-                .flatten()
+            for resolution in [
+                precision.voltage_resolution_v,
+                precision.current_resolution_a,
+            ]
+            .into_iter()
+            .flatten()
             {
                 positive(resolution, "display resolution");
             }
