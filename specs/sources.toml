@@ -1,0 +1,207 @@
+[YOKOGAWA_GS210]
+display_name = "Yokogawa GS210"
+roles = ["source"]
+source_modes = ["voltage", "current"]
+max_abs_V = 32.0
+max_abs_A = 0.2
+supports_output = true
+supports_software_ramp = true
+supports_voltage_limit = true
+supports_current_limit = true
+current_limit_min_A = 0.001
+current_limit_max_A = 0.2
+current_limit_resolution_A = 0.001
+voltage_limit_min_V = 1.0
+voltage_limit_max_V = 30.0
+voltage_limit_resolution_V = 1.0
+
+[[YOKOGAWA_GS210.voltage_ranges]]
+name = "10mV"
+fixed_current_limit_a = 0.2
+command_value = 0.01
+max_abs_V = 0.012
+resolution_V = 100e-9
+
+[[YOKOGAWA_GS210.voltage_ranges]]
+name = "100mV"
+fixed_current_limit_a = 0.2
+command_value = 0.1
+max_abs_V = 0.12
+resolution_V = 1e-6
+
+[[YOKOGAWA_GS210.voltage_ranges]]
+name = "1V"
+command_value = 1.0
+max_abs_V = 1.2
+resolution_V = 10e-6
+
+[[YOKOGAWA_GS210.voltage_ranges]]
+name = "10V"
+command_value = 10.0
+max_abs_V = 12.0
+resolution_V = 100e-6
+
+[[YOKOGAWA_GS210.voltage_ranges]]
+name = "30V"
+command_value = 30.0
+max_abs_V = 32.0
+resolution_V = 1e-3
+
+[[YOKOGAWA_GS210.current_ranges]]
+name = "1mA"
+command_value = 0.001
+max_abs_A = 1.2e-3
+resolution_A = 10e-9
+
+[[YOKOGAWA_GS210.current_ranges]]
+name = "10mA"
+command_value = 0.01
+max_abs_A = 12e-3
+resolution_A = 100e-9
+
+[[YOKOGAWA_GS210.current_ranges]]
+name = "100mA"
+command_value = 0.1
+max_abs_A = 120e-3
+resolution_A = 1e-6
+
+[[YOKOGAWA_GS210.current_ranges]]
+name = "200mA"
+command_value = 0.2
+max_abs_A = 200e-3
+resolution_A = 1e-6
+
+[YOKOGAWA_7651]
+display_name = "Yokogawa 7651"
+roles = ["source"]
+source_modes = ["voltage", "current"]
+max_abs_V = 32.0
+max_abs_A = 0.12
+supports_output = true
+supports_software_ramp = true
+supports_voltage_limit = true
+supports_current_limit = true
+current_limit_min_A = 0.005
+current_limit_max_A = 0.12
+current_limit_resolution_A = 0.001
+voltage_limit_min_V = 1.0
+voltage_limit_max_V = 30.0
+voltage_limit_resolution_V = 1.0
+
+[[YOKOGAWA_7651.voltage_ranges]]
+name = "10mV"
+command_value = 2
+max_abs_V = 0.012
+resolution_V = 100e-9
+
+[[YOKOGAWA_7651.voltage_ranges]]
+name = "100mV"
+command_value = 3
+max_abs_V = 0.12
+resolution_V = 1e-6
+
+[[YOKOGAWA_7651.voltage_ranges]]
+name = "1V"
+command_value = 4
+max_abs_V = 1.2
+resolution_V = 10e-6
+
+[[YOKOGAWA_7651.voltage_ranges]]
+name = "10V"
+command_value = 5
+max_abs_V = 12.0
+resolution_V = 100e-6
+
+[[YOKOGAWA_7651.voltage_ranges]]
+name = "30V"
+command_value = 6
+max_abs_V = 32.0
+resolution_V = 1e-3
+
+[[YOKOGAWA_7651.current_ranges]]
+name = "1mA"
+command_value = 4
+max_abs_A = 1.2e-3
+resolution_A = 10e-9
+
+[[YOKOGAWA_7651.current_ranges]]
+name = "10mA"
+command_value = 5
+max_abs_A = 12e-3
+resolution_A = 100e-9
+
+[[YOKOGAWA_7651.current_ranges]]
+name = "100mA"
+command_value = 6
+max_abs_A = 120e-3
+resolution_A = 1e-6
+
+[SIMULATED_SOURCE]
+display_name = "Simulated source"
+roles = ["source"]
+source_modes = ["voltage", "current"]
+max_abs_V = 10.0
+max_abs_A = 1.0
+supports_output = true
+supports_software_ramp = true
+supports_voltage_limit = true
+supports_current_limit = true
+current_limit_min_A = 1e-9
+current_limit_max_A = 1.0
+voltage_limit_min_V = 1e-9
+voltage_limit_max_V = 10.0
+
+[[SIMULATED_SOURCE.voltage_ranges]]
+name = "10V"
+command_value = 10.0
+max_abs_V = 10.0
+resolution_V = 1e-9
+
+[[SIMULATED_SOURCE.current_ranges]]
+name = "1A"
+command_value = 1.0
+max_abs_A = 1.0
+resolution_A = 1e-12
+
+# Display-only metadata. Accuracy, noise and range limits remain separate.
+
+[YOKOGAWA_GS210.display_precision]
+reviewed_on = "2026-10-14"
+method = "source_range_table"
+native_enabled = true
+review_status = "manual_reviewed_hardware_query_pending"
+resolution_kind = "source_setting_increment"
+range_query = ":SOUR:RANG?"
+references = ["https://www.yokogawa.com/pdf/provide/E/GW/IM/0000023941/0/IMGS210-01EN.pdf"]
+reference_sections = ["5.2 Setting the Source Range"]
+notes = "Applies to source level, not /MON measurement. :SOUR:LEV? is a programmed level readback, not an independent output measurement. Current and voltage protection increments are separate."
+
+[YOKOGAWA_7651.display_precision]
+reviewed_on = "2026-10-14"
+method = "source_range_table"
+native_enabled = true
+review_status = "legacy_protocol_ported_hardware_validation_pending"
+resolution_kind = "source_setting_increment"
+references = ["https://cdn.tmi.yokogawa.com/7651spec.pdf"]
+reference_sections = ["DC voltage and DC current range tables, page 1"]
+notes = "Existing range codes are legacy driver commands, not SI range values. Do not send GS210 SCPI commands to this model."
+
+[SIMULATED_SOURCE.display_precision]
+reviewed_on = "2026-10-14"
+method = "source_range_table"
+native_enabled = true
+review_status = "simulation_only"
+resolution_kind = "illustrative_increment"
+references = []
+reference_sections = []
+notes = "Illustrative simulator resolution only; not a hardware or accuracy specification."
+
+# GS200 / GS210 manual IM GS210-01EN §13.2.10 and §13.3.4.
+# Non-clearing condition query; works without /MON. TRP bit12 belongs
+# only to the clearing event register, so it is not a condition flag.
+[YOKOGAWA_GS210.protection_status]
+query = ":STAT:COND?"
+low_limiter_mask = 1024
+high_limiter_mask = 2048
+emergency_mask = 8192
+reference = "IM GS210-01EN, 9th ed., pp.13-23,13-30"

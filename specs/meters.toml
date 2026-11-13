@@ -1,0 +1,232 @@
+[AGILENT_34401A]
+display_name = "Agilent 34401A"
+roles = ["meter"]
+measure_modes = ["dc_voltage", "dc_current"]
+max_input_V = 1000.0
+max_input_A = 3.0
+auto_range_required = false
+nplc_values = [0.02, 0.2, 1, 10, 100]
+# Keysight 34401A User's Guide, Chapter 8 "DC Characteristics"; the service
+# guide's DC-current table confirms the four current shunts/ranges.
+manual_range_reference = "https://www.keysight.com/us/en/assets/9018-01063/user-manuals/9018-01063.pdf"
+manual_range_reference_sections = ["Chapter 8, DC Characteristics: DC Voltage", "Chapter 8, DC Characteristics: DC Current"]
+voltage_ranges = [0.1, 1.0, 10.0, 100.0, 1000.0]
+current_ranges = [0.01, 0.1, 1.0, 3.0]
+
+# DC current electrical loading. Terminal resistance includes the input path;
+# shunt resistance alone does not include leads, contacts or fuse resistance.
+current_input_resistances = [
+    { range = 0.01, ohms = 5, kind = "shunt" },
+    { range = 0.1, ohms = 5, kind = "shunt" },
+    { range = 1, ohms = 0.1, kind = "shunt" },
+    { range = 3, ohms = 0.1, kind = "shunt" },
+]
+
+[AGILENT_34411A]
+display_name = "Agilent 34411A"
+roles = ["meter"]
+measure_modes = ["dc_voltage", "dc_current"]
+max_input_V = 1000.0
+max_input_A = 3.0
+auto_range_required = false
+nplc_values = [0.001, 0.002, 0.006, 0.02, 0.06, 0.2, 1, 2, 10, 100]
+# Keysight 34410A/34411A Service Guide, "Making Basic Measurements" and
+# Chapter 1 "DC Characteristics" (DC voltage/current range tables).
+manual_range_reference = "https://www.keysight.com/us/en/assets/9018-05591/service-manuals/9018-05591.pdf"
+manual_range_reference_sections = ["Making Basic Measurements: To Measure DC Voltage", "Chapter 1, DC Characteristics: DC Current"]
+voltage_ranges = [0.1, 1.0, 10.0, 100.0, 1000.0]
+current_ranges = [0.0001, 0.001, 0.01, 0.1, 1.0, 3.0]
+
+# DC current electrical loading. Terminal resistance includes the input path;
+# shunt resistance alone does not include leads, contacts or fuse resistance.
+current_input_resistances = [
+    { range = 0.0001, ohms = 200, kind = "shunt" },
+    { range = 0.001, ohms = 200, kind = "shunt" },
+    { range = 0.01, ohms = 2, kind = "shunt" },
+    { range = 0.1, ohms = 2, kind = "shunt" },
+    { range = 1, ohms = 0.1, kind = "shunt" },
+    { range = 3, ohms = 0.1, kind = "shunt" },
+]
+
+[KEYSIGHT_34411A]
+display_name = "Keysight 34411A"
+roles = ["meter"]
+measure_modes = ["dc_voltage", "dc_current"]
+max_input_V = 1000.0
+max_input_A = 3.0
+auto_range_required = false
+nplc_values = [0.001, 0.002, 0.006, 0.02, 0.06, 0.2, 1, 2, 10, 100]
+# Same hardware/manual range tables as AGILENT_34411A.
+manual_range_reference = "https://www.keysight.com/us/en/assets/9018-05591/service-manuals/9018-05591.pdf"
+manual_range_reference_sections = ["Making Basic Measurements: To Measure DC Voltage", "Chapter 1, DC Characteristics: DC Current"]
+voltage_ranges = [0.1, 1.0, 10.0, 100.0, 1000.0]
+current_ranges = [0.0001, 0.001, 0.01, 0.1, 1.0, 3.0]
+
+# DC current electrical loading. Terminal resistance includes the input path;
+# shunt resistance alone does not include leads, contacts or fuse resistance.
+current_input_resistances = [
+    { range = 0.0001, ohms = 200, kind = "shunt" },
+    { range = 0.001, ohms = 200, kind = "shunt" },
+    { range = 0.01, ohms = 2, kind = "shunt" },
+    { range = 0.1, ohms = 2, kind = "shunt" },
+    { range = 1, ohms = 0.1, kind = "shunt" },
+    { range = 3, ohms = 0.1, kind = "shunt" },
+]
+
+[KEYSIGHT_34465A]
+display_name = "Keysight 34465A"
+roles = ["meter"]
+measure_modes = ["dc_voltage", "dc_current"]
+max_input_V = 1000.0
+max_input_A = 10.0
+auto_range_required = false
+nplc_values = [0.001, 0.002, 0.006, 0.02, 0.06, 0.2, 1, 10, 100]
+# Keysight Truevolt Operating and Service Guide, Chapter 1 "DC Characteristics"
+# and "Front Panel Menu Reference" DC-current entry. The 34465A adds 1 uA
+# and 10 uA DC-current ranges.
+manual_range_reference = "https://www.keysight.com/ie/en/assets/9018-03876/service-manuals/9018-03876.pdf"
+manual_range_reference_sections = ["Chapter 1, DC Characteristics: DC Voltage", "Front Panel Menu Reference: DC Current"]
+voltage_ranges = [0.1, 1.0, 10.0, 100.0, 1000.0]
+current_ranges = [0.000001, 0.00001, 0.0001, 0.001, 0.01, 0.1, 1.0, 3.0, 10.0]
+
+[ADCMT_7461A]
+display_name = "ADCMT 7461A"
+roles = ["meter"]
+measure_modes = ["dc_voltage", "dc_current"]
+max_input_V = 1000.0
+max_input_A = 3.0
+auto_range_required = false
+nplc_min = 0.02
+nplc_max = 100.0
+# GPIB SCPI only. These DC-voltage fixed ranges are the two values verified on
+# hardware (Sardine, source output OFF) with :SENSE:VOLTAGE:DC:RANGE <value>,
+# :SENSE:VOLTAGE:DC:RANGE? and :SENSE:VOLTAGE:DC:RANGE:AUTO? (0 = fixed).
+# Programming manual:
+# https://www.mono.titech.ac.jp/contents/equip_o/df33bcfeec7a8d5f87172d2ff153071f2793ba7a.pdf
+# Other DCV ranges, DC current fixed ranges and the ADC-command USB route are
+# not validated and must reject rather than fall back to Auto.
+manual_range_status = "gpib_scpi_dc_voltage_hardware_verified_subset"
+voltage_ranges = [0.1, 1.0]
+# Auto DC-voltage range is read back after every conversion (GPIB SCPI only).
+# DCV loading depends on the impedance mode, which the engine reads back.
+range_readback_modes = ["dc_voltage"]
+resistance_reference = "https://www.adcmt.com/__/download/612c7d3fd5a43b06d08b2e3a/catalog-7461A-7461P-7451A-21.pdf"
+resistance_reference_section = "Page 9, DC current, terminal resistance"
+
+# DC current electrical loading. Terminal resistance includes the input path;
+# shunt resistance alone does not include leads, contacts or fuse resistance.
+current_input_resistances = [
+    { range = 0.001, ohms = 103, kind = "terminal" },
+    { range = 0.01, ohms = 10.5, kind = "terminal" },
+    { range = 0.1, ohms = 1.5, kind = "terminal" },
+    { range = 1, ohms = 0.5, kind = "terminal" },
+    { range = 3, ohms = 0.5, kind = "terminal" },
+]
+
+[SIMULATED_METER]
+display_name = "Simulated meter"
+roles = ["meter"]
+measure_modes = ["dc_voltage", "dc_current"]
+max_input_V = 10.0
+max_input_A = 1.0
+auto_range_required = false
+nplc_min = 0.001
+nplc_max = 100.0
+manual_range_reference = "simulation profile"
+manual_range_reference_sections = ["Simulation-only ranges"]
+voltage_ranges = [0.1, 1.0, 10.0]
+current_ranges = [0.000001, 0.00001, 0.0001, 0.001, 0.01, 0.1, 1.0]
+
+# Display-only metadata. Accuracy, noise and range limits remain separate.
+
+[AGILENT_34401A.display_precision]
+reviewed_on = "2026-10-14"
+method = "scpi_range_resolution_query"
+native_enabled = true
+review_status = "manual_reviewed_hardware_query_pending"
+resolution_kind = "configured_measurement_resolution"
+voltage_range_query = "SENS:VOLT:DC:RANG?"
+current_range_query = "SENS:CURR:DC:RANG?"
+voltage_resolution_query = "SENS:VOLT:DC:RES?"
+current_resolution_query = "SENS:CURR:DC:RES?"
+references = ["https://www.keysight.com/us/en/assets/9018-01063/user-manuals/9018-01063.pdf"]
+reference_sections = ["SCPI range, resolution and NPLC commands"]
+depends_on = ["function", "range", "nplc", "aperture", "model_options"]
+panel_digits_verified = false
+notes = "Query after READ? for autorange. Queries do not change measurement configuration. Configured resolution is not accuracy, returned text length, or an independently verified panel digit count. Averaging does not automatically add display digits."
+
+[AGILENT_34411A.display_precision]
+reviewed_on = "2026-10-14"
+method = "scpi_range_resolution_query"
+native_enabled = true
+review_status = "manual_reviewed_hardware_query_pending"
+resolution_kind = "configured_measurement_resolution"
+voltage_range_query = "SENS:VOLT:DC:RANG?"
+current_range_query = "SENS:CURR:DC:RANG?"
+voltage_resolution_query = "SENS:VOLT:DC:RES?"
+current_resolution_query = "SENS:CURR:DC:RES?"
+references = ["https://www.keysight.com/us/en/assets/7018-02044/white-papers-archived/5990-3515.pdf"]
+reference_sections = ["SCPI range, resolution and NPLC commands"]
+depends_on = ["function", "range", "nplc", "aperture", "model_options"]
+panel_digits_verified = false
+notes = "Query after READ? for autorange. Queries do not change measurement configuration. Configured resolution is not accuracy, returned text length, or an independently verified panel digit count. Averaging does not automatically add display digits."
+datasheet_url = "https://www.keysight.com.cn/cn/zh/assets/7018-01326/data-sheets/5989-3738.pdf"
+
+[KEYSIGHT_34411A.display_precision]
+reviewed_on = "2026-10-14"
+method = "scpi_range_resolution_query"
+native_enabled = true
+review_status = "manual_reviewed_hardware_query_pending"
+resolution_kind = "configured_measurement_resolution"
+voltage_range_query = "SENS:VOLT:DC:RANG?"
+current_range_query = "SENS:CURR:DC:RANG?"
+voltage_resolution_query = "SENS:VOLT:DC:RES?"
+current_resolution_query = "SENS:CURR:DC:RES?"
+references = ["https://www.keysight.com/us/en/assets/7018-02044/white-papers-archived/5990-3515.pdf"]
+reference_sections = ["SCPI range, resolution and NPLC commands"]
+depends_on = ["function", "range", "nplc", "aperture", "model_options"]
+panel_digits_verified = false
+notes = "Query after READ? for autorange. Queries do not change measurement configuration. Configured resolution is not accuracy, returned text length, or an independently verified panel digit count. Averaging does not automatically add display digits."
+same_precision_profile_as = "AGILENT_34411A"
+
+[KEYSIGHT_34465A.display_precision]
+reviewed_on = "2026-10-14"
+method = "scpi_range_resolution_query"
+native_enabled = true
+review_status = "manual_reviewed_options_and_hardware_pending"
+resolution_kind = "configured_measurement_resolution"
+voltage_range_query = "SENS:VOLT:DC:RANG?"
+current_range_query = "SENS:CURR:DC:RANG?"
+voltage_resolution_query = "SENS:VOLT:DC:RES?"
+current_resolution_query = "SENS:CURR:DC:RES?"
+references = ["https://www.keysight.com/us/en/assets/9018-03876/service-manuals/9018-03876.pdf"]
+reference_sections = ["SCPI range, resolution and NPLC commands"]
+depends_on = ["function", "range", "nplc", "aperture", "model_options"]
+panel_digits_verified = false
+notes = "Query after READ? for autorange. Queries do not change measurement configuration. Configured resolution is not accuracy, returned text length, or an independently verified panel digit count. Averaging does not automatically add display digits. Faster NPLC settings depend on DIG option/firmware; legacy nplc_values are not an unconditional capability declaration."
+
+[ADCMT_7461A.display_precision]
+reviewed_on = "2026-10-14"
+method = "unknown"
+native_enabled = true
+review_status = "product_spec_reviewed_programming_manual_pending"
+resolution_kind = "integration_dependent_measurement_resolution"
+references = ["https://www.adcmt.com/en/products/dmm/7451"]
+reference_sections = ["Specifications and variable integration time"]
+depends_on = ["function", "range", "integration_time", "sampling_mode"]
+best_case_voltage_resolution_V = 1e-07
+best_case_current_resolution_A = 1e-09
+panel_digits_verified = false
+notes = "Best-case values are not valid for every range/speed. Official programming manual requires a download form. Do not reuse Keysight RES? syntax or infer digits from the maximum 6.5-digit display."
+
+[SIMULATED_METER.display_precision]
+reviewed_on = "2026-10-14"
+method = "simulation"
+native_enabled = true
+review_status = "simulation_only"
+resolution_kind = "illustrative_increment"
+voltage_resolution_V = 1e-09
+current_resolution_A = 1e-12
+references = []
+reference_sections = []
+notes = "Illustrative simulator resolution; not a hardware or accuracy specification."

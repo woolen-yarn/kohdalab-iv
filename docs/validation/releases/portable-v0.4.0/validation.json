@@ -1,0 +1,39 @@
+{
+  "version": "0.4.0",
+  "rust_tests": 44,
+  "format": "passed",
+  "clippy": "passed",
+  "simulation_and_python_client": "passed",
+  "macos_gui_smoke": "passed",
+  "windows_instruments": [
+    "YOKOGAWA,GS210,91T729315,2.02",
+    "Agilent Technologies,34411A,MY53000981,2.40-2.40-0.09-46-09"
+  ],
+  "live_mode_sequence": [
+    "dc_iv",
+    "dc_vi",
+    "dc_iv"
+  ],
+  "all_mode_outputs": "Off",
+  "all_mode_source_levels": 0,
+  "mode_test_csv_points": 0,
+  "sweep_test": {
+    "points": 5,
+    "live_samples_observed": 54,
+    "live_before_first_csv_point_observed": 11,
+    "nplc": 1,
+    "average_count": 3,
+    "csv_columns": 14,
+    "scientific_notation": "passed",
+    "final_output": "Off"
+  },
+  "idle_live_speed_comparison_ms": {
+    "before": 383.196,
+    "after": 73.209
+  },
+  "limitations": [
+    "Rate is limited by NPLC and transport latency",
+    "Source level is not an independent source-output measurement",
+    "macOS is ad hoc signed, not notarized"
+  ]
+}

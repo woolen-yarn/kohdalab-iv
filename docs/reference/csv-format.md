@@ -1,0 +1,238 @@
+# Native recording format / ネイティブ保存形式
+
+> **日本語の案内:** 列名、単位、数値の直列化規則は互換性契約です。CSV の列名は翻訳せず、
+> 本文の原表記を使用してください。
+
+Single-source analysis CSV uses 26 columns (`analysis_v4`). [Dual V-I](dual-source-and-gui-control.md#saved-data--保存データ) appends four source fields (`analysis_dual_v1`). The run
+metadata schema is 9 and the GUI settings schema is 4. Each new run has matching
+multiline-safe `<name>.raw.csv`, human-readable `<name>.log`, and `<name>.run.json`.
+The JSON is the single conditions/manifest sidecar; there is no redundant conditions file. The raw audit format is
+unchanged: it remains 18-column `raw_csv_v1`.
+
+## Four-file bundle contract / 4ファイルの役割
+
+New acquisitions produce the following files. Keep them together; the UUID joins
+records and the finalized JSON stores SHA-256 checksums of all data/log files.
+新しい測定は次の4ファイルを生成します。同じUUIDで対応付け、確定したJSONにデータ・ログのSHA-256を保存します。
+
+| File / ファイル | Contents / 内容 |
+| --- | --- |
+| `<name>.csv` | One row per saved analysis point / 解析点ごとに1行 |
+| `<name>.raw.csv` | Individual readings, commands/replies, configuration and cleanup events, errors and host timing / 個々の読取・コマンドと応答・設定と終了処理・エラー・ホスト時刻 |
+| `<name>.log` | Durable lifecycle/progress/error lines; it deliberately contains no raw transport dump or inferred actual device values / 耐久的な開始・進捗・エラー行。raw通信ダンプや推定した実機値は含めない |
+| `<name>.run.json` | Conditions and manifest (`kohdalab_run_bundle_v1` filenames), requested/effective configuration, device identities/resources, outcome and checksums / 条件とmanifest（`kohdalab_run_bundle_v1`のファイル名）、要求・実効設定、機器、結果、checksum |
+
+### Main CSV: all 26 columns / 解析CSVの全26列
+
+| Columns / 列 | Meaning / 意味 |
+| --- | --- |
+| `run_id`, `point_index` | Run UUID and 1-based point number / 実行UUIDと1始まりの点番号 |
+| `timestamp`, `elapsed_s` | Host completion of the last accepted conversion, UTC and monotonic seconds / 最後に受理した変換のホスト観測完了時刻（UTC・単調時計秒） |
+| `sweep_index`, `direction` | Sweep number and forward/backward direction / スイープ番号と往復方向 |
+| `target_value`, `target_unit` | Requested source level and V/A / 出力目標とV・A |
+| `voltage_V`, `current_A` | Analysis values in SI units / SI単位の解析値 |
+| `voltage_origin`, `current_origin` | `meter`, `reference_meter`, `source_readback`, or `source_setpoint` / 実測・設定読返し・目標値の由来 |
+| `readings_requested`, `readings_completed` | Requested and accepted physical reading counts; completed is blank for simulation / 要求回数と受理した実機読取回数。simulationのcompletedは空欄 |
+| `meter_stddev`, `meter_unit` | Sample standard deviation (ddof=1) of accepted readings and unit; blank when fewer than two readings or simulation / 受理した読取の標本標準偏差と単位。2回未満・simulationでは空欄 |
+| `software_limit_hit`, `quality_flags` | Software limit and `normal`, `partial_average`, `software_limit_hit`, or `simulated` qualification / ソフトウェア制限と通常・部分平均・制限・合成の区別 |
+| `V_source_V`, `V_meter_V` | Source voltage readback/setpoint fallback and an independently accepted voltage-Meter reading / Source電圧のreadback・設定値fallbackと、独立して受理した電圧Meter読値 |
+| `I_source_A`, `I_meter_A` | Source current readback/setpoint fallback and an independently accepted current-Meter reading / Source電流のreadback・設定値fallbackと、独立して受理した電流Meter読値 |
+| `R_source_ohm`, `G_source_S` | Per-point V/I and I/V from the Source quantity plus opposite-quantity Meter / Source量と反対量Meterによる点ごとのV/I・I/V |
+| `R_meter_ohm`, `G_meter_S` | Per-point V/I and I/V using both independent Meter readings; blank without both readings / 2つの独立Meter読値による点ごとのV/I・I/V。両方の読値がなければ空欄 |
+
+`software_limit_hit` is not a queried hardware compliance flag. A limited partial
+average retains its requested/completed counts even when its quality flag reports
+the limit. Settings successfully sent are not automatically verified by readback.
+`software_limit_hit`は機器から照会したコンプライアンス状態ではありません。制限による途中平均でも要求・完了回数を保持します。設定送信の成功を読返し検証済みとは扱いません。
+
+`V_meter_V` and `I_meter_A` are blank when their optional same-quantity Meter is
+unassigned or does not provide an accepted conversion; a Source value is never
+written into either field. `V_source_V` and `I_source_A` are likewise blank for
+the source function that does not generate that quantity. In Dual V-I,
+`V_source_V` is the programmed differential source value, not a measured
+terminal voltage. The R/G fields are per-point ratios; they are not the
+independent sweep-slope fits shown in the GUI status strip.
+
+### Raw CSV: shared 18-column contract / 共通raw CSVの全18列
+
+| Columns / 列 | Meaning / 意味 |
+| --- | --- |
+| `run_id`, `event_index`, `point_index`, `reading_index` | Join key, event sequence, optional point/reading indices / 対応UUID、イベント連番、該当する点・読取番号 |
+| `event_type`, `device_role`, `quantity` | Event, source/meter role and quantity / イベント、source・meterの役割、物理量 |
+| `command`, `raw_response` | Original available decoded command/reply; CSV quoting preserves CR/LF, quotes and trailing zeroes / 取得できた原コマンド・デコード済み応答。改行・引用符・末尾ゼロを保持 |
+| `value`, `unit` | Parsed individual value and unit when available / 取得できた個別値と単位 |
+| `host_started_at_utc`, `host_completed_at_utc` | Host-observed logical operation window / 論理操作のホスト観測開始・終了UTC |
+| `started_elapsed_s`, `completed_elapsed_s` | Corresponding monotonic seconds / 対応する単調時計秒 |
+| `result`, `error` | Available result/error / 取得できた結果・エラー |
+| `details_json` | Structured event-specific information (averaging windows, settings and output verification); not a duplicate main CSV row / 平均区間・設定・出力確認などの構造化情報。解析CSV行の複製ではない |
+
+Blank means unavailable or not applicable, not zero. Raw events cover audited
+operations, not every background transport operation. Emergency output-off and
+transport recovery are represented by the final verification result; their
+individual write/query/retry exchanges are not a complete wire trace. No instrument reply is
+fabricated in simulation. Legacy exports keep their `.readings.jsonl` companion.
+空欄は未取得・非該当であり0ではありません。rawは監査対象操作を記録し、全バックグラウンド通信を記録するものではありません。simulationで機器応答を捏造しません。旧形式の保存では`.readings.jsonl`を維持します。
+
+## Historical `analysis_v3` field mapping
+
+The following mapping is retained for interpreting historical `analysis_v3`
+files. Current `analysis_v4` files use the 26-column contract above.
+
+| Former fields | Retained information |
+| --- | --- |
+| timestamp, elapsed_s | CSV |
+| point_index, readings_completed, meter_stddev, quality_flags | CSV; retain accepted-reading count, ddof=1 dispersion, and quality state for each saved point |
+| target_value, target_unit | CSV; requested source target, V for IV or A for VI |
+| voltage_V, current_A | CSV; original finite f64 values in shortest round-trip scientific notation |
+| voltage_origin, current_origin | CSV; distinguish meter, programmed source-level readback and source-setpoint fallback |
+| status | IPC/metadata only; per-point CSV quality uses `quality_flags` and `software_limit_hit` |
+| measurement, mode, sweep_pattern, source_function, measure_function | JSON config.mode/config.pattern; functions follow IV/VI mode |
+| total_points | JSON outcome.total, including the initial pre-output metadata |
+| source_target_value/unit, target_V/A | Duplicates or mode-specific projections of CSV target_value/unit |
+| source_set_V/A | In the native engine source_set equals point.target after ramping; source-setting value is recoverable from target and mode |
+| source_readback_value/unit, source_readback_V/A | Recover from voltage/current and origins according to mode; source_setpoint origin means readback was unavailable |
+| meter_value/unit | Recover from current_A in IV or voltage_V in VI |
+| measured_V/A | Duplicates of voltage_V/current_A in the former export; names did not imply two independent meter measurements |
+| resistance_Ohm, conductance_S | Recompute V/I and I/V; undefined denominators remain undefined, not zero. These point ratios are distinct from the run's fitted resistance in JSON outcome.resistance |
+| compliance | Previously duplicated software_limit_hit; it was not an independently queried hardware-compliance flag |
+| instrument_status | Empty in the current backend; any future nonempty per-point values are retained in JSON instrument_status_events |
+| source_ref, measure_ref, source_model, measure_model | JSON identities, resource addresses, simulation flags and last record; actual instrument identity/resource is retained rather than only the generic legacy alias |
+| start_settle_s, settle_s, nplc, average_count | JSON config; immutable within one run |
+
+## Source provenance matters
+
+A GS210 programmed-level query is not an independent measurement of voltage or
+current delivered to the load. The origin columns describe this explicitly:
+`meter`, `source_readback`, or `source_setpoint`. Only an accepted reading with
+the `meter` origin is a Meter reading; consumers must not treat a Source
+readback/setpoint as a DMM measurement. Source-setting resolution is not /MON
+resolution or measurement uncertainty.
+
+## Precision, resolution and uncertainty
+
+The CSV serializes every finite in-memory `f64` using shortest round-trip scientific notation. This prevents formatting from discarding a value that the engine received or calculated; it does **not** claim that every displayed digit is experimentally significant. Instrument range/resolution, when an existing query provides it, is recorded as provenance. Resolution is not accuracy and neither it nor trailing zeroes in an instrument reply establishes uncertainty. Uncertainty remains explicitly unknown unless an instrument-specific, traceable uncertainty model is added.
+
+`<name>.raw.csv` is an append-only, flushed evidence table. It preserves raw physical replies, commands, individual pre-average readings, timing windows, errors and structured residual details. Its CSV quoting preserves multiline replies exactly. The analysis CSV stores one row per saved point; its `meter_stddev` is the ddof=1 dispersion of accepted physical readings and is blank for fewer than two readings or simulation. Keep the analysis CSV, `.raw.csv`, and `.run.json` together. Old runs retain their `.readings.jsonl` when copied.
+
+`timestamp` and `elapsed_s` in each saved CSV row describe host-observed completion of the final accepted meter conversion for that point. They are captured before later audit writes, display range/resolution work, source readback, and CSV disk I/O. The `raw_csv_v1` audit records microsecond RFC3339 UTC and monotonic elapsed start/completion times for each audited logical query, the first-to-last conversion window of an average, and the post-flush CSV write window. These are host timing observations, not an instrument clock; `device_timestamp_utc` is null unless a future verified device-clock interface is added. Simulation marks its time as synthetic logical host time.
+
+## Metadata durability
+
+The CSV header, raw CSV audit and JSON run settings are created before output is enabled,
+using create-new semantics. A name collision aborts preparation without replacing the
+existing file; partial files from that failed attempt are retained, and retry requires a new output name. Failure to create
+the settings file also aborts preparation. Initial JSON includes
+configuration, identities, resource addresses, expected point count, source
+range setting and hardware compliance setting. `in_progress: true` means the
+metadata has not been finalized; it does not indicate current physical output.
+
+After output cleanup, the analysis CSV and raw audit are flushed and `sync_all` is requested
+before their checksums and the terminal outcome are assembled. A CSV synchronization failure
+marks the recording failed, retains the partial files, and requests the same fail-closed gate
+shutdown used for other recording failures. Final metadata is then written to a separate
+temporary file, synchronized and renamed over the initial JSON. If final writing fails, initial
+settings remain and a warning is reported. The CSV, JSON and audit should be retained together
+for reproducibility. Copying only the CSV omits configuration and raw acquisition context.
+
+CSV continues to flush each point. Range/resolution changes are indexed by point
+in final JSON. An abrupt process/system failure can lose the final change history,
+final outcome and latest diagnostics even though initial settings and flushed CSV
+rows exist; neither `sync_all` nor the metadata replacement is a universal power-loss guarantee,
+and this is not a crash-proof per-point metadata journal.
+
+## Validation
+
+Tests cover analysis_v4 IV/VI column order, units, setpoint fallback origins,
+separate Source/Meter fields, negative-zero and finite f64 round trips, and
+limit/status preservation. Legacy `analysis_v3` reading remains supported. A JSON
+replacement-failure test verifies that initial settings survive a failed final
+write. Integration checks cover initial metadata, completed/stopped runs,
+autorange history and output cleanup. Full legacy CSV tests remain intact.
+
+## 日本語 — 全文対訳
+
+現在のネイティブCSVは26列の`analysis_v4`で、run metadata schemaは9、GUI settings schemaは4です。raw監査CSVは変更せず18列の`raw_csv_v1`です。新しいrunはmultiline-safeな`.raw.csv`を作成し、旧runの`.readings.jsonl`は保存時に維持します。
+
+### 歴史的な`analysis_v3`フィールド対応
+
+次表は過去の`analysis_v3`ファイルを解釈するために残しています。現在の`analysis_v4`は本文冒頭の26列契約を使います。
+
+| 旧フィールド | 保持する情報 |
+| --- | --- |
+| timestamp, elapsed_s | CSV |
+| point_index, readings_completed, meter_stddev, quality_flags | CSV。受理済みreading数、ddof=1分散、quality状態を保持 |
+| target_value, target_unit | CSV。要求した出力目標で、IVはV、VIはA |
+| voltage_V, current_A | CSV。有限f64の元の値を、最短の往復可能な指数表記で保存 |
+| voltage_origin, current_origin | CSV。meter、プログラム済み出力値のreadback、目標値へのfallbackを区別 |
+| status | IPC・metadataのみ。CSVの点ごとの品質は`quality_flags`・`software_limit_hit` |
+| measurement, mode, sweep_pattern, source_function, measure_function | JSONのconfig.mode/config.pattern。機能はIV/VIモードに従う |
+| total_points | 出力開始前の初期metadataを含むJSONのoutcome.total |
+| source_target_value/unit, target_V/A | CSV target_value/unitの重複またはモード別射影 |
+| source_set_V/A | ネイティブではramp後のsource_setはpoint.targetに等しい。targetとmodeから設定値を復元可能 |
+| source_readback_value/unit, source_readback_V/A | modeに応じてvoltage/currentとoriginから復元。source_setpointはreadback取得不能を示す |
+| meter_value/unit | IVならcurrent_A、VIならvoltage_Vから復元 |
+| measured_V/A | 旧形式でもvoltage_V/current_Aの重複で、独立した2つの測定を意味しない |
+| resistance_Ohm, conductance_S | V/I・I/Vから再計算。分母が未定義なら0にせず未定義のまま。点ごとの比と、JSON outcome.resistanceのrun全体のフィットは別 |
+| compliance | 以前はsoftware_limit_hitの重複で、独立照会した機器コンプライアンスフラグではない |
+| instrument_status | 現backendでは空。将来の空でない点別値はJSON instrument_status_eventsに保持 |
+| source_ref, measure_ref, source_model, measure_model | JSONに識別、リソース、simulationフラグ、最終recordを保持。旧汎用aliasだけでなく実際の機器・接続先を保持 |
+| start_settle_s, settle_s, nplc, average_count | JSON config。1回のrun中は不変 |
+
+### 値の由来
+
+GS210のprogrammed-level照会は、負荷へ供給された電圧・電流の独立測定ではありません。origin列の`meter`・`source_readback`・`source_setpoint`で明示します。`meter` originで受理した値だけをMeter読値として扱い、Source readback/setpointをDMM測定と扱わないでください。出力設定分解能は/MONの分解能や測定不確かさとは異なります。
+
+### 精度・分解能・不確かさ
+
+CSVはengine内の有限`f64`を最短往復可能な指数表記で直列化します。これは取得・計算済みの値を表示書式で失わないためであり、全桁が実験的に有意であることを示すものではありません。既存の照会で得られる機器のrange・resolutionはprovenanceとして記録します。resolutionはaccuracyではなく、instrument replyの末尾zeroもuncertaintyを決めません。traceableな機器別uncertainty modelが追加されるまで、uncertaintyは明示的にunknownです。
+
+新しいrunでは`<name>.raw.csv`も作成します。これはappend-onlyで各行をflushする監査CSVです。`transport_exchange` entryは、legacy/ADC driverによるheader stripやdiscarded ADC conversionの前に、保存対象の変換・レンジ/分解能・出力readback照会内の通信応答を保持します。reading entryは正規化した値を保持し、通信エラーと最終エラーを追跡できます。監査対象の設定処理と出力終了確認も記録しますが、待機モニターを含む全通信の完全なトレースではありません。利用可能なrange/resolution、source readback、identity/resource、partial/compliance状態も保持します。simulationはsyntheticと明記し、hardware replyを作りません。CSV・`.run.json`・`.raw.csv`は一緒に保管してください。旧CSVにはこのaudit streamがないため、元の応答表記やrepeatごとのprovenanceは復元できません。
+
+各保存CSV行の`timestamp`と`elapsed_s`は、そのpointで受理された最終meter conversionのhost観測完了を表します。後続のaudit write、表示用range/resolution、source readback、CSV disk I/Oより前に取得します。`raw_csv_v1` auditは、各監査対象logical query、averageのfirst-to-last conversion window、flush後CSV write windowについて、microsecond RFC3339 UTCとmonotonic elapsedの開始・完了時刻を記録します。これはhostの時刻観測でありinstrument clockではありません。検証済みのdevice-clock interfaceが追加されるまで`device_timestamp_utc`はnullです。simulationではsynthetic logical host timeと明記します。
+
+### Metadataの耐久性
+
+出力ON前にCSVヘッダー、raw CSV audit、JSON設定を`create_new`相当で生成します。同名ファイルがあれば既存ファイルを置換せずに準備を中止し、その試行で作成した部分ファイルも保持します。再試行時は新しい出力名を選んでください。設定ファイルを作れない場合も準備を中止します。初期JSONは設定、識別、リソース、予定点数、出力レンジ、機器コンプライアンス設定を含みます。`in_progress: true`はmetadataが未確定という意味で、実際の出力状態を示しません。
+
+出力後処理後、解析CSVとraw auditをflushし、チェックサムと最終結果を組み立てる前に`sync_all`を要求します。CSV同期に失敗した場合は記録を失敗として扱い、部分ファイルを残し、他の記録失敗と同様にgateをfail-closedでOFF要求します。続いて最終metadataを別の一時ファイルへ書込み、同期して初期JSONへrenameします。最終書込みが失敗しても初期設定を残し警告します。再現性のためCSV・JSON・auditを一緒に保持してください。CSVだけでは設定・raw acquisition contextが欠けます。
+
+CSVは各点でflushします。range・resolution変更は最終JSONに点番号付きで記録します。プロセス・OSの突然の停止では、初期設定とflush済みCSVがあっても、最終変更履歴・結果・最新診断を失う可能性があります。`sync_all`やmetadata置換も突然の電源断に対する万能な保証ではなく、クラッシュに耐える点ごとのmetadataジャーナルでもありません。
+
+### 検証
+
+analysis_v4の26列、単位、setpoint fallbackのorigin、Source/Meterの分離、負のゼロと有限f64の往復、制限・状態保持をテストします。旧`analysis_v3`の読込みも維持します。JSON置換失敗テストで最終保存失敗時にも初期設定が残ることを確認します。統合テストは初期metadata、完了・停止、autorange履歴、出力後処理を確認します。
+
+## Historical schema-3/schema-8 protection notes
+
+`config.source_compliance` is the requested Source hardware limit (A for V-I,
+V for I-V). An omitted/null value preserves legacy coupling to `compliance`.
+`config.compliance` is the external Meter software stop. The actual programmed
+Source threshold is `hardware_compliance_setting`; it may differ due to device
+resolution or fixed range protection. This section documents the historical
+schema-3/settings-schema-8 `analysis_v3` records. Current records use settings
+schema 4, metadata schema 9 and the 26-column `analysis_v4` contract above.
+
+For GS210, `source_protection_stop` records the target index/value, observation
+UTC time, raw condition register and H/L/EMR flags, and any associated failure.
+A limited target has no normal analysis row, including a partial average, and
+never enters the resistance fit. Already acquired meter replies remain in raw
+CSV. The hardware-limit stop is not inferred from an external voltage plateau;
+it is based on the instrument's non-clearing `:STAT:COND?` register. The returned
+source level remains a programmed setting readback, not a verified actual current
+when the source is limiting. /MON is not needed for H/L detection and is not
+assumed present. Do not infer source terminal voltage from a four-terminal Meter.
+
+Source保護とMeter停止は別設定です。GS210がH/L制限を返した点は通常CSV・fitに含めず、
+取得済みの生応答と条件レジスタをraw CSV、停止の詳細をrun JSONに残します。
+/MONなしのSource設定値readbackを、制限時の実電流と解釈しないでください。
+
+### Dual-source runs
+
+Dual runs use the current 26 analysis columns, SI units, scientific notation and
+origin labels. The original 18 columns retain their order and the eight explicit
+Source/Meter fields are appended. `voltage_V` represents V1 − V2. Integer weights are
+in `.run.json` under `balanced_drive.ratio`; per-source setpoints and queried
+programmed levels are in `dual_source_points`, joined to CSV rows by
+`point_index`. Independent terminal voltages are unknown (`output_voltage_V:
+null`), not inferred from setting readbacks. The raw CSV header also stays
+unchanged; extra source evidence fits in existing audit rows / `details_json`.

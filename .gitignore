@@ -1,0 +1,28 @@
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+.coverage
+htmlcov/
+.venv/
+build/
+dist/
+target/
+target-windows/
+/validation/
+tools/
+results/
+*.log
+
+# PC-specific configs should not be overwritten by git pulls.
+config/*.json
+
+.DS_Store
+.mypy_cache/
+.ruff_cache/
+dist-upstream/*.whl
+dist-upstream/*.tar.gz
+releases/**/*.zip
+
+# Local remote-hardware acceptance logs and test staging.
+/validation/

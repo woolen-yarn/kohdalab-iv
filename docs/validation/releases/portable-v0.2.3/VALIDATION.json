@@ -1,0 +1,13 @@
+{
+  "automated_tests": 349,
+  "statement_and_branch_coverage": "100%",
+  "ruff": "passed",
+  "mypy": "passed",
+  "python_distribution_checks": "passed",
+  "native_macos_compilation": "passed",
+  "native_usb_framing_self_tests": "passed",
+  "macos_package_signature_and_qt_startup": "passed",
+  "final_windows_portable": "user confirmed working",
+  "publication_archives": "preserved unchanged",
+  "hardware_accuracy_certification": false
+}

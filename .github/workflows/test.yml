@@ -1,0 +1,75 @@
+name: Test
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: rust-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  test:
+    name: ${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+    steps:
+      - uses: actions/checkout@v7
+      - name: Linux GUI dependencies
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y libegl1 libxkbcommon-dev libwayland-dev
+      - name: Windows resource compiler
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $rc = Get-ChildItem 'C:\Program Files (x86)\Windows Kits\10\bin' -Recurse -Filter rc.exe | Where-Object { $_.FullName -match '\\x64\\rc.exe$' } | Sort-Object FullName | Select-Object -Last 1
+          if (-not $rc) { throw 'Windows resource compiler missing' }
+          "RC=$($rc.FullName)" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+      - name: Install Rust toolchain
+        run: rustup toolchain install 1.99.0 --profile minimal --component clippy,rustfmt
+      - name: Common GUI control SDK (device-free)
+        run: python -m unittest discover -s bindings/control -p "test_*.py" -v
+      - name: Format
+        run: cargo fmt --all --check
+      - name: Lints
+        run: cargo clippy --workspace --all-targets --locked -- -D warnings
+      - name: Tests
+        run: cargo test --workspace --locked
+      - name: Official VISA helper (isolated mock, no drivers or instruments)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: ./native/tests/build_windows_visa_tests.ps1
+      - name: Python control client (simulation only)
+        shell: bash
+        run: |
+          if [ "${{ runner.os }}" = Windows ]; then
+            export KOHDALAB_IV_EXE="$PWD/target/debug/iv-cli.exe"
+          else
+            export KOHDALAB_IV_EXE="$PWD/target/debug/iv-cli"
+          fi
+          python -m unittest discover -s bindings/python -p 'test_*.py' -v
+      - name: Source and reference Meter (actual Rust engine, mock GPIB only)
+        if: runner.os != 'Windows'
+        run: python scripts/test_reference_meter_engine.py --binary target/debug/iv-cli
+      - name: Redistribution packaging policy
+        run: python tests/test_distribution_policy.py
+      - name: Windows application installation lifecycle
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: ./tests/windows_install.ps1
+      - name: Native boot-device refusal and driver selection
+        if: runner.os != 'Windows'
+        shell: bash
+        run: |
+          mkdir -p build/native-license-tests/include/libusb-1.0
+          tar -xjf native/vendor/libusb-1.0.30.tar.bz2 -C build/native-license-tests
+          cp build/native-license-tests/libusb-1.0.30/libusb/libusb.h build/native-license-tests/include/libusb-1.0/
+          c++ -std=c++17 -Wall -Wextra -Werror -Inative -Ibuild/native-license-tests/include native/agilent_82357b.cpp tests/native_agilent_mock.cpp -o build/native-license-tests/agilent-mock
+          build/native-license-tests/agilent-mock
+          c++ -std=c++17 -Wall -Wextra -Werror tests/native_usb_setup_policy.cpp -o build/native-license-tests/usb-policy
+          build/native-license-tests/usb-policy

@@ -1,0 +1,158 @@
+name: Build unsigned release artifacts
+on:
+  workflow_dispatch:
+  pull_request:
+permissions:
+  contents: read
+concurrency:
+  group: unsigned-release-${{ github.ref }}
+  cancel-in-progress: false
+jobs:
+  windows:
+    runs-on: windows-latest
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v7
+      - name: Native Windows compiler tools
+        uses: msys2/setup-msys2@ec48f7c5447b3140e2b088413ae3a55687bccb6e # v2
+        with:
+          msystem: UCRT64
+          update: true
+          install: >-
+            make autoconf automake libtool
+            mingw-w64-ucrt-x86_64-gcc
+            mingw-w64-ucrt-x86_64-python
+      - name: Rebuild native helpers from included source
+        shell: msys2 {0}
+        run: |
+          bash scripts/build_native_windows.sh
+          bash scripts/build_usb_setup.sh
+      - name: Stage rebuilt helper hashes
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force build/release-native | Out-Null
+          Copy-Item build/native-windows/kohdalab-*-helper.exe build/release-native/
+          Copy-Item build/usb-setup/USB-Setup.exe,build/usb-setup/libwdi.dll build/release-native/
+          python -c "import pathlib,hashlib,json; p=pathlib.Path('build/release-native'); (p/'SHA256.json').write_text(json.dumps({f.name:hashlib.sha256(f.read_bytes()).hexdigest() for f in sorted(p.iterdir()) if f.is_file()},indent=2)+'\n')"
+      - name: Windows resource compiler
+        shell: pwsh
+        run: |
+          $rc = Get-ChildItem 'C:\Program Files (x86)\Windows Kits\10\bin' -Recurse -Filter rc.exe | Where-Object { $_.FullName -match '\\x64\\rc.exe$' } | Sort-Object FullName | Select-Object -Last 1
+          if (-not $rc) { throw 'Windows resource compiler missing' }
+          "RC=$($rc.FullName)" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+      - name: Rust test and release build
+        shell: pwsh
+        run: |
+          rustup toolchain install 1.99.0 --profile minimal
+          cargo test --workspace --locked
+          if ($LASTEXITCODE -ne 0) { throw 'Tests failed' }
+          cargo build --release --locked
+          if ($LASTEXITCODE -ne 0) { throw 'Build failed' }
+      - name: Python client and Notebook simulations
+        shell: pwsh
+        run: |
+          $env:KOHDALAB_IV_EXE = Join-Path $PWD 'target/release/iv-cli.exe'
+          python -m unittest discover -s bindings/python -p 'test_*.py' -v
+          if ($LASTEXITCODE -ne 0) { throw 'Notebook/client validation failed' }
+      - name: Render simulation GUI cases (CI-only software OpenGL)
+        shell: pwsh
+        run: |
+          # Hosted runners expose only OpenGL 1.1. Keep Mesa outside target/dist
+          # and run byte-identical copies; these DLLs never enter the packages.
+          $archive = Join-Path $env:RUNNER_TEMP 'mesa3d-26.2.4-release-msvc.7z'
+          Invoke-WebRequest 'https://github.com/pal1000/mesa-dist-win/releases/download/26.2.4/mesa3d-26.2.4-release-msvc.7z' -OutFile $archive
+          if ((Get-FileHash $archive -Algorithm SHA256).Hash.ToLowerInvariant() -ne '351fc8c8b695878ffb3eaa044b3ead08672a48b1a045e3c3e3975811df0f6695') { throw 'CI Mesa checksum mismatch' }
+          $mesa = Join-Path $env:RUNNER_TEMP 'ci-mesa'
+          & 7z x $archive "-o$mesa" -y | Out-Null
+          if ($LASTEXITCODE -ne 0) { throw 'CI Mesa extraction failed' }
+          $runtime = Join-Path $PWD 'build/gui-validation-runtime'
+          New-Item -ItemType Directory -Force $runtime | Out-Null
+          Copy-Item target/release/kohdalab-iv.exe,target/release/iv-cli.exe $runtime
+          Copy-Item (Join-Path $mesa 'x64/*.dll') $runtime
+          $env:GALLIUM_DRIVER = 'llvmpipe'
+          $v = python -c "import tomllib,pathlib; print(tomllib.loads(pathlib.Path('Cargo.toml').read_text())['workspace']['package']['version'])"
+          python scripts/verify_reference_gui.py "$runtime/kohdalab-iv.exe" --output build/gui-validation --version $v --renderer 'CI-only Mesa 26.2.4 llvmpipe; not bundled'
+          if ($LASTEXITCODE -ne 0) { throw 'GUI rendering/geometry validation failed' }
+          python scripts/verify_common_control.py "$runtime/kohdalab-iv.exe" --output-dir build/common-control-validation
+          if ($LASTEXITCODE -ne 0) { throw 'Common GUI API simulation failed' }
+          python scripts/verify_device_footer.py "$runtime/kohdalab-iv.exe" --output dist
+          if ($LASTEXITCODE -ne 0) { throw 'Fixed device footer validation failed' }
+          Remove-Item Env:GALLIUM_DRIVER
+          New-Item -ItemType Directory -Force dist | Out-Null
+          Copy-Item build/gui-validation/gui-validation.json dist/gui-validation.json
+          Copy-Item build/common-control-validation/results.json dist/common-control-validation.json
+          Copy-Item build/gui-validation/source-and-meter.png dist/iv-windows-simulation.png
+          Copy-Item build/gui-validation/two-columns.png dist/iv-windows-two-columns.png
+      - name: Package portable, source kit and Setup
+        id: package
+        shell: pwsh
+        run: |
+          python scripts/package_rust_preview.py --platform windows-x64 --binaries-dir target/release --native-dir build/release-native
+          if ($LASTEXITCODE -ne 0) { throw 'Portable packaging failed' }
+          python scripts/package_rust_build_kit.py --native-dir build/release-native
+          if ($LASTEXITCODE -ne 0) { throw 'Build kit failed' }
+          $v = python -c "import tomllib,pathlib; print(tomllib.loads(pathlib.Path('Cargo.toml').read_text())['workspace']['package']['version'])"
+          $edition = if ($v.Contains('-')) { 'preview' } else { 'portable' }
+          $payload = "dist/kohdalab-iv-$v-windows-x64-$edition"
+          "payload=$payload" | Out-File -FilePath $env:GITHUB_OUTPUT -Append -Encoding utf8
+          python scripts/build_windows_installer.py --payload-dir $payload --version $v --output "dist/kohdalab-iv-$v-windows-x64-Setup.exe"
+          if ($LASTEXITCODE -ne 0) { throw 'Setup compilation failed' }
+          ./scripts/check_windows_metadata.ps1 -Directory $payload -Version $v -ReportPath dist/windows-metadata.json
+          ./scripts/check_windows_signatures.ps1 -Directory $payload -ReportPath dist/windows-signatures.json
+          python -c "import pathlib,hashlib,json,os; p=pathlib.Path('dist'); fs=sorted([*p.glob('*.zip'),*p.glob('*-Setup.exe')]); (p/'SHA256SUMS.txt').write_text(''.join(hashlib.sha256(f.read_bytes()).hexdigest()+'  '+f.name+'\n' for f in fs)); (p/'BUILD-ORIGIN.json').write_text(json.dumps({k:os.environ.get(k) for k in ['GITHUB_REPOSITORY','GITHUB_SHA','GITHUB_RUN_ID','GITHUB_RUN_ATTEMPT','GITHUB_WORKFLOW']},indent=2)+'\n')"
+      - name: Upload exact first-party signing input (unsigned)
+        id: signing-input
+        uses: actions/upload-artifact@v7
+        with:
+          name: signing-input-${{ github.sha }}
+          if-no-files-found: error
+          retention-days: 14
+          path: |
+            ${{ steps.package.outputs.payload }}/kohdalab-iv.exe
+            ${{ steps.package.outputs.payload }}/iv-cli.exe
+            ${{ steps.package.outputs.payload }}/support/kohdalab-usbtmc-helper.exe
+            ${{ steps.package.outputs.payload }}/support/kohdalab-visa-helper.exe
+            ${{ steps.package.outputs.payload }}/support/USB-Setup.exe
+      - name: Upload unsigned review artifacts
+        uses: actions/upload-artifact@v7
+        with:
+          name: windows-unsigned-${{ github.sha }}
+          if-no-files-found: error
+          retention-days: 14
+          path: |
+            dist/*.zip
+            dist/*-Setup.exe
+            dist/*.png
+            dist/*.json
+            dist/SHA256SUMS.txt
+
+  macos:
+    name: macOS ARM64 release build
+    runs-on: macos-15
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v7
+      - name: Build native helpers, test and package
+        run: bash scripts/build-macos.command
+      - name: Validate native GUI common control in simulation
+        run: python3 scripts/verify_common_control.py target/release/kohdalab-iv --output-dir dist/common-control-validation
+      - name: Record build origin and checksums
+        run: |
+          python3 - <<'PYCODE'
+          import hashlib, json, os, pathlib
+          root = pathlib.Path("dist")
+          archives = sorted(root.glob("*.zip"))
+          (root / "SHA256SUMS.txt").write_text("".join(hashlib.sha256(path.read_bytes()).hexdigest() + "  " + path.name + "\n" for path in archives))
+          (root / "BUILD-ORIGIN.json").write_text(json.dumps({key: os.environ.get(key) for key in ["GITHUB_REPOSITORY", "GITHUB_SHA", "GITHUB_RUN_ID", "GITHUB_RUN_ATTEMPT", "GITHUB_WORKFLOW"]}, indent=2) + "\n")
+          PYCODE
+      - name: Upload macOS review artifacts
+        uses: actions/upload-artifact@v7
+        with:
+          name: macos-unsigned-${{ github.sha }}
+          if-no-files-found: error
+          retention-days: 14
+          path: |
+            dist/*.zip
+            dist/common-control-validation*/**
+            dist/BUILD-ORIGIN.json
+            dist/SHA256SUMS.txt

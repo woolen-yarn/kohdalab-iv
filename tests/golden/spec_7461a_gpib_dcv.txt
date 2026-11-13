@@ -1,0 +1,922 @@
+
+== YOKOGAWA_GS210 ==
+InstrumentDescriptor { id: "YOKOGAWA_GS210", role: Source, dialect: Scpi, simulation: false, capabilities: Source(SourceCapabilities { output: true, readback: true, software_ramp: true, voltage: true, current: true }) }
+profile=Source(SourceProfile { maximum_voltage: 32.0, maximum_current: 0.2, voltage_limit: SourceLimitProfile { minimum: 1.0, maximum: 30.0, resolution: Some(1.0) }, current_limit: SourceLimitProfile { minimum: 0.001, maximum: 0.2, resolution: Some(0.001) }, voltage_ranges: [SourceRangeProfile { name: "10mV", command_value: 0.01, maximum: 0.012, resolution: 1e-7 }, SourceRangeProfile { name: "100mV", command_value: 0.1, maximum: 0.12, resolution: 1e-6 }, SourceRangeProfile { name: "1V", command_value: 1.0, maximum: 1.2, resolution: 1e-5 }, SourceRangeProfile { name: "10V", command_value: 10.0, maximum: 12.0, resolution: 0.0001 }, SourceRangeProfile { name: "30V", command_value: 30.0, maximum: 32.0, resolution: 0.001 }], current_ranges: [SourceRangeProfile { name: "1mA", command_value: 0.001, maximum: 0.0012, resolution: 1e-8 }, SourceRangeProfile { name: "10mA", command_value: 0.01, maximum: 0.012, resolution: 1e-7 }, SourceRangeProfile { name: "100mA", command_value: 0.1, maximum: 0.12, resolution: 1e-6 }, SourceRangeProfile { name: "200mA", command_value: 0.2, maximum: 0.2, resolution: 1e-6 }] })
+range_query=Ok(Some(":SOUR:RANG?")) protection=Ok(Some(SourceProtectionProfile { query: ":STAT:COND?", low_limiter_mask: 1024, high_limiter_mask: 2048, emergency_mask: 8192 }))
+-- mode=Iv --
+range 0.01 ("10mV") display_resolution=Ok(Some(1e-7))
+  level 0=0.0: automatic=Ok(SourceRangeProfile { name: "", command_value: 0.01, maximum: 0.012, resolution: 1e-7 }) fixed=Ok(SourceRangeProfile { name: "", command_value: 0.01, maximum: 0.012, resolution: 1e-7 })
+  level -resolution=-1e-7: automatic=Ok(SourceRangeProfile { name: "", command_value: 0.01, maximum: 0.012, resolution: 1e-7 }) fixed=Ok(SourceRangeProfile { name: "", command_value: 0.01, maximum: 0.012, resolution: 1e-7 })
+  level +resolution=1e-7: automatic=Ok(SourceRangeProfile { name: "", command_value: 0.01, maximum: 0.012, resolution: 1e-7 }) fixed=Ok(SourceRangeProfile { name: "", command_value: 0.01, maximum: 0.012, resolution: 1e-7 })
+  level +0.5*resolution=5e-8: automatic=Err("DC level must be a multiple of 1e-7 SI. The minimum nonzero increment is 1e-7 SI for the selected source range.") fixed=Err("DC level must be a multiple of 1e-7 SI. The minimum nonzero increment is 1e-7 SI for the selected source range.")
+  level +1.5*resolution=1.5e-7: automatic=Err("DC increment (1.5e-7 SI) must be a multiple of 1e-7 SI for the selected source range.") fixed=Err("DC increment (1.5e-7 SI) must be a multiple of 1e-7 SI for the selected source range.")
+  level -maximum=-0.012: automatic=Ok(SourceRangeProfile { name: "", command_value: 0.01, maximum: 0.012, resolution: 1e-7 }) fixed=Ok(SourceRangeProfile { name: "", command_value: 0.01, maximum: 0.012, resolution: 1e-7 })
+  level +maximum=0.012: automatic=Ok(SourceRangeProfile { name: "", command_value: 0.01, maximum: 0.012, resolution: 1e-7 }) fixed=Ok(SourceRangeProfile { name: "", command_value: 0.01, maximum: 0.012, resolution: 1e-7 })
+  level -(maximum+resolution)=-0.0120001: automatic=Err("DC increment (-1.20001e-2 SI) must be a multiple of 1e-6 SI for the selected source range.") fixed=Err("DC level exceeds the enabled ±1.2e-2 source range.")
+  level +(maximum+resolution)=0.0120001: automatic=Err("DC increment (1.20001e-2 SI) must be a multiple of 1e-6 SI for the selected source range.") fixed=Err("DC level exceeds the enabled ±1.2e-2 source range.")
+  level +inf=inf: automatic=Err("DC level must be finite.") fixed=Err("DC level and selected source range must be finite.")
+  level NaN=NaN: automatic=Err("DC level must be finite.") fixed=Err("DC level and selected source range must be finite.")
+  limit 0=0.0: automatic=Err("Source protection limit must be finite and positive.") fixed=Err("Source protection limit must be finite and positive.")
+  limit -maximum=-0.2: automatic=Err("Source protection limit must be finite and positive.") fixed=Err("Source protection limit must be finite and positive.")
+  limit 0.5*minimum=0.0005: automatic=Err("DC level must be a multiple of 1e-5 SI. The minimum nonzero increment is 1e-5 SI for the selected source range.") fixed=Err("Source range 1e-2 requires a fixed 2e-1 A current protection, which would weaken the requested 5e-4 A limit.")
+  limit minimum=0.001: automatic=Err("DC level must be a multiple of 1e-5 SI. The minimum nonzero increment is 1e-5 SI for the selected source range.") fixed=Err("Source range 1e-2 requires a fixed 2e-1 A current protection, which would weaken the requested 1e-3 A limit.")
+  limit maximum=0.2: automatic=Ok(SourceRangeProfile { name: "", command_value: 0.01, maximum: 0.012, resolution: 1e-7 }) fixed=Ok(SourceRangeProfile { name: "", command_value: 0.01, maximum: 0.012, resolution: 1e-7 })
+  limit maximum+resolution=0.201: automatic=Err("Source protection limit (source_compliance) 0.201 exceeds YOKOGAWA_GS210 hardware maximum 0.2.") fixed=Err("Source protection limit (source_compliance) 0.201 exceeds YOKOGAWA_GS210 hardware maximum 0.2.")
+  limit +inf=inf: automatic=Err("Source protection limit must be finite and positive.") fixed=Err("Source protection limit must be finite and positive.")
+  limit NaN=NaN: automatic=Err("Source protection limit must be finite and positive.") fixed=Err("Source protection limit must be finite and positive.")
+range 0.1 ("100mV") display_resolution=Ok(Some(1e-6))
+  level 0=0.0: automatic=Ok(SourceRangeProfile { name: "", command_value: 0.01, maximum: 0.012, resolution: 1e-7 }) fixed=Ok(SourceRangeProfile { name: "", command_value: 0.1, maximum: 0.12, resolution: 1e-6 })
+  level -resolution=-1e-6: automatic=Ok(SourceRangeProfile { name: "", command_value: 0.01, maximum: 0.012, resolution: 1e-7 }) fixed=Ok(SourceRangeProfile { name: "", command_value: 0.1, maximum: 0.12, resolution: 1e-6 })
+  level +resolution=1e-6: automatic=Ok(SourceRangeProfile { name: "", command_value: 0.01, maximum: 0.012, resolution: 1e-7 }) fixed=Ok(SourceRangeProfile { name: "", command_value: 0.1, maximum: 0.12, resolution: 1e-6 })
+  level +0.5*resolution=5e-7: automatic=Ok(SourceRangeProfile { name: "", command_value: 0.01, maximum: 0.012, resolution: 1e-7 }) fixed=Err("DC level must be a multiple of 1e-6 SI. The minimum nonzero increment is 1e-6 SI for the selected source range.")
+  level +1.5*resolution=1.5e-6: automatic=Ok(SourceRangeProfile { name: "", command_value: 0.01, maximum: 0.012, resolution: 1e-7 }) fixed=Err("DC increment (1.5e-6 SI) must be a multiple of 1e-6 SI for the selected source range.")
+  level -maximum=-0.12: automatic=Ok(SourceRangeProfile { name: "", command_value: 0.1, maximum: 0.12, resolution: 1e-6 }) fixed=Ok(SourceRangeProfile { name: "", command_value: 0.1, maximum: 0.12, resolution: 1e-6 })
+  level +maximum=0.12: automatic=Ok(SourceRangeProfile { name: "", command_value: 0.1, maximum: 0.12, resolution: 1e-6 }) fixed=Ok(SourceRangeProfile { name: "", command_value: 0.1, maximum: 0.12, resolution: 1e-6 })
+  level -(maximum+resolution)=-0.120001: automatic=Err("DC increment (-1.20001e-1 SI) must be a multiple of 1e-5 SI for the selected source range.") fixed=Err("DC level exceeds the enabled ±1.2e-1 source range.")
+  level +(maximum+resolution)=0.120001: automatic=Err("DC increment (1.20001e-1 SI) must be a multiple of 1e-5 SI for the selected source range.") fixed=Err("DC level exceeds the enabled ±1.2e-1 source range.")
+  level +inf=inf: automatic=Err("DC level must be finite.") fixed=Err("DC level and selected source range must be finite.")
+  level NaN=NaN: automatic=Err("DC level must be finite.") fixed=Err("DC level and selected source range must be finite.")
+  limit 0=0.0: automatic=Err("Source protection limit must be finite and positive.") fixed=Err("Source protection limit must be finite and positive.")
+  limit -maximum=-0.2: automatic=Err("Source protection limit must be finite and positive.") fixed=Err("Source protection limit must be finite and positive.")
+  limit 0.5*minimum=0.0005: automatic=Err("DC level must be a multiple of 1e-5 SI. The minimum nonzero increment is 1e-5 SI for the selected source range.") fixed=Err("Source range 1e-1 requires a fixed 2e-1 A current protection, which would weaken the requested 5e-4 A limit.")
+  limit minimum=0.001: automatic=Err("DC level must be a multiple of 1e-5 SI. The minimum nonzero increment is 1e-5 SI for the selected source range.") fixed=Err("Source range 1e-1 requires a fixed 2e-1 A current protection, which would weaken the requested 1e-3 A limit.")
+  limit maximum=0.2: automatic=Ok(SourceRangeProfile { name: "", command_value: 0.01, maximum: 0.012, resolution: 1e-7 }) fixed=Ok(SourceRangeProfile { name: "", command_value: 0.1, maximum: 0.12, resolution: 1e-6 })
+  limit maximum+resolution=0.201: automatic=Err("Source protection limit (source_compliance) 0.201 exceeds YOKOGAWA_GS210 hardware maximum 0.2.") fixed=Err("Source protection limit (source_compliance) 0.201 exceeds YOKOGAWA_GS210 hardware maximum 0.2.")
+  limit +inf=inf: automatic=Err("Source protection limit must be finite and positive.") fixed=Err("Source protection limit must be finite and positive.")
+  limit NaN=NaN: automatic=Err("Source protection limit must be finite and positive.") fixed=Err("Source protection limit must be finite and positive.")
+range 1.0 ("1V") display_resolution=Ok(Some(1e-5))
+  level 0=0.0: automatic=Ok(SourceRangeProfile { name: "", command_value: 0.01, maximum: 0.012, resolution: 1e-7 }) fixed=Ok(SourceRangeProfile { name: "", command_value: 1.0, maximum: 1.2, resolution: 1e-5 })
+  level -resolution=-1e-5: automatic=Ok(SourceRangeProfile { name: "", command_value: 0.01, maximum: 0.012, resolution: 1e-7 }) fixed=Ok(SourceRangeProfile { name: "", command_value: 1.0, maximum: 1.2, resolution: 1e-5 })
+  level +resolution=1e-5: automatic=Ok(SourceRangeProfile { name: "", command_value: 0.01, maximum: 0.012, resolution: 1e-7 }) fixed=Ok(SourceRangeProfile { name: "", command_value: 1.0, maximum: 1.2, resolution: 1e-5 })
+  level +0.5*resolution=5e-6: automatic=Ok(SourceRangeProfile { name: "", command_value: 0.01, maximum: 0.012, resolution: 1e-7 }) fixed=Err("DC level must be a multiple of 1e-5 SI. The minimum nonzero increment is 1e-5 SI for the selected source range.")
+  level +1.5*resolution=1.5000000000000002e-5: automatic=Ok(SourceRangeProfile { name: "", command_value: 0.01, maximum: 0.012, resolution: 1e-7 }) fixed=Err("DC increment (1.5000000000000002e-5 SI) must be a multiple of 1e-5 SI for the selected source range.")
+  level -maximum=-1.2: automatic=Ok(SourceRangeProfile { name: "", command_value: 1.0, maximum: 1.2, resolution: 1e-5 }) fixed=Ok(SourceRangeProfile { name: "", command_value: 1.0, maximum: 1.2, resolution: 1e-5 })
+  level +maximum=1.2: automatic=Ok(SourceRangeProfile { name: "", command_value: 1.0, maximum: 1.2, resolution: 1e-5 }) fixed=Ok(SourceRangeProfile { name: "", command_value: 1.0, maximum: 1.2, resolution: 1e-5 })
+  level -(maximum+resolution)=-1.20001: automatic=Err("DC increment (-1.20001e0 SI) must be a multiple of 1e-4 SI for the selected source range.") fixed=Err("DC level exceeds the enabled ±1.2e0 source range.")
+  level +(maximum+resolution)=1.20001: automatic=Err("DC increment (1.20001e0 SI) must be a multiple of 1e-4 SI for the selected source range.") fixed=Err("DC level exceeds the enabled ±1.2e0 source range.")
+  level +inf=inf: automatic=Err("DC level must be finite.") fixed=Err("DC level and selected source range must be finite.")
+  level NaN=NaN: automatic=Err("DC level must be finite.") fixed=Err("DC level and selected source range must be finite.")
+  limit 0=0.0: automatic=Err("Source protection limit must be finite and positive.") fixed=Err("Source protection limit must be finite and positive.")
+  limit -maximum=-0.2: automatic=Err("Source protection limit must be finite and positive.") fixed=Err("Source protection limit must be finite and positive.")
+  limit 0.5*minimum=0.0005: automatic=Ok(SourceRangeProfile { name: "", command_value: 1.0, maximum: 1.2, resolution: 1e-5 }) fixed=Ok(SourceRangeProfile { name: "", command_value: 1.0, maximum: 1.2, resolution: 1e-5 })
+  limit minimum=0.001: automatic=Ok(SourceRangeProfile { name: "", command_value: 1.0, maximum: 1.2, resolution: 1e-5 }) fixed=Ok(SourceRangeProfile { name: "", command_value: 1.0, maximum: 1.2, resolution: 1e-5 })
+  limit maximum=0.2: automatic=Ok(SourceRangeProfile { name: "", command_value: 0.01, maximum: 0.012, resolution: 1e-7 }) fixed=Ok(SourceRangeProfile { name: "", command_value: 1.0, maximum: 1.2, resolution: 1e-5 })
+  limit maximum+resolution=0.201: automatic=Err("Source protection limit (source_compliance) 0.201 exceeds YOKOGAWA_GS210 hardware maximum 0.2.") fixed=Err("Source protection limit (source_compliance) 0.201 exceeds YOKOGAWA_GS210 hardware maximum 0.2.")
+  limit +inf=inf: automatic=Err("Source protection limit must be finite and positive.") fixed=Err("Source protection limit must be finite and positive.")
+  limit NaN=NaN: automatic=Err("Source protection limit must be finite and positive.") fixed=Err("Source protection limit must be finite and positive.")
+range 10.0 ("10V") display_resolution=Ok(Some(0.0001))
+  level 0=0.0: automatic=Ok(SourceRangeProfile { name: "", command_value: 0.01, maximum: 0.012, resolution: 1e-7 }) fixed=Ok(SourceRangeProfile { name: "", command_value: 10.0, maximum: 12.0, resolution: 0.0001 })
+  level -resolution=-0.0001: automatic=Ok(SourceRangeProfile { name: "", command_value: 0.01, maximum: 0.012, resolution: 1e-7 }) fixed=Ok(SourceRangeProfile { name: "", command_value: 10.0, maximum: 12.0, resolution: 0.0001 })
+  level +resolution=0.0001: automatic=Ok(SourceRangeProfile { name: "", command_value: 0.01, maximum: 0.012, resolution: 1e-7 }) fixed=Ok(SourceRangeProfile { name: "", command_value: 10.0, maximum: 12.0, resolution: 0.0001 })
+  level +0.5*resolution=5e-5: automatic=Ok(SourceRangeProfile { name: "", command_value: 0.01, maximum: 0.012, resolution: 1e-7 }) fixed=Err("DC level must be a multiple of 1e-4 SI. The minimum nonzero increment is 1e-4 SI for the selected source range.")
+  level +1.5*resolution=0.00015000000000000001: automatic=Ok(SourceRangeProfile { name: "", command_value: 0.01, maximum: 0.012, resolution: 1e-7 }) fixed=Err("DC increment (1.5000000000000001e-4 SI) must be a multiple of 1e-4 SI for the selected source range.")
+  level -maximum=-12.0: automatic=Ok(SourceRangeProfile { name: "", command_value: 10.0, maximum: 12.0, resolution: 0.0001 }) fixed=Ok(SourceRangeProfile { name: "", command_value: 10.0, maximum: 12.0, resolution: 0.0001 })
+  level +maximum=12.0: automatic=Ok(SourceRangeProfile { name: "", command_value: 10.0, maximum: 12.0, resolution: 0.0001 }) fixed=Ok(SourceRangeProfile { name: "", command_value: 10.0, maximum: 12.0, resolution: 0.0001 })
+  level -(maximum+resolution)=-12.0001: automatic=Err("DC increment (-1.20001e1 SI) must be a multiple of 1e-3 SI for the selected source range.") fixed=Err("DC level exceeds the enabled ±1.2e1 source range.")
+  level +(maximum+resolution)=12.0001: automatic=Err("DC increment (1.20001e1 SI) must be a multiple of 1e-3 SI for the selected source range.") fixed=Err("DC level exceeds the enabled ±1.2e1 source range.")
+  level +inf=inf: automatic=Err("DC level must be finite.") fixed=Err("DC level and selected source range must be finite.")
+  level NaN=NaN: automatic=Err("DC level must be finite.") fixed=Err("DC level and selected source range must be finite.")
+  limit 0=0.0: automatic=Err("Source protection limit must be finite and positive.") fixed=Err("Source protection limit must be finite and positive.")
+  limit -maximum=-0.2: automatic=Err("Source protection limit must be finite and positive.") fixed=Err("Source protection limit must be finite and positive.")
+  limit 0.5*minimum=0.0005: automatic=Ok(SourceRangeProfile { name: "", command_value: 1.0, maximum: 1.2, resolution: 1e-5 }) fixed=Ok(SourceRangeProfile { name: "", command_value: 10.0, maximum: 12.0, resolution: 0.0001 })
+  limit minimum=0.001: automatic=Ok(SourceRangeProfile { name: "", command_value: 1.0, maximum: 1.2, resolution: 1e-5 }) fixed=Ok(SourceRangeProfile { name: "", command_value: 10.0, maximum: 12.0, resolution: 0.0001 })
+  limit maximum=0.2: automatic=Ok(SourceRangeProfile { name: "", command_value: 0.01, maximum: 0.012, resolution: 1e-7 }) fixed=Ok(SourceRangeProfile { name: "", command_value: 10.0, maximum: 12.0, resolution: 0.0001 })
+  limit maximum+resolution=0.201: automatic=Err("Source protection limit (source_compliance) 0.201 exceeds YOKOGAWA_GS210 hardware maximum 0.2.") fixed=Err("Source protection limit (source_compliance) 0.201 exceeds YOKOGAWA_GS210 hardware maximum 0.2.")
+  limit +inf=inf: automatic=Err("Source protection limit must be finite and positive.") fixed=Err("Source protection limit must be finite and positive.")
+  limit NaN=NaN: automatic=Err("Source protection limit must be finite and positive.") fixed=Err("Source protection limit must be finite and positive.")
+range 30.0 ("30V") display_resolution=Ok(Some(0.001))
+  level 0=0.0: automatic=Ok(SourceRangeProfile { name: "", command_value: 0.01, maximum: 0.012, resolution: 1e-7 }) fixed=Ok(SourceRangeProfile { name: "", command_value: 30.0, maximum: 32.0, resolution: 0.001 })
+  level -resolution=-0.001: automatic=Ok(SourceRangeProfile { name: "", command_value: 0.01, maximum: 0.012, resolution: 1e-7 }) fixed=Ok(SourceRangeProfile { name: "", command_value: 30.0, maximum: 32.0, resolution: 0.001 })
+  level +resolution=0.001: automatic=Ok(SourceRangeProfile { name: "", command_value: 0.01, maximum: 0.012, resolution: 1e-7 }) fixed=Ok(SourceRangeProfile { name: "", command_value: 30.0, maximum: 32.0, resolution: 0.001 })
+  level +0.5*resolution=0.0005: automatic=Ok(SourceRangeProfile { name: "", command_value: 0.01, maximum: 0.012, resolution: 1e-7 }) fixed=Err("DC level must be a multiple of 1e-3 SI. The minimum nonzero increment is 1e-3 SI for the selected source range.")
+  level +1.5*resolution=0.0015: automatic=Ok(SourceRangeProfile { name: "", command_value: 0.01, maximum: 0.012, resolution: 1e-7 }) fixed=Err("DC increment (1.5e-3 SI) must be a multiple of 1e-3 SI for the selected source range.")
+  level -maximum=-32.0: automatic=Ok(SourceRangeProfile { name: "", command_value: 30.0, maximum: 32.0, resolution: 0.001 }) fixed=Ok(SourceRangeProfile { name: "", command_value: 30.0, maximum: 32.0, resolution: 0.001 })
+  level +maximum=32.0: automatic=Ok(SourceRangeProfile { name: "", command_value: 30.0, maximum: 32.0, resolution: 0.001 }) fixed=Ok(SourceRangeProfile { name: "", command_value: 30.0, maximum: 32.0, resolution: 0.001 })
+  level -(maximum+resolution)=-32.001: automatic=Err("source targets exceed the YOKOGAWA_GS210 range.") fixed=Err("DC level exceeds the enabled ±3.2e1 source range.")
+  level +(maximum+resolution)=32.001: automatic=Err("source targets exceed the YOKOGAWA_GS210 range.") fixed=Err("DC level exceeds the enabled ±3.2e1 source range.")
+  level +inf=inf: automatic=Err("DC level must be finite.") fixed=Err("DC level and selected source range must be finite.")
+  level NaN=NaN: automatic=Err("DC level must be finite.") fixed=Err("DC level and selected source range must be finite.")
+  limit 0=0.0: automatic=Err("Source protection limit must be finite and positive.") fixed=Err("Source protection limit must be finite and positive.")
+  limit -maximum=-0.2: automatic=Err("Source protection limit must be finite and positive.") fixed=Err("Source protection limit must be finite and positive.")
+  limit 0.5*minimum=0.0005: automatic=Ok(SourceRangeProfile { name: "", command_value: 1.0, maximum: 1.2, resolution: 1e-5 }) fixed=Ok(SourceRangeProfile { name: "", command_value: 30.0, maximum: 32.0, resolution: 0.001 })
+  limit minimum=0.001: automatic=Ok(SourceRangeProfile { name: "", command_value: 1.0, maximum: 1.2, resolution: 1e-5 }) fixed=Ok(SourceRangeProfile { name: "", command_value: 30.0, maximum: 32.0, resolution: 0.001 })
+  limit maximum=0.2: automatic=Ok(SourceRangeProfile { name: "", command_value: 0.01, maximum: 0.012, resolution: 1e-7 }) fixed=Ok(SourceRangeProfile { name: "", command_value: 30.0, maximum: 32.0, resolution: 0.001 })
+  limit maximum+resolution=0.201: automatic=Err("Source protection limit (source_compliance) 0.201 exceeds YOKOGAWA_GS210 hardware maximum 0.2.") fixed=Err("Source protection limit (source_compliance) 0.201 exceeds YOKOGAWA_GS210 hardware maximum 0.2.")
+  limit +inf=inf: automatic=Err("Source protection limit must be finite and positive.") fixed=Err("Source protection limit must be finite and positive.")
+  limit NaN=NaN: automatic=Err("Source protection limit must be finite and positive.") fixed=Err("Source protection limit must be finite and positive.")
+invalid source range 0=0.0: display=Ok(None) fixed=Err("DC level and selected source range must be finite.")
+invalid source range -largest=-30.0: display=Ok(None) fixed=Err("DC level and selected source range must be finite.")
+invalid source range largest*1.5=45.0: display=Ok(None) fixed=Err("YOKOGAWA_GS210 does not support source range 4.5e1.")
+invalid source range largest+1e-6*largest=30.00003: display=Ok(Some(0.001)) fixed=Err("YOKOGAWA_GS210 does not support source range 3.000003e1.")
+invalid source range +inf=inf: display=Ok(None) fixed=Err("DC level and selected source range must be finite.")
+invalid source range NaN=NaN: display=Ok(None) fixed=Err("DC level and selected source range must be finite.")
+-- mode=Vi --
+range 0.001 ("1mA") display_resolution=Ok(Some(1e-8))
+  level 0=0.0: automatic=Ok(SourceRangeProfile { name: "", command_value: 0.001, maximum: 0.0012, resolution: 1e-8 }) fixed=Ok(SourceRangeProfile { name: "", command_value: 0.001, maximum: 0.0012, resolution: 1e-8 })
+  level -resolution=-1e-8: automatic=Ok(SourceRangeProfile { name: "", command_value: 0.001, maximum: 0.0012, resolution: 1e-8 }) fixed=Ok(SourceRangeProfile { name: "", command_value: 0.001, maximum: 0.0012, resolution: 1e-8 })
+  level +resolution=1e-8: automatic=Ok(SourceRangeProfile { name: "", command_value: 0.001, maximum: 0.0012, resolution: 1e-8 }) fixed=Ok(SourceRangeProfile { name: "", command_value: 0.001, maximum: 0.0012, resolution: 1e-8 })
+  level +0.5*resolution=5e-9: automatic=Err("DC level must be a multiple of 1e-8 SI. The minimum nonzero increment is 1e-8 SI for the selected source range.") fixed=Err("DC level must be a multiple of 1e-8 SI. The minimum nonzero increment is 1e-8 SI for the selected source range.")
+  level +1.5*resolution=1.5000000000000002e-8: automatic=Err("DC increment (1.5000000000000002e-8 SI) must be a multiple of 1e-8 SI for the selected source range.") fixed=Err("DC increment (1.5000000000000002e-8 SI) must be a multiple of 1e-8 SI for the selected source range.")
+  level -maximum=-0.0012: automatic=Ok(SourceRangeProfile { name: "", command_value: 0.001, maximum: 0.0012, resolution: 1e-8 }) fixed=Ok(SourceRangeProfile { name: "", command_value: 0.001, maximum: 0.0012, resolution: 1e-8 })
+  level +maximum=0.0012: automatic=Ok(SourceRangeProfile { name: "", command_value: 0.001, maximum: 0.0012, resolution: 1e-8 }) fixed=Ok(SourceRangeProfile { name: "", command_value: 0.001, maximum: 0.0012, resolution: 1e-8 })
+  level -(maximum+resolution)=-0.0012000099999999998: automatic=Err("DC increment (-1.2000099999999998e-3 SI) must be a multiple of 1e-7 SI for the selected source range.") fixed=Err("DC level exceeds the enabled ±1.2e-3 source range.")
+  level +(maximum+resolution)=0.0012000099999999998: automatic=Err("DC increment (1.2000099999999998e-3 SI) must be a multiple of 1e-7 SI for the selected source range.") fixed=Err("DC level exceeds the enabled ±1.2e-3 source range.")
+  level +inf=inf: automatic=Err("DC level must be finite.") fixed=Err("DC level and selected source range must be finite.")
+  level NaN=NaN: automatic=Err("DC level must be finite.") fixed=Err("DC level and selected source range must be finite.")
+  limit 0=0.0: automatic=Err("Source protection limit must be finite and positive.") fixed=Err("Source protection limit must be finite and positive.")
+  limit -maximum=-30.0: automatic=Err("Source protection limit must be finite and positive.") fixed=Err("Source protection limit must be finite and positive.")
+  limit 0.5*minimum=0.5: automatic=Ok(SourceRangeProfile { name: "", command_value: 0.001, maximum: 0.0012, resolution: 1e-8 }) fixed=Ok(SourceRangeProfile { name: "", command_value: 0.001, maximum: 0.0012, resolution: 1e-8 })
+  limit minimum=1.0: automatic=Ok(SourceRangeProfile { name: "", command_value: 0.001, maximum: 0.0012, resolution: 1e-8 }) fixed=Ok(SourceRangeProfile { name: "", command_value: 0.001, maximum: 0.0012, resolution: 1e-8 })
+  limit maximum=30.0: automatic=Ok(SourceRangeProfile { name: "", command_value: 0.001, maximum: 0.0012, resolution: 1e-8 }) fixed=Ok(SourceRangeProfile { name: "", command_value: 0.001, maximum: 0.0012, resolution: 1e-8 })
+  limit maximum+resolution=31.0: automatic=Err("Source protection limit (source_compliance) 31 exceeds YOKOGAWA_GS210 hardware maximum 30.") fixed=Err("Source protection limit (source_compliance) 31 exceeds YOKOGAWA_GS210 hardware maximum 30.")
+  limit +inf=inf: automatic=Err("Source protection limit must be finite and positive.") fixed=Err("Source protection limit must be finite and positive.")
+  limit NaN=NaN: automatic=Err("Source protection limit must be finite and positive.") fixed=Err("Source protection limit must be finite and positive.")
+range 0.01 ("10mA") display_resolution=Ok(Some(1e-7))
+  level 0=0.0: automatic=Ok(SourceRangeProfile { name: "", command_value: 0.001, maximum: 0.0012, resolution: 1e-8 }) fixed=Ok(SourceRangeProfile { name: "", command_value: 0.01, maximum: 0.012, resolution: 1e-7 })
+  level -resolution=-1e-7: automatic=Ok(SourceRangeProfile { name: "", command_value: 0.001, maximum: 0.0012, resolution: 1e-8 }) fixed=Ok(SourceRangeProfile { name: "", command_value: 0.01, maximum: 0.012, resolution: 1e-7 })
+  level +resolution=1e-7: automatic=Ok(SourceRangeProfile { name: "", command_value: 0.001, maximum: 0.0012, resolution: 1e-8 }) fixed=Ok(SourceRangeProfile { name: "", command_value: 0.01, maximum: 0.012, resolution: 1e-7 })
+  level +0.5*resolution=5e-8: automatic=Ok(SourceRangeProfile { name: "", command_value: 0.001, maximum: 0.0012, resolution: 1e-8 }) fixed=Err("DC level must be a multiple of 1e-7 SI. The minimum nonzero increment is 1e-7 SI for the selected source range.")
+  level +1.5*resolution=1.5e-7: automatic=Ok(SourceRangeProfile { name: "", command_value: 0.001, maximum: 0.0012, resolution: 1e-8 }) fixed=Err("DC increment (1.5e-7 SI) must be a multiple of 1e-7 SI for the selected source range.")
+  level -maximum=-0.012: automatic=Ok(SourceRangeProfile { name: "", command_value: 0.01, maximum: 0.012, resolution: 1e-7 }) fixed=Ok(SourceRangeProfile { name: "", command_value: 0.01, maximum: 0.012, resolution: 1e-7 })
+  level +maximum=0.012: automatic=Ok(SourceRangeProfile { name: "", command_value: 0.01, maximum: 0.012, resolution: 1e-7 }) fixed=Ok(SourceRangeProfile { name: "", command_value: 0.01, maximum: 0.012, resolution: 1e-7 })
+  level -(maximum+resolution)=-0.0120001: automatic=Err("DC increment (-1.20001e-2 SI) must be a multiple of 1e-6 SI for the selected source range.") fixed=Err("DC level exceeds the enabled ±1.2e-2 source range.")
+  level +(maximum+resolution)=0.0120001: automatic=Err("DC increment (1.20001e-2 SI) must be a multiple of 1e-6 SI for the selected source range.") fixed=Err("DC level exceeds the enabled ±1.2e-2 source range.")
+  level +inf=inf: automatic=Err("DC level must be finite.") fixed=Err("DC level and selected source range must be finite.")
+  level NaN=NaN: automatic=Err("DC level must be finite.") fixed=Err("DC level and selected source range must be finite.")
+  limit 0=0.0: automatic=Err("Source protection limit must be finite and positive.") fixed=Err("Source protection limit must be finite and positive.")
+  limit -maximum=-30.0: automatic=Err("Source protection limit must be finite and positive.") fixed=Err("Source protection limit must be finite and positive.")
+  limit 0.5*minimum=0.5: automatic=Ok(SourceRangeProfile { name: "", command_value: 0.001, maximum: 0.0012, resolution: 1e-8 }) fixed=Ok(SourceRangeProfile { name: "", command_value: 0.01, maximum: 0.012, resolution: 1e-7 })
+  limit minimum=1.0: automatic=Ok(SourceRangeProfile { name: "", command_value: 0.001, maximum: 0.0012, resolution: 1e-8 }) fixed=Ok(SourceRangeProfile { name: "", command_value: 0.01, maximum: 0.012, resolution: 1e-7 })
+  limit maximum=30.0: automatic=Ok(SourceRangeProfile { name: "", command_value: 0.001, maximum: 0.0012, resolution: 1e-8 }) fixed=Ok(SourceRangeProfile { name: "", command_value: 0.01, maximum: 0.012, resolution: 1e-7 })
+  limit maximum+resolution=31.0: automatic=Err("Source protection limit (source_compliance) 31 exceeds YOKOGAWA_GS210 hardware maximum 30.") fixed=Err("Source protection limit (source_compliance) 31 exceeds YOKOGAWA_GS210 hardware maximum 30.")
+  limit +inf=inf: automatic=Err("Source protection limit must be finite and positive.") fixed=Err("Source protection limit must be finite and positive.")
+  limit NaN=NaN: automatic=Err("Source protection limit must be finite and positive.") fixed=Err("Source protection limit must be finite and positive.")
+range 0.1 ("100mA") display_resolution=Ok(Some(1e-6))
+  level 0=0.0: automatic=Ok(SourceRangeProfile { name: "", command_value: 0.001, maximum: 0.0012, resolution: 1e-8 }) fixed=Ok(SourceRangeProfile { name: "", command_value: 0.1, maximum: 0.12, resolution: 1e-6 })
+  level -resolution=-1e-6: automatic=Ok(SourceRangeProfile { name: "", command_value: 0.001, maximum: 0.0012, resolution: 1e-8 }) fixed=Ok(SourceRangeProfile { name: "", command_value: 0.1, maximum: 0.12, resolution: 1e-6 })
+  level +resolution=1e-6: automatic=Ok(SourceRangeProfile { name: "", command_value: 0.001, maximum: 0.0012, resolution: 1e-8 }) fixed=Ok(SourceRangeProfile { name: "", command_value: 0.1, maximum: 0.12, resolution: 1e-6 })
+  level +0.5*resolution=5e-7: automatic=Ok(SourceRangeProfile { name: "", command_value: 0.001, maximum: 0.0012, resolution: 1e-8 }) fixed=Err("DC level must be a multiple of 1e-6 SI. The minimum nonzero increment is 1e-6 SI for the selected source range.")
+  level +1.5*resolution=1.5e-6: automatic=Ok(SourceRangeProfile { name: "", command_value: 0.001, maximum: 0.0012, resolution: 1e-8 }) fixed=Err("DC increment (1.5e-6 SI) must be a multiple of 1e-6 SI for the selected source range.")
+  level -maximum=-0.12: automatic=Ok(SourceRangeProfile { name: "", command_value: 0.1, maximum: 0.12, resolution: 1e-6 }) fixed=Ok(SourceRangeProfile { name: "", command_value: 0.1, maximum: 0.12, resolution: 1e-6 })
+  level +maximum=0.12: automatic=Ok(SourceRangeProfile { name: "", command_value: 0.1, maximum: 0.12, resolution: 1e-6 }) fixed=Ok(SourceRangeProfile { name: "", command_value: 0.1, maximum: 0.12, resolution: 1e-6 })
+  level -(maximum+resolution)=-0.120001: automatic=Ok(SourceRangeProfile { name: "", command_value: 0.2, maximum: 0.2, resolution: 1e-6 }) fixed=Err("DC level exceeds the enabled ±1.2e-1 source range.")
+  level +(maximum+resolution)=0.120001: automatic=Ok(SourceRangeProfile { name: "", command_value: 0.2, maximum: 0.2, resolution: 1e-6 }) fixed=Err("DC level exceeds the enabled ±1.2e-1 source range.")
+  level +inf=inf: automatic=Err("DC level must be finite.") fixed=Err("DC level and selected source range must be finite.")
+  level NaN=NaN: automatic=Err("DC level must be finite.") fixed=Err("DC level and selected source range must be finite.")
+  limit 0=0.0: automatic=Err("Source protection limit must be finite and positive.") fixed=Err("Source protection limit must be finite and positive.")
+  limit -maximum=-30.0: automatic=Err("Source protection limit must be finite and positive.") fixed=Err("Source protection limit must be finite and positive.")
+  limit 0.5*minimum=0.5: automatic=Ok(SourceRangeProfile { name: "", command_value: 0.001, maximum: 0.0012, resolution: 1e-8 }) fixed=Ok(SourceRangeProfile { name: "", command_value: 0.1, maximum: 0.12, resolution: 1e-6 })
+  limit minimum=1.0: automatic=Ok(SourceRangeProfile { name: "", command_value: 0.001, maximum: 0.0012, resolution: 1e-8 }) fixed=Ok(SourceRangeProfile { name: "", command_value: 0.1, maximum: 0.12, resolution: 1e-6 })
+  limit maximum=30.0: automatic=Ok(SourceRangeProfile { name: "", command_value: 0.001, maximum: 0.0012, resolution: 1e-8 }) fixed=Ok(SourceRangeProfile { name: "", command_value: 0.1, maximum: 0.12, resolution: 1e-6 })
+  limit maximum+resolution=31.0: automatic=Err("Source protection limit (source_compliance) 31 exceeds YOKOGAWA_GS210 hardware maximum 30.") fixed=Err("Source protection limit (source_compliance) 31 exceeds YOKOGAWA_GS210 hardware maximum 30.")
+  limit +inf=inf: automatic=Err("Source protection limit must be finite and positive.") fixed=Err("Source protection limit must be finite and positive.")
+  limit NaN=NaN: automatic=Err("Source protection limit must be finite and positive.") fixed=Err("Source protection limit must be finite and positive.")
+range 0.2 ("200mA") display_resolution=Ok(Some(1e-6))
+  level 0=0.0: automatic=Ok(SourceRangeProfile { name: "", command_value: 0.001, maximum: 0.0012, resolution: 1e-8 }) fixed=Ok(SourceRangeProfile { name: "", command_value: 0.2, maximum: 0.2, resolution: 1e-6 })
+  level -resolution=-1e-6: automatic=Ok(SourceRangeProfile { name: "", command_value: 0.001, maximum: 0.0012, resolution: 1e-8 }) fixed=Ok(SourceRangeProfile { name: "", command_value: 0.2, maximum: 0.2, resolution: 1e-6 })
+  level +resolution=1e-6: automatic=Ok(SourceRangeProfile { name: "", command_value: 0.001, maximum: 0.0012, resolution: 1e-8 }) fixed=Ok(SourceRangeProfile { name: "", command_value: 0.2, maximum: 0.2, resolution: 1e-6 })
+  level +0.5*resolution=5e-7: automatic=Ok(SourceRangeProfile { name: "", command_value: 0.001, maximum: 0.0012, resolution: 1e-8 }) fixed=Err("DC level must be a multiple of 1e-6 SI. The minimum nonzero increment is 1e-6 SI for the selected source range.")
+  level +1.5*resolution=1.5e-6: automatic=Ok(SourceRangeProfile { name: "", command_value: 0.001, maximum: 0.0012, resolution: 1e-8 }) fixed=Err("DC increment (1.5e-6 SI) must be a multiple of 1e-6 SI for the selected source range.")
+  level -maximum=-0.2: automatic=Ok(SourceRangeProfile { name: "", command_value: 0.2, maximum: 0.2, resolution: 1e-6 }) fixed=Ok(SourceRangeProfile { name: "", command_value: 0.2, maximum: 0.2, resolution: 1e-6 })
+  level +maximum=0.2: automatic=Ok(SourceRangeProfile { name: "", command_value: 0.2, maximum: 0.2, resolution: 1e-6 }) fixed=Ok(SourceRangeProfile { name: "", command_value: 0.2, maximum: 0.2, resolution: 1e-6 })
+  level -(maximum+resolution)=-0.200001: automatic=Err("source targets exceed the YOKOGAWA_GS210 range.") fixed=Err("DC level exceeds the enabled ±2e-1 source range.")
+  level +(maximum+resolution)=0.200001: automatic=Err("source targets exceed the YOKOGAWA_GS210 range.") fixed=Err("DC level exceeds the enabled ±2e-1 source range.")
+  level +inf=inf: automatic=Err("DC level must be finite.") fixed=Err("DC level and selected source range must be finite.")
+  level NaN=NaN: automatic=Err("DC level must be finite.") fixed=Err("DC level and selected source range must be finite.")
+  limit 0=0.0: automatic=Err("Source protection limit must be finite and positive.") fixed=Err("Source protection limit must be finite and positive.")
+  limit -maximum=-30.0: automatic=Err("Source protection limit must be finite and positive.") fixed=Err("Source protection limit must be finite and positive.")
+  limit 0.5*minimum=0.5: automatic=Ok(SourceRangeProfile { name: "", command_value: 0.001, maximum: 0.0012, resolution: 1e-8 }) fixed=Ok(SourceRangeProfile { name: "", command_value: 0.2, maximum: 0.2, resolution: 1e-6 })
+  limit minimum=1.0: automatic=Ok(SourceRangeProfile { name: "", command_value: 0.001, maximum: 0.0012, resolution: 1e-8 }) fixed=Ok(SourceRangeProfile { name: "", command_value: 0.2, maximum: 0.2, resolution: 1e-6 })
+  limit maximum=30.0: automatic=Ok(SourceRangeProfile { name: "", command_value: 0.001, maximum: 0.0012, resolution: 1e-8 }) fixed=Ok(SourceRangeProfile { name: "", command_value: 0.2, maximum: 0.2, resolution: 1e-6 })
+  limit maximum+resolution=31.0: automatic=Err("Source protection limit (source_compliance) 31 exceeds YOKOGAWA_GS210 hardware maximum 30.") fixed=Err("Source protection limit (source_compliance) 31 exceeds YOKOGAWA_GS210 hardware maximum 30.")
+  limit +inf=inf: automatic=Err("Source protection limit must be finite and positive.") fixed=Err("Source protection limit must be finite and positive.")
+  limit NaN=NaN: automatic=Err("Source protection limit must be finite and positive.") fixed=Err("Source protection limit must be finite and positive.")
+invalid source range 0=0.0: display=Ok(None) fixed=Err("DC level and selected source range must be finite.")
+invalid source range -largest=-0.2: display=Ok(None) fixed=Err("DC level and selected source range must be finite.")
+invalid source range largest*1.5=0.30000000000000004: display=Ok(None) fixed=Err("YOKOGAWA_GS210 does not support source range 3.0000000000000004e-1.")
+invalid source range largest+1e-6*largest=0.2000002: display=Ok(Some(1e-6)) fixed=Err("YOKOGAWA_GS210 does not support source range 2.000002e-1.")
+invalid source range +inf=inf: display=Ok(None) fixed=Err("DC level and selected source range must be finite.")
+invalid source range NaN=NaN: display=Ok(None) fixed=Err("DC level and selected source range must be finite.")
+
+== YOKOGAWA_7651 ==
+InstrumentDescriptor { id: "YOKOGAWA_7651", role: Source, dialect: Yokogawa7651, simulation: false, capabilities: Source(SourceCapabilities { output: true, readback: true, software_ramp: true, voltage: true, current: true }) }
+profile=Source(SourceProfile { maximum_voltage: 32.0, maximum_current: 0.12, voltage_limit: SourceLimitProfile { minimum: 1.0, maximum: 30.0, resolution: Some(1.0) }, current_limit: SourceLimitProfile { minimum: 0.005, maximum: 0.12, resolution: Some(0.001) }, voltage_ranges: [SourceRangeProfile { name: "10mV", command_value: 2.0, maximum: 0.012, resolution: 1e-7 }, SourceRangeProfile { name: "100mV", command_value: 3.0, maximum: 0.12, resolution: 1e-6 }, SourceRangeProfile { name: "1V", command_value: 4.0, maximum: 1.2, resolution: 1e-5 }, SourceRangeProfile { name: "10V", command_value: 5.0, maximum: 12.0, resolution: 0.0001 }, SourceRangeProfile { name: "30V", command_value: 6.0, maximum: 32.0, resolution: 0.001 }], current_ranges: [SourceRangeProfile { name: "1mA", command_value: 4.0, maximum: 0.0012, resolution: 1e-8 }, SourceRangeProfile { name: "10mA", command_value: 5.0, maximum: 0.012, resolution: 1e-7 }, SourceRangeProfile { name: "100mA", command_value: 6.0, maximum: 0.12, resolution: 1e-6 }] })
+range_query=Ok(None) protection=Ok(None)
+-- mode=Iv --
+range 2.0 ("10mV") display_resolution=Ok(Some(1e-7))
+  level 0=0.0: automatic=Ok(SourceRangeProfile { name: "", command_value: 2.0, maximum: 0.012, resolution: 1e-7 }) fixed=Ok(SourceRangeProfile { name: "", command_value: 2.0, maximum: 0.012, resolution: 1e-7 })
+  level -resolution=-1e-7: automatic=Ok(SourceRangeProfile { name: "", command_value: 2.0, maximum: 0.012, resolution: 1e-7 }) fixed=Ok(SourceRangeProfile { name: "", command_value: 2.0, maximum: 0.012, resolution: 1e-7 })
+  level +resolution=1e-7: automatic=Ok(SourceRangeProfile { name: "", command_value: 2.0, maximum: 0.012, resolution: 1e-7 }) fixed=Ok(SourceRangeProfile { name: "", command_value: 2.0, maximum: 0.012, resolution: 1e-7 })
+  level +0.5*resolution=5e-8: automatic=Err("DC level must be a multiple of 1e-7 SI. The minimum nonzero increment is 1e-7 SI for the selected source range.") fixed=Err("DC level must be a multiple of 1e-7 SI. The minimum nonzero increment is 1e-7 SI for the selected source range.")
+  level +1.5*resolution=1.5e-7: automatic=Err("DC increment (1.5e-7 SI) must be a multiple of 1e-7 SI for the selected source range.") fixed=Err("DC increment (1.5e-7 SI) must be a multiple of 1e-7 SI for the selected source range.")
+  level -maximum=-0.012: automatic=Ok(SourceRangeProfile { name: "", command_value: 2.0, maximum: 0.012, resolution: 1e-7 }) fixed=Ok(SourceRangeProfile { name: "", command_value: 2.0, maximum: 0.012, resolution: 1e-7 })
+  level +maximum=0.012: automatic=Ok(SourceRangeProfile { name: "", command_value: 2.0, maximum: 0.012, resolution: 1e-7 }) fixed=Ok(SourceRangeProfile { name: "", command_value: 2.0, maximum: 0.012, resolution: 1e-7 })
+  level -(maximum+resolution)=-0.0120001: automatic=Err("DC increment (-1.20001e-2 SI) must be a multiple of 1e-6 SI for the selected source range.") fixed=Err("DC level exceeds the enabled ±1.2e-2 source range.")
+  level +(maximum+resolution)=0.0120001: automatic=Err("DC increment (1.20001e-2 SI) must be a multiple of 1e-6 SI for the selected source range.") fixed=Err("DC level exceeds the enabled ±1.2e-2 source range.")
+  level +inf=inf: automatic=Err("DC level must be finite.") fixed=Err("DC level and selected source range must be finite.")
+  level NaN=NaN: automatic=Err("DC level must be finite.") fixed=Err("DC level and selected source range must be finite.")
+  limit 0=0.0: automatic=Err("Source protection limit must be finite and positive.") fixed=Err("Source protection limit must be finite and positive.")
+  limit -maximum=-0.12: automatic=Err("Source protection limit must be finite and positive.") fixed=Err("Source protection limit must be finite and positive.")
+  limit 0.5*minimum=0.0025: automatic=Ok(SourceRangeProfile { name: "", command_value: 2.0, maximum: 0.012, resolution: 1e-7 }) fixed=Ok(SourceRangeProfile { name: "", command_value: 2.0, maximum: 0.012, resolution: 1e-7 })
+  limit minimum=0.005: automatic=Ok(SourceRangeProfile { name: "", command_value: 2.0, maximum: 0.012, resolution: 1e-7 }) fixed=Ok(SourceRangeProfile { name: "", command_value: 2.0, maximum: 0.012, resolution: 1e-7 })
+  limit maximum=0.12: automatic=Ok(SourceRangeProfile { name: "", command_value: 2.0, maximum: 0.012, resolution: 1e-7 }) fixed=Ok(SourceRangeProfile { name: "", command_value: 2.0, maximum: 0.012, resolution: 1e-7 })
+  limit maximum+resolution=0.121: automatic=Err("Source protection limit (source_compliance) 0.121 exceeds YOKOGAWA_7651 hardware maximum 0.12.") fixed=Err("Source protection limit (source_compliance) 0.121 exceeds YOKOGAWA_7651 hardware maximum 0.12.")
+  limit +inf=inf: automatic=Err("Source protection limit must be finite and positive.") fixed=Err("Source protection limit must be finite and positive.")
+  limit NaN=NaN: automatic=Err("Source protection limit must be finite and positive.") fixed=Err("Source protection limit must be finite and positive.")
+range 3.0 ("100mV") display_resolution=Ok(Some(1e-6))
+  level 0=0.0: automatic=Ok(SourceRangeProfile { name: "", command_value: 2.0, maximum: 0.012, resolution: 1e-7 }) fixed=Ok(SourceRangeProfile { name: "", command_value: 3.0, maximum: 0.12, resolution: 1e-6 })
+  level -resolution=-1e-6: automatic=Ok(SourceRangeProfile { name: "", command_value: 2.0, maximum: 0.012, resolution: 1e-7 }) fixed=Ok(SourceRangeProfile { name: "", command_value: 3.0, maximum: 0.12, resolution: 1e-6 })
+  level +resolution=1e-6: automatic=Ok(SourceRangeProfile { name: "", command_value: 2.0, maximum: 0.012, resolution: 1e-7 }) fixed=Ok(SourceRangeProfile { name: "", command_value: 3.0, maximum: 0.12, resolution: 1e-6 })
+  level +0.5*resolution=5e-7: automatic=Ok(SourceRangeProfile { name: "", command_value: 2.0, maximum: 0.012, resolution: 1e-7 }) fixed=Err("DC level must be a multiple of 1e-6 SI. The minimum nonzero increment is 1e-6 SI for the selected source range.")
+  level +1.5*resolution=1.5e-6: automatic=Ok(SourceRangeProfile { name: "", command_value: 2.0, maximum: 0.012, resolution: 1e-7 }) fixed=Err("DC increment (1.5e-6 SI) must be a multiple of 1e-6 SI for the selected source range.")
+  level -maximum=-0.12: automatic=Ok(SourceRangeProfile { name: "", command_value: 3.0, maximum: 0.12, resolution: 1e-6 }) fixed=Ok(SourceRangeProfile { name: "", command_value: 3.0, maximum: 0.12, resolution: 1e-6 })
+  level +maximum=0.12: automatic=Ok(SourceRangeProfile { name: "", command_value: 3.0, maximum: 0.12, resolution: 1e-6 }) fixed=Ok(SourceRangeProfile { name: "", command_value: 3.0, maximum: 0.12, resolution: 1e-6 })
+  level -(maximum+resolution)=-0.120001: automatic=Err("DC increment (-1.20001e-1 SI) must be a multiple of 1e-5 SI for the selected source range.") fixed=Err("DC level exceeds the enabled ±1.2e-1 source range.")
+  level +(maximum+resolution)=0.120001: automatic=Err("DC increment (1.20001e-1 SI) must be a multiple of 1e-5 SI for the selected source range.") fixed=Err("DC level exceeds the enabled ±1.2e-1 source range.")
+  level +inf=inf: automatic=Err("DC level must be finite.") fixed=Err("DC level and selected source range must be finite.")
+  level NaN=NaN: automatic=Err("DC level must be finite.") fixed=Err("DC level and selected source range must be finite.")
+  limit 0=0.0: automatic=Err("Source protection limit must be finite and positive.") fixed=Err("Source protection limit must be finite and positive.")
+  limit -maximum=-0.12: automatic=Err("Source protection limit must be finite and positive.") fixed=Err("Source protection limit must be finite and positive.")
+  limit 0.5*minimum=0.0025: automatic=Ok(SourceRangeProfile { name: "", command_value: 2.0, maximum: 0.012, resolution: 1e-7 }) fixed=Ok(SourceRangeProfile { name: "", command_value: 3.0, maximum: 0.12, resolution: 1e-6 })
+  limit minimum=0.005: automatic=Ok(SourceRangeProfile { name: "", command_value: 2.0, maximum: 0.012, resolution: 1e-7 }) fixed=Ok(SourceRangeProfile { name: "", command_value: 3.0, maximum: 0.12, resolution: 1e-6 })
+  limit maximum=0.12: automatic=Ok(SourceRangeProfile { name: "", command_value: 2.0, maximum: 0.012, resolution: 1e-7 }) fixed=Ok(SourceRangeProfile { name: "", command_value: 3.0, maximum: 0.12, resolution: 1e-6 })
+  limit maximum+resolution=0.121: automatic=Err("Source protection limit (source_compliance) 0.121 exceeds YOKOGAWA_7651 hardware maximum 0.12.") fixed=Err("Source protection limit (source_compliance) 0.121 exceeds YOKOGAWA_7651 hardware maximum 0.12.")
+  limit +inf=inf: automatic=Err("Source protection limit must be finite and positive.") fixed=Err("Source protection limit must be finite and positive.")
+  limit NaN=NaN: automatic=Err("Source protection limit must be finite and positive.") fixed=Err("Source protection limit must be finite and positive.")
+range 4.0 ("1V") display_resolution=Ok(Some(1e-5))
+  level 0=0.0: automatic=Ok(SourceRangeProfile { name: "", command_value: 2.0, maximum: 0.012, resolution: 1e-7 }) fixed=Ok(SourceRangeProfile { name: "", command_value: 4.0, maximum: 1.2, resolution: 1e-5 })
+  level -resolution=-1e-5: automatic=Ok(SourceRangeProfile { name: "", command_value: 2.0, maximum: 0.012, resolution: 1e-7 }) fixed=Ok(SourceRangeProfile { name: "", command_value: 4.0, maximum: 1.2, resolution: 1e-5 })
+  level +resolution=1e-5: automatic=Ok(SourceRangeProfile { name: "", command_value: 2.0, maximum: 0.012, resolution: 1e-7 }) fixed=Ok(SourceRangeProfile { name: "", command_value: 4.0, maximum: 1.2, resolution: 1e-5 })
+  level +0.5*resolution=5e-6: automatic=Ok(SourceRangeProfile { name: "", command_value: 2.0, maximum: 0.012, resolution: 1e-7 }) fixed=Err("DC level must be a multiple of 1e-5 SI. The minimum nonzero increment is 1e-5 SI for the selected source range.")
+  level +1.5*resolution=1.5000000000000002e-5: automatic=Ok(SourceRangeProfile { name: "", command_value: 2.0, maximum: 0.012, resolution: 1e-7 }) fixed=Err("DC increment (1.5000000000000002e-5 SI) must be a multiple of 1e-5 SI for the selected source range.")
+  level -maximum=-1.2: automatic=Ok(SourceRangeProfile { name: "", command_value: 4.0, maximum: 1.2, resolution: 1e-5 }) fixed=Ok(SourceRangeProfile { name: "", command_value: 4.0, maximum: 1.2, resolution: 1e-5 })
+  level +maximum=1.2: automatic=Ok(SourceRangeProfile { name: "", command_value: 4.0, maximum: 1.2, resolution: 1e-5 }) fixed=Ok(SourceRangeProfile { name: "", command_value: 4.0, maximum: 1.2, resolution: 1e-5 })
+  level -(maximum+resolution)=-1.20001: automatic=Err("DC increment (-1.20001e0 SI) must be a multiple of 1e-4 SI for the selected source range.") fixed=Err("DC level exceeds the enabled ±1.2e0 source range.")
+  level +(maximum+resolution)=1.20001: automatic=Err("DC increment (1.20001e0 SI) must be a multiple of 1e-4 SI for the selected source range.") fixed=Err("DC level exceeds the enabled ±1.2e0 source range.")
+  level +inf=inf: automatic=Err("DC level must be finite.") fixed=Err("DC level and selected source range must be finite.")
+  level NaN=NaN: automatic=Err("DC level must be finite.") fixed=Err("DC level and selected source range must be finite.")
+  limit 0=0.0: automatic=Err("Source protection limit must be finite and positive.") fixed=Err("Source protection limit must be finite and positive.")
+  limit -maximum=-0.12: automatic=Err("Source protection limit must be finite and positive.") fixed=Err("Source protection limit must be finite and positive.")
+  limit 0.5*minimum=0.0025: automatic=Ok(SourceRangeProfile { name: "", command_value: 2.0, maximum: 0.012, resolution: 1e-7 }) fixed=Ok(SourceRangeProfile { name: "", command_value: 4.0, maximum: 1.2, resolution: 1e-5 })
+  limit minimum=0.005: automatic=Ok(SourceRangeProfile { name: "", command_value: 2.0, maximum: 0.012, resolution: 1e-7 }) fixed=Ok(SourceRangeProfile { name: "", command_value: 4.0, maximum: 1.2, resolution: 1e-5 })
+  limit maximum=0.12: automatic=Ok(SourceRangeProfile { name: "", command_value: 2.0, maximum: 0.012, resolution: 1e-7 }) fixed=Ok(SourceRangeProfile { name: "", command_value: 4.0, maximum: 1.2, resolution: 1e-5 })
+  limit maximum+resolution=0.121: automatic=Err("Source protection limit (source_compliance) 0.121 exceeds YOKOGAWA_7651 hardware maximum 0.12.") fixed=Err("Source protection limit (source_compliance) 0.121 exceeds YOKOGAWA_7651 hardware maximum 0.12.")
+  limit +inf=inf: automatic=Err("Source protection limit must be finite and positive.") fixed=Err("Source protection limit must be finite and positive.")
+  limit NaN=NaN: automatic=Err("Source protection limit must be finite and positive.") fixed=Err("Source protection limit must be finite and positive.")
+range 5.0 ("10V") display_resolution=Ok(Some(0.0001))
+  level 0=0.0: automatic=Ok(SourceRangeProfile { name: "", command_value: 2.0, maximum: 0.012, resolution: 1e-7 }) fixed=Ok(SourceRangeProfile { name: "", command_value: 5.0, maximum: 12.0, resolution: 0.0001 })
+  level -resolution=-0.0001: automatic=Ok(SourceRangeProfile { name: "", command_value: 2.0, maximum: 0.012, resolution: 1e-7 }) fixed=Ok(SourceRangeProfile { name: "", command_value: 5.0, maximum: 12.0, resolution: 0.0001 })
+  level +resolution=0.0001: automatic=Ok(SourceRangeProfile { name: "", command_value: 2.0, maximum: 0.012, resolution: 1e-7 }) fixed=Ok(SourceRangeProfile { name: "", command_value: 5.0, maximum: 12.0, resolution: 0.0001 })
+  level +0.5*resolution=5e-5: automatic=Ok(SourceRangeProfile { name: "", command_value: 2.0, maximum: 0.012, resolution: 1e-7 }) fixed=Err("DC level must be a multiple of 1e-4 SI. The minimum nonzero increment is 1e-4 SI for the selected source range.")
+  level +1.5*resolution=0.00015000000000000001: automatic=Ok(SourceRangeProfile { name: "", command_value: 2.0, maximum: 0.012, resolution: 1e-7 }) fixed=Err("DC increment (1.5000000000000001e-4 SI) must be a multiple of 1e-4 SI for the selected source range.")
+  level -maximum=-12.0: automatic=Ok(SourceRangeProfile { name: "", command_value: 5.0, maximum: 12.0, resolution: 0.0001 }) fixed=Ok(SourceRangeProfile { name: "", command_value: 5.0, maximum: 12.0, resolution: 0.0001 })
+  level +maximum=12.0: automatic=Ok(SourceRangeProfile { name: "", command_value: 5.0, maximum: 12.0, resolution: 0.0001 }) fixed=Ok(SourceRangeProfile { name: "", command_value: 5.0, maximum: 12.0, resolution: 0.0001 })
+  level -(maximum+resolution)=-12.0001: automatic=Err("DC increment (-1.20001e1 SI) must be a multiple of 1e-3 SI for the selected source range.") fixed=Err("DC level exceeds the enabled ±1.2e1 source range.")
+  level +(maximum+resolution)=12.0001: automatic=Err("DC increment (1.20001e1 SI) must be a multiple of 1e-3 SI for the selected source range.") fixed=Err("DC level exceeds the enabled ±1.2e1 source range.")
+  level +inf=inf: automatic=Err("DC level must be finite.") fixed=Err("DC level and selected source range must be finite.")
+  level NaN=NaN: automatic=Err("DC level must be finite.") fixed=Err("DC level and selected source range must be finite.")
+  limit 0=0.0: automatic=Err("Source protection limit must be finite and positive.") fixed=Err("Source protection limit must be finite and positive.")
+  limit -maximum=-0.12: automatic=Err("Source protection limit must be finite and positive.") fixed=Err("Source protection limit must be finite and positive.")
+  limit 0.5*minimum=0.0025: automatic=Ok(SourceRangeProfile { name: "", command_value: 2.0, maximum: 0.012, resolution: 1e-7 }) fixed=Ok(SourceRangeProfile { name: "", command_value: 5.0, maximum: 12.0, resolution: 0.0001 })
+  limit minimum=0.005: automatic=Ok(SourceRangeProfile { name: "", command_value: 2.0, maximum: 0.012, resolution: 1e-7 }) fixed=Ok(SourceRangeProfile { name: "", command_value: 5.0, maximum: 12.0, resolution: 0.0001 })
+  limit maximum=0.12: automatic=Ok(SourceRangeProfile { name: "", command_value: 2.0, maximum: 0.012, resolution: 1e-7 }) fixed=Ok(SourceRangeProfile { name: "", command_value: 5.0, maximum: 12.0, resolution: 0.0001 })
+  limit maximum+resolution=0.121: automatic=Err("Source protection limit (source_compliance) 0.121 exceeds YOKOGAWA_7651 hardware maximum 0.12.") fixed=Err("Source protection limit (source_compliance) 0.121 exceeds YOKOGAWA_7651 hardware maximum 0.12.")
+  limit +inf=inf: automatic=Err("Source protection limit must be finite and positive.") fixed=Err("Source protection limit must be finite and positive.")
+  limit NaN=NaN: automatic=Err("Source protection limit must be finite and positive.") fixed=Err("Source protection limit must be finite and positive.")
+range 6.0 ("30V") display_resolution=Ok(Some(0.001))
+  level 0=0.0: automatic=Ok(SourceRangeProfile { name: "", command_value: 2.0, maximum: 0.012, resolution: 1e-7 }) fixed=Ok(SourceRangeProfile { name: "", command_value: 6.0, maximum: 32.0, resolution: 0.001 })
+  level -resolution=-0.001: automatic=Ok(SourceRangeProfile { name: "", command_value: 2.0, maximum: 0.012, resolution: 1e-7 }) fixed=Ok(SourceRangeProfile { name: "", command_value: 6.0, maximum: 32.0, resolution: 0.001 })
+  level +resolution=0.001: automatic=Ok(SourceRangeProfile { name: "", command_value: 2.0, maximum: 0.012, resolution: 1e-7 }) fixed=Ok(SourceRangeProfile { name: "", command_value: 6.0, maximum: 32.0, resolution: 0.001 })
+  level +0.5*resolution=0.0005: automatic=Ok(SourceRangeProfile { name: "", command_value: 2.0, maximum: 0.012, resolution: 1e-7 }) fixed=Err("DC level must be a multiple of 1e-3 SI. The minimum nonzero increment is 1e-3 SI for the selected source range.")
+  level +1.5*resolution=0.0015: automatic=Ok(SourceRangeProfile { name: "", command_value: 2.0, maximum: 0.012, resolution: 1e-7 }) fixed=Err("DC increment (1.5e-3 SI) must be a multiple of 1e-3 SI for the selected source range.")
+  level -maximum=-32.0: automatic=Ok(SourceRangeProfile { name: "", command_value: 6.0, maximum: 32.0, resolution: 0.001 }) fixed=Ok(SourceRangeProfile { name: "", command_value: 6.0, maximum: 32.0, resolution: 0.001 })
+  level +maximum=32.0: automatic=Ok(SourceRangeProfile { name: "", command_value: 6.0, maximum: 32.0, resolution: 0.001 }) fixed=Ok(SourceRangeProfile { name: "", command_value: 6.0, maximum: 32.0, resolution: 0.001 })
+  level -(maximum+resolution)=-32.001: automatic=Err("source targets exceed the YOKOGAWA_7651 range.") fixed=Err("DC level exceeds the enabled ±3.2e1 source range.")
+  level +(maximum+resolution)=32.001: automatic=Err("source targets exceed the YOKOGAWA_7651 range.") fixed=Err("DC level exceeds the enabled ±3.2e1 source range.")
+  level +inf=inf: automatic=Err("DC level must be finite.") fixed=Err("DC level and selected source range must be finite.")
+  level NaN=NaN: automatic=Err("DC level must be finite.") fixed=Err("DC level and selected source range must be finite.")
+  limit 0=0.0: automatic=Err("Source protection limit must be finite and positive.") fixed=Err("Source protection limit must be finite and positive.")
+  limit -maximum=-0.12: automatic=Err("Source protection limit must be finite and positive.") fixed=Err("Source protection limit must be finite and positive.")
+  limit 0.5*minimum=0.0025: automatic=Ok(SourceRangeProfile { name: "", command_value: 2.0, maximum: 0.012, resolution: 1e-7 }) fixed=Ok(SourceRangeProfile { name: "", command_value: 6.0, maximum: 32.0, resolution: 0.001 })
+  limit minimum=0.005: automatic=Ok(SourceRangeProfile { name: "", command_value: 2.0, maximum: 0.012, resolution: 1e-7 }) fixed=Ok(SourceRangeProfile { name: "", command_value: 6.0, maximum: 32.0, resolution: 0.001 })
+  limit maximum=0.12: automatic=Ok(SourceRangeProfile { name: "", command_value: 2.0, maximum: 0.012, resolution: 1e-7 }) fixed=Ok(SourceRangeProfile { name: "", command_value: 6.0, maximum: 32.0, resolution: 0.001 })
+  limit maximum+resolution=0.121: automatic=Err("Source protection limit (source_compliance) 0.121 exceeds YOKOGAWA_7651 hardware maximum 0.12.") fixed=Err("Source protection limit (source_compliance) 0.121 exceeds YOKOGAWA_7651 hardware maximum 0.12.")
+  limit +inf=inf: automatic=Err("Source protection limit must be finite and positive.") fixed=Err("Source protection limit must be finite and positive.")
+  limit NaN=NaN: automatic=Err("Source protection limit must be finite and positive.") fixed=Err("Source protection limit must be finite and positive.")
+invalid source range 0=0.0: display=Ok(None) fixed=Err("DC level and selected source range must be finite.")
+invalid source range -largest=-6.0: display=Ok(None) fixed=Err("DC level and selected source range must be finite.")
+invalid source range largest*1.5=9.0: display=Ok(None) fixed=Err("YOKOGAWA_7651 does not support source range 9e0.")
+invalid source range largest+1e-6*largest=6.000005999999999: display=Ok(Some(0.001)) fixed=Err("YOKOGAWA_7651 does not support source range 6.000005999999999e0.")
+invalid source range +inf=inf: display=Ok(None) fixed=Err("DC level and selected source range must be finite.")
+invalid source range NaN=NaN: display=Ok(None) fixed=Err("DC level and selected source range must be finite.")
+-- mode=Vi --
+range 4.0 ("1mA") display_resolution=Ok(Some(1e-8))
+  level 0=0.0: automatic=Ok(SourceRangeProfile { name: "", command_value: 4.0, maximum: 0.0012, resolution: 1e-8 }) fixed=Ok(SourceRangeProfile { name: "", command_value: 4.0, maximum: 0.0012, resolution: 1e-8 })
+  level -resolution=-1e-8: automatic=Ok(SourceRangeProfile { name: "", command_value: 4.0, maximum: 0.0012, resolution: 1e-8 }) fixed=Ok(SourceRangeProfile { name: "", command_value: 4.0, maximum: 0.0012, resolution: 1e-8 })
+  level +resolution=1e-8: automatic=Ok(SourceRangeProfile { name: "", command_value: 4.0, maximum: 0.0012, resolution: 1e-8 }) fixed=Ok(SourceRangeProfile { name: "", command_value: 4.0, maximum: 0.0012, resolution: 1e-8 })
+  level +0.5*resolution=5e-9: automatic=Err("DC level must be a multiple of 1e-8 SI. The minimum nonzero increment is 1e-8 SI for the selected source range.") fixed=Err("DC level must be a multiple of 1e-8 SI. The minimum nonzero increment is 1e-8 SI for the selected source range.")
+  level +1.5*resolution=1.5000000000000002e-8: automatic=Err("DC increment (1.5000000000000002e-8 SI) must be a multiple of 1e-8 SI for the selected source range.") fixed=Err("DC increment (1.5000000000000002e-8 SI) must be a multiple of 1e-8 SI for the selected source range.")
+  level -maximum=-0.0012: automatic=Ok(SourceRangeProfile { name: "", command_value: 4.0, maximum: 0.0012, resolution: 1e-8 }) fixed=Ok(SourceRangeProfile { name: "", command_value: 4.0, maximum: 0.0012, resolution: 1e-8 })
+  level +maximum=0.0012: automatic=Ok(SourceRangeProfile { name: "", command_value: 4.0, maximum: 0.0012, resolution: 1e-8 }) fixed=Ok(SourceRangeProfile { name: "", command_value: 4.0, maximum: 0.0012, resolution: 1e-8 })
+  level -(maximum+resolution)=-0.0012000099999999998: automatic=Err("DC increment (-1.2000099999999998e-3 SI) must be a multiple of 1e-7 SI for the selected source range.") fixed=Err("DC level exceeds the enabled ±1.2e-3 source range.")
+  level +(maximum+resolution)=0.0012000099999999998: automatic=Err("DC increment (1.2000099999999998e-3 SI) must be a multiple of 1e-7 SI for the selected source range.") fixed=Err("DC level exceeds the enabled ±1.2e-3 source range.")
+  level +inf=inf: automatic=Err("DC level must be finite.") fixed=Err("DC level and selected source range must be finite.")
+  level NaN=NaN: automatic=Err("DC level must be finite.") fixed=Err("DC level and selected source range must be finite.")
+  limit 0=0.0: automatic=Err("Source protection limit must be finite and positive.") fixed=Err("Source protection limit must be finite and positive.")
+  limit -maximum=-30.0: automatic=Err("Source protection limit must be finite and positive.") fixed=Err("Source protection limit must be finite and positive.")
+  limit 0.5*minimum=0.5: automatic=Ok(SourceRangeProfile { name: "", command_value: 4.0, maximum: 0.0012, resolution: 1e-8 }) fixed=Ok(SourceRangeProfile { name: "", command_value: 4.0, maximum: 0.0012, resolution: 1e-8 })
+  limit minimum=1.0: automatic=Ok(SourceRangeProfile { name: "", command_value: 4.0, maximum: 0.0012, resolution: 1e-8 }) fixed=Ok(SourceRangeProfile { name: "", command_value: 4.0, maximum: 0.0012, resolution: 1e-8 })
+  limit maximum=30.0: automatic=Ok(SourceRangeProfile { name: "", command_value: 4.0, maximum: 0.0012, resolution: 1e-8 }) fixed=Ok(SourceRangeProfile { name: "", command_value: 4.0, maximum: 0.0012, resolution: 1e-8 })
+  limit maximum+resolution=31.0: automatic=Err("Source protection limit (source_compliance) 31 exceeds YOKOGAWA_7651 hardware maximum 30.") fixed=Err("Source protection limit (source_compliance) 31 exceeds YOKOGAWA_7651 hardware maximum 30.")
+  limit +inf=inf: automatic=Err("Source protection limit must be finite and positive.") fixed=Err("Source protection limit must be finite and positive.")
+  limit NaN=NaN: automatic=Err("Source protection limit must be finite and positive.") fixed=Err("Source protection limit must be finite and positive.")
+range 5.0 ("10mA") display_resolution=Ok(Some(1e-7))
+  level 0=0.0: automatic=Ok(SourceRangeProfile { name: "", command_value: 4.0, maximum: 0.0012, resolution: 1e-8 }) fixed=Ok(SourceRangeProfile { name: "", command_value: 5.0, maximum: 0.012, resolution: 1e-7 })
+  level -resolution=-1e-7: automatic=Ok(SourceRangeProfile { name: "", command_value: 4.0, maximum: 0.0012, resolution: 1e-8 }) fixed=Ok(SourceRangeProfile { name: "", command_value: 5.0, maximum: 0.012, resolution: 1e-7 })
+  level +resolution=1e-7: automatic=Ok(SourceRangeProfile { name: "", command_value: 4.0, maximum: 0.0012, resolution: 1e-8 }) fixed=Ok(SourceRangeProfile { name: "", command_value: 5.0, maximum: 0.012, resolution: 1e-7 })
+  level +0.5*resolution=5e-8: automatic=Ok(SourceRangeProfile { name: "", command_value: 4.0, maximum: 0.0012, resolution: 1e-8 }) fixed=Err("DC level must be a multiple of 1e-7 SI. The minimum nonzero increment is 1e-7 SI for the selected source range.")
+  level +1.5*resolution=1.5e-7: automatic=Ok(SourceRangeProfile { name: "", command_value: 4.0, maximum: 0.0012, resolution: 1e-8 }) fixed=Err("DC increment (1.5e-7 SI) must be a multiple of 1e-7 SI for the selected source range.")
+  level -maximum=-0.012: automatic=Ok(SourceRangeProfile { name: "", command_value: 5.0, maximum: 0.012, resolution: 1e-7 }) fixed=Ok(SourceRangeProfile { name: "", command_value: 5.0, maximum: 0.012, resolution: 1e-7 })
+  level +maximum=0.012: automatic=Ok(SourceRangeProfile { name: "", command_value: 5.0, maximum: 0.012, resolution: 1e-7 }) fixed=Ok(SourceRangeProfile { name: "", command_value: 5.0, maximum: 0.012, resolution: 1e-7 })
+  level -(maximum+resolution)=-0.0120001: automatic=Err("DC increment (-1.20001e-2 SI) must be a multiple of 1e-6 SI for the selected source range.") fixed=Err("DC level exceeds the enabled ±1.2e-2 source range.")
+  level +(maximum+resolution)=0.0120001: automatic=Err("DC increment (1.20001e-2 SI) must be a multiple of 1e-6 SI for the selected source range.") fixed=Err("DC level exceeds the enabled ±1.2e-2 source range.")
+  level +inf=inf: automatic=Err("DC level must be finite.") fixed=Err("DC level and selected source range must be finite.")
+  level NaN=NaN: automatic=Err("DC level must be finite.") fixed=Err("DC level and selected source range must be finite.")
+  limit 0=0.0: automatic=Err("Source protection limit must be finite and positive.") fixed=Err("Source protection limit must be finite and positive.")
+  limit -maximum=-30.0: automatic=Err("Source protection limit must be finite and positive.") fixed=Err("Source protection limit must be finite and positive.")
+  limit 0.5*minimum=0.5: automatic=Ok(SourceRangeProfile { name: "", command_value: 4.0, maximum: 0.0012, resolution: 1e-8 }) fixed=Ok(SourceRangeProfile { name: "", command_value: 5.0, maximum: 0.012, resolution: 1e-7 })
+  limit minimum=1.0: automatic=Ok(SourceRangeProfile { name: "", command_value: 4.0, maximum: 0.0012, resolution: 1e-8 }) fixed=Ok(SourceRangeProfile { name: "", command_value: 5.0, maximum: 0.012, resolution: 1e-7 })
+  limit maximum=30.0: automatic=Ok(SourceRangeProfile { name: "", command_value: 4.0, maximum: 0.0012, resolution: 1e-8 }) fixed=Ok(SourceRangeProfile { name: "", command_value: 5.0, maximum: 0.012, resolution: 1e-7 })
+  limit maximum+resolution=31.0: automatic=Err("Source protection limit (source_compliance) 31 exceeds YOKOGAWA_7651 hardware maximum 30.") fixed=Err("Source protection limit (source_compliance) 31 exceeds YOKOGAWA_7651 hardware maximum 30.")
+  limit +inf=inf: automatic=Err("Source protection limit must be finite and positive.") fixed=Err("Source protection limit must be finite and positive.")
+  limit NaN=NaN: automatic=Err("Source protection limit must be finite and positive.") fixed=Err("Source protection limit must be finite and positive.")
+range 6.0 ("100mA") display_resolution=Ok(Some(1e-6))
+  level 0=0.0: automatic=Ok(SourceRangeProfile { name: "", command_value: 4.0, maximum: 0.0012, resolution: 1e-8 }) fixed=Ok(SourceRangeProfile { name: "", command_value: 6.0, maximum: 0.12, resolution: 1e-6 })
+  level -resolution=-1e-6: automatic=Ok(SourceRangeProfile { name: "", command_value: 4.0, maximum: 0.0012, resolution: 1e-8 }) fixed=Ok(SourceRangeProfile { name: "", command_value: 6.0, maximum: 0.12, resolution: 1e-6 })
+  level +resolution=1e-6: automatic=Ok(SourceRangeProfile { name: "", command_value: 4.0, maximum: 0.0012, resolution: 1e-8 }) fixed=Ok(SourceRangeProfile { name: "", command_value: 6.0, maximum: 0.12, resolution: 1e-6 })
+  level +0.5*resolution=5e-7: automatic=Ok(SourceRangeProfile { name: "", command_value: 4.0, maximum: 0.0012, resolution: 1e-8 }) fixed=Err("DC level must be a multiple of 1e-6 SI. The minimum nonzero increment is 1e-6 SI for the selected source range.")
+  level +1.5*resolution=1.5e-6: automatic=Ok(SourceRangeProfile { name: "", command_value: 4.0, maximum: 0.0012, resolution: 1e-8 }) fixed=Err("DC increment (1.5e-6 SI) must be a multiple of 1e-6 SI for the selected source range.")
+  level -maximum=-0.12: automatic=Ok(SourceRangeProfile { name: "", command_value: 6.0, maximum: 0.12, resolution: 1e-6 }) fixed=Ok(SourceRangeProfile { name: "", command_value: 6.0, maximum: 0.12, resolution: 1e-6 })
+  level +maximum=0.12: automatic=Ok(SourceRangeProfile { name: "", command_value: 6.0, maximum: 0.12, resolution: 1e-6 }) fixed=Ok(SourceRangeProfile { name: "", command_value: 6.0, maximum: 0.12, resolution: 1e-6 })
+  level -(maximum+resolution)=-0.120001: automatic=Err("source targets exceed the YOKOGAWA_7651 range.") fixed=Err("DC level exceeds the enabled ±1.2e-1 source range.")
+  level +(maximum+resolution)=0.120001: automatic=Err("source targets exceed the YOKOGAWA_7651 range.") fixed=Err("DC level exceeds the enabled ±1.2e-1 source range.")
+  level +inf=inf: automatic=Err("DC level must be finite.") fixed=Err("DC level and selected source range must be finite.")
+  level NaN=NaN: automatic=Err("DC level must be finite.") fixed=Err("DC level and selected source range must be finite.")
+  limit 0=0.0: automatic=Err("Source protection limit must be finite and positive.") fixed=Err("Source protection limit must be finite and positive.")
+  limit -maximum=-30.0: automatic=Err("Source protection limit must be finite and positive.") fixed=Err("Source protection limit must be finite and positive.")
+  limit 0.5*minimum=0.5: automatic=Ok(SourceRangeProfile { name: "", command_value: 4.0, maximum: 0.0012, resolution: 1e-8 }) fixed=Ok(SourceRangeProfile { name: "", command_value: 6.0, maximum: 0.12, resolution: 1e-6 })
+  limit minimum=1.0: automatic=Ok(SourceRangeProfile { name: "", command_value: 4.0, maximum: 0.0012, resolution: 1e-8 }) fixed=Ok(SourceRangeProfile { name: "", command_value: 6.0, maximum: 0.12, resolution: 1e-6 })
+  limit maximum=30.0: automatic=Ok(SourceRangeProfile { name: "", command_value: 4.0, maximum: 0.0012, resolution: 1e-8 }) fixed=Ok(SourceRangeProfile { name: "", command_value: 6.0, maximum: 0.12, resolution: 1e-6 })
+  limit maximum+resolution=31.0: automatic=Err("Source protection limit (source_compliance) 31 exceeds YOKOGAWA_7651 hardware maximum 30.") fixed=Err("Source protection limit (source_compliance) 31 exceeds YOKOGAWA_7651 hardware maximum 30.")
+  limit +inf=inf: automatic=Err("Source protection limit must be finite and positive.") fixed=Err("Source protection limit must be finite and positive.")
+  limit NaN=NaN: automatic=Err("Source protection limit must be finite and positive.") fixed=Err("Source protection limit must be finite and positive.")
+invalid source range 0=0.0: display=Ok(None) fixed=Err("DC level and selected source range must be finite.")
+invalid source range -largest=-6.0: display=Ok(None) fixed=Err("DC level and selected source range must be finite.")
+invalid source range largest*1.5=9.0: display=Ok(None) fixed=Err("YOKOGAWA_7651 does not support source range 9e0.")
+invalid source range largest+1e-6*largest=6.000005999999999: display=Ok(Some(1e-6)) fixed=Err("YOKOGAWA_7651 does not support source range 6.000005999999999e0.")
+invalid source range +inf=inf: display=Ok(None) fixed=Err("DC level and selected source range must be finite.")
+invalid source range NaN=NaN: display=Ok(None) fixed=Err("DC level and selected source range must be finite.")
+
+== SIMULATED_SOURCE ==
+InstrumentDescriptor { id: "SIMULATED_SOURCE", role: Source, dialect: Simulation, simulation: true, capabilities: Source(SourceCapabilities { output: true, readback: true, software_ramp: true, voltage: true, current: true }) }
+profile=Source(SourceProfile { maximum_voltage: 10.0, maximum_current: 1.0, voltage_limit: SourceLimitProfile { minimum: 1e-9, maximum: 10.0, resolution: None }, current_limit: SourceLimitProfile { minimum: 1e-9, maximum: 1.0, resolution: None }, voltage_ranges: [SourceRangeProfile { name: "10V", command_value: 10.0, maximum: 10.0, resolution: 1e-9 }], current_ranges: [SourceRangeProfile { name: "1A", command_value: 1.0, maximum: 1.0, resolution: 1e-12 }] })
+range_query=Ok(None) protection=Ok(None)
+-- mode=Iv --
+range 10.0 ("10V") display_resolution=Ok(Some(1e-9))
+  level 0=0.0: automatic=Err("Unsupported source model 'SIMULATED_SOURCE'. Supported source models: YOKOGAWA_GS210, YOKOGAWA_7651.") fixed=Err("Unsupported source model 'SIMULATED_SOURCE'. Supported source models: YOKOGAWA_GS210, YOKOGAWA_7651.")
+  level -resolution=-1e-9: automatic=Err("Unsupported source model 'SIMULATED_SOURCE'. Supported source models: YOKOGAWA_GS210, YOKOGAWA_7651.") fixed=Err("Unsupported source model 'SIMULATED_SOURCE'. Supported source models: YOKOGAWA_GS210, YOKOGAWA_7651.")
+  level +resolution=1e-9: automatic=Err("Unsupported source model 'SIMULATED_SOURCE'. Supported source models: YOKOGAWA_GS210, YOKOGAWA_7651.") fixed=Err("Unsupported source model 'SIMULATED_SOURCE'. Supported source models: YOKOGAWA_GS210, YOKOGAWA_7651.")
+  level +0.5*resolution=5e-10: automatic=Err("Unsupported source model 'SIMULATED_SOURCE'. Supported source models: YOKOGAWA_GS210, YOKOGAWA_7651.") fixed=Err("Unsupported source model 'SIMULATED_SOURCE'. Supported source models: YOKOGAWA_GS210, YOKOGAWA_7651.")
+  level +1.5*resolution=1.5000000000000002e-9: automatic=Err("Unsupported source model 'SIMULATED_SOURCE'. Supported source models: YOKOGAWA_GS210, YOKOGAWA_7651.") fixed=Err("Unsupported source model 'SIMULATED_SOURCE'. Supported source models: YOKOGAWA_GS210, YOKOGAWA_7651.")
+  level -maximum=-10.0: automatic=Err("Unsupported source model 'SIMULATED_SOURCE'. Supported source models: YOKOGAWA_GS210, YOKOGAWA_7651.") fixed=Err("Unsupported source model 'SIMULATED_SOURCE'. Supported source models: YOKOGAWA_GS210, YOKOGAWA_7651.")
+  level +maximum=10.0: automatic=Err("Unsupported source model 'SIMULATED_SOURCE'. Supported source models: YOKOGAWA_GS210, YOKOGAWA_7651.") fixed=Err("Unsupported source model 'SIMULATED_SOURCE'. Supported source models: YOKOGAWA_GS210, YOKOGAWA_7651.")
+  level -(maximum+resolution)=-10.000000001: automatic=Err("Unsupported source model 'SIMULATED_SOURCE'. Supported source models: YOKOGAWA_GS210, YOKOGAWA_7651.") fixed=Err("Unsupported source model 'SIMULATED_SOURCE'. Supported source models: YOKOGAWA_GS210, YOKOGAWA_7651.")
+  level +(maximum+resolution)=10.000000001: automatic=Err("Unsupported source model 'SIMULATED_SOURCE'. Supported source models: YOKOGAWA_GS210, YOKOGAWA_7651.") fixed=Err("Unsupported source model 'SIMULATED_SOURCE'. Supported source models: YOKOGAWA_GS210, YOKOGAWA_7651.")
+  level +inf=inf: automatic=Err("DC level must be finite.") fixed=Err("DC level and selected source range must be finite.")
+  level NaN=NaN: automatic=Err("DC level must be finite.") fixed=Err("DC level and selected source range must be finite.")
+  limit 0=0.0: automatic=Err("Unsupported source model 'SIMULATED_SOURCE'. Supported source models: YOKOGAWA_GS210, YOKOGAWA_7651.") fixed=Err("Source protection limit must be finite and positive.")
+  limit -maximum=-1.0: automatic=Err("Unsupported source model 'SIMULATED_SOURCE'. Supported source models: YOKOGAWA_GS210, YOKOGAWA_7651.") fixed=Err("Source protection limit must be finite and positive.")
+  limit 0.5*minimum=5e-10: automatic=Err("Unsupported source model 'SIMULATED_SOURCE'. Supported source models: YOKOGAWA_GS210, YOKOGAWA_7651.") fixed=Err("Unsupported source model 'SIMULATED_SOURCE'. Supported source models: YOKOGAWA_GS210, YOKOGAWA_7651.")
+  limit minimum=1e-9: automatic=Err("Unsupported source model 'SIMULATED_SOURCE'. Supported source models: YOKOGAWA_GS210, YOKOGAWA_7651.") fixed=Err("Unsupported source model 'SIMULATED_SOURCE'. Supported source models: YOKOGAWA_GS210, YOKOGAWA_7651.")
+  limit maximum=1.0: automatic=Err("Unsupported source model 'SIMULATED_SOURCE'. Supported source models: YOKOGAWA_GS210, YOKOGAWA_7651.") fixed=Err("Unsupported source model 'SIMULATED_SOURCE'. Supported source models: YOKOGAWA_GS210, YOKOGAWA_7651.")
+  limit maximum+resolution=1.000000001: automatic=Err("Unsupported source model 'SIMULATED_SOURCE'. Supported source models: YOKOGAWA_GS210, YOKOGAWA_7651.") fixed=Err("Unsupported source model 'SIMULATED_SOURCE'. Supported source models: YOKOGAWA_GS210, YOKOGAWA_7651.")
+  limit +inf=inf: automatic=Err("Unsupported source model 'SIMULATED_SOURCE'. Supported source models: YOKOGAWA_GS210, YOKOGAWA_7651.") fixed=Err("Source protection limit must be finite and positive.")
+  limit NaN=NaN: automatic=Err("Unsupported source model 'SIMULATED_SOURCE'. Supported source models: YOKOGAWA_GS210, YOKOGAWA_7651.") fixed=Err("Source protection limit must be finite and positive.")
+invalid source range 0=0.0: display=Ok(None) fixed=Err("DC level and selected source range must be finite.")
+invalid source range -largest=-10.0: display=Ok(None) fixed=Err("DC level and selected source range must be finite.")
+invalid source range largest*1.5=15.0: display=Ok(None) fixed=Err("Unsupported source model 'SIMULATED_SOURCE'. Supported source models: YOKOGAWA_GS210, YOKOGAWA_7651.")
+invalid source range largest+1e-6*largest=10.00001: display=Ok(Some(1e-9)) fixed=Err("Unsupported source model 'SIMULATED_SOURCE'. Supported source models: YOKOGAWA_GS210, YOKOGAWA_7651.")
+invalid source range +inf=inf: display=Ok(None) fixed=Err("DC level and selected source range must be finite.")
+invalid source range NaN=NaN: display=Ok(None) fixed=Err("DC level and selected source range must be finite.")
+-- mode=Vi --
+range 1.0 ("1A") display_resolution=Ok(Some(1e-12))
+  level 0=0.0: automatic=Err("Unsupported source model 'SIMULATED_SOURCE'. Supported source models: YOKOGAWA_GS210, YOKOGAWA_7651.") fixed=Err("Unsupported source model 'SIMULATED_SOURCE'. Supported source models: YOKOGAWA_GS210, YOKOGAWA_7651.")
+  level -resolution=-1e-12: automatic=Err("Unsupported source model 'SIMULATED_SOURCE'. Supported source models: YOKOGAWA_GS210, YOKOGAWA_7651.") fixed=Err("Unsupported source model 'SIMULATED_SOURCE'. Supported source models: YOKOGAWA_GS210, YOKOGAWA_7651.")
+  level +resolution=1e-12: automatic=Err("Unsupported source model 'SIMULATED_SOURCE'. Supported source models: YOKOGAWA_GS210, YOKOGAWA_7651.") fixed=Err("Unsupported source model 'SIMULATED_SOURCE'. Supported source models: YOKOGAWA_GS210, YOKOGAWA_7651.")
+  level +0.5*resolution=5e-13: automatic=Err("Unsupported source model 'SIMULATED_SOURCE'. Supported source models: YOKOGAWA_GS210, YOKOGAWA_7651.") fixed=Err("Unsupported source model 'SIMULATED_SOURCE'. Supported source models: YOKOGAWA_GS210, YOKOGAWA_7651.")
+  level +1.5*resolution=1.5e-12: automatic=Err("Unsupported source model 'SIMULATED_SOURCE'. Supported source models: YOKOGAWA_GS210, YOKOGAWA_7651.") fixed=Err("Unsupported source model 'SIMULATED_SOURCE'. Supported source models: YOKOGAWA_GS210, YOKOGAWA_7651.")
+  level -maximum=-1.0: automatic=Err("Unsupported source model 'SIMULATED_SOURCE'. Supported source models: YOKOGAWA_GS210, YOKOGAWA_7651.") fixed=Err("Unsupported source model 'SIMULATED_SOURCE'. Supported source models: YOKOGAWA_GS210, YOKOGAWA_7651.")
+  level +maximum=1.0: automatic=Err("Unsupported source model 'SIMULATED_SOURCE'. Supported source models: YOKOGAWA_GS210, YOKOGAWA_7651.") fixed=Err("Unsupported source model 'SIMULATED_SOURCE'. Supported source models: YOKOGAWA_GS210, YOKOGAWA_7651.")
+  level -(maximum+resolution)=-1.000000000001: automatic=Err("Unsupported source model 'SIMULATED_SOURCE'. Supported source models: YOKOGAWA_GS210, YOKOGAWA_7651.") fixed=Err("Unsupported source model 'SIMULATED_SOURCE'. Supported source models: YOKOGAWA_GS210, YOKOGAWA_7651.")
+  level +(maximum+resolution)=1.000000000001: automatic=Err("Unsupported source model 'SIMULATED_SOURCE'. Supported source models: YOKOGAWA_GS210, YOKOGAWA_7651.") fixed=Err("Unsupported source model 'SIMULATED_SOURCE'. Supported source models: YOKOGAWA_GS210, YOKOGAWA_7651.")
+  level +inf=inf: automatic=Err("DC level must be finite.") fixed=Err("DC level and selected source range must be finite.")
+  level NaN=NaN: automatic=Err("DC level must be finite.") fixed=Err("DC level and selected source range must be finite.")
+  limit 0=0.0: automatic=Err("Unsupported source model 'SIMULATED_SOURCE'. Supported source models: YOKOGAWA_GS210, YOKOGAWA_7651.") fixed=Err("Source protection limit must be finite and positive.")
+  limit -maximum=-10.0: automatic=Err("Unsupported source model 'SIMULATED_SOURCE'. Supported source models: YOKOGAWA_GS210, YOKOGAWA_7651.") fixed=Err("Source protection limit must be finite and positive.")
+  limit 0.5*minimum=5e-10: automatic=Err("Unsupported source model 'SIMULATED_SOURCE'. Supported source models: YOKOGAWA_GS210, YOKOGAWA_7651.") fixed=Err("Unsupported source model 'SIMULATED_SOURCE'. Supported source models: YOKOGAWA_GS210, YOKOGAWA_7651.")
+  limit minimum=1e-9: automatic=Err("Unsupported source model 'SIMULATED_SOURCE'. Supported source models: YOKOGAWA_GS210, YOKOGAWA_7651.") fixed=Err("Unsupported source model 'SIMULATED_SOURCE'. Supported source models: YOKOGAWA_GS210, YOKOGAWA_7651.")
+  limit maximum=10.0: automatic=Err("Unsupported source model 'SIMULATED_SOURCE'. Supported source models: YOKOGAWA_GS210, YOKOGAWA_7651.") fixed=Err("Unsupported source model 'SIMULATED_SOURCE'. Supported source models: YOKOGAWA_GS210, YOKOGAWA_7651.")
+  limit maximum+resolution=10.000000001: automatic=Err("Unsupported source model 'SIMULATED_SOURCE'. Supported source models: YOKOGAWA_GS210, YOKOGAWA_7651.") fixed=Err("Unsupported source model 'SIMULATED_SOURCE'. Supported source models: YOKOGAWA_GS210, YOKOGAWA_7651.")
+  limit +inf=inf: automatic=Err("Unsupported source model 'SIMULATED_SOURCE'. Supported source models: YOKOGAWA_GS210, YOKOGAWA_7651.") fixed=Err("Source protection limit must be finite and positive.")
+  limit NaN=NaN: automatic=Err("Unsupported source model 'SIMULATED_SOURCE'. Supported source models: YOKOGAWA_GS210, YOKOGAWA_7651.") fixed=Err("Source protection limit must be finite and positive.")
+invalid source range 0=0.0: display=Ok(None) fixed=Err("DC level and selected source range must be finite.")
+invalid source range -largest=-1.0: display=Ok(None) fixed=Err("DC level and selected source range must be finite.")
+invalid source range largest*1.5=1.5: display=Ok(None) fixed=Err("Unsupported source model 'SIMULATED_SOURCE'. Supported source models: YOKOGAWA_GS210, YOKOGAWA_7651.")
+invalid source range largest+1e-6*largest=1.000001: display=Ok(Some(1e-12)) fixed=Err("Unsupported source model 'SIMULATED_SOURCE'. Supported source models: YOKOGAWA_GS210, YOKOGAWA_7651.")
+invalid source range +inf=inf: display=Ok(None) fixed=Err("DC level and selected source range must be finite.")
+invalid source range NaN=NaN: display=Ok(None) fixed=Err("DC level and selected source range must be finite.")
+
+== AGILENT_34401A ==
+InstrumentDescriptor { id: "AGILENT_34401A", role: Meter, dialect: Agilent34401, simulation: false, capabilities: Meter(MeterCapabilities { voltage: true, current: true }) }
+profile=Meter(MeterProfile { maximum_input_voltage: 1000.0, maximum_input_current: 3.0, auto_range_required: false, voltage_ranges: [0.1, 1.0, 10.0, 100.0, 1000.0], current_ranges: [0.01, 0.1, 1.0, 3.0], nplc: Discrete([0.02, 0.2, 1.0, 10.0, 100.0]) })
+-- mode=Iv --
+ranges=Ok([0.01, 0.1, 1.0, 3.0]) display_queries=Ok(Some(("SENS:CURR:DC:RANG?", "SENS:CURR:DC:RES?"))) range_resistances=[MeterRangeResistance { range: 0.01, ohms: 5.0, kind: Shunt }, MeterRangeResistance { range: 0.1, ohms: 5.0, kind: Shunt }, MeterRangeResistance { range: 1.0, ohms: 0.1, kind: Shunt }, MeterRangeResistance { range: 3.0, ohms: 0.1, kind: Shunt }]
+auto=Ok(())
+auto with invalid inactive range=Ok(())
+range listed=0.01: validation=Ok(()) resistance=Some(MeterInputResistance { ohms: 5.0, kind: Shunt })
+range listed*(1+1e-13)=0.010000000000001: validation=Ok(()) resistance=Some(MeterInputResistance { ohms: 5.0, kind: Shunt })
+range listed*(1+1e-9)=0.010000000010000001: validation=Err("AGILENT_34401A does not support fixed current range 0.010000000010000001. Choose one of: 0.01, 0.1, 1, 3.") resistance=None
+range listed=0.1: validation=Ok(()) resistance=Some(MeterInputResistance { ohms: 5.0, kind: Shunt })
+range listed*(1+1e-13)=0.10000000000001: validation=Ok(()) resistance=Some(MeterInputResistance { ohms: 5.0, kind: Shunt })
+range listed*(1+1e-9)=0.10000000010000001: validation=Err("AGILENT_34401A does not support fixed current range 0.10000000010000001. Choose one of: 0.01, 0.1, 1, 3.") resistance=None
+range listed=1.0: validation=Ok(()) resistance=Some(MeterInputResistance { ohms: 0.1, kind: Shunt })
+range listed*(1+1e-13)=1.0000000000001: validation=Ok(()) resistance=Some(MeterInputResistance { ohms: 0.1, kind: Shunt })
+range listed*(1+1e-9)=1.000000001: validation=Err("AGILENT_34401A does not support fixed current range 1.000000001. Choose one of: 0.01, 0.1, 1, 3.") resistance=None
+range listed=3.0: validation=Ok(()) resistance=Some(MeterInputResistance { ohms: 0.1, kind: Shunt })
+range listed*(1+1e-13)=3.0000000000002998: validation=Ok(()) resistance=Some(MeterInputResistance { ohms: 0.1, kind: Shunt })
+range listed*(1+1e-9)=3.0000000030000002: validation=Err("AGILENT_34401A does not support fixed current range 3.0000000030000002. Choose one of: 0.01, 0.1, 1, 3.") resistance=None
+range listed=0.01: validation=Ok(()) resistance=Some(MeterInputResistance { ohms: 5.0, kind: Shunt })
+range listed*(1+1e-13)=0.010000000000001: validation=Ok(()) resistance=Some(MeterInputResistance { ohms: 5.0, kind: Shunt })
+range listed*(1+1e-9)=0.010000000010000001: validation=Err("AGILENT_34401A does not support fixed current range 0.010000000010000001. Choose one of: 0.01, 0.1, 1, 3.") resistance=None
+range listed=0.1: validation=Ok(()) resistance=Some(MeterInputResistance { ohms: 5.0, kind: Shunt })
+range listed*(1+1e-13)=0.10000000000001: validation=Ok(()) resistance=Some(MeterInputResistance { ohms: 5.0, kind: Shunt })
+range listed*(1+1e-9)=0.10000000010000001: validation=Err("AGILENT_34401A does not support fixed current range 0.10000000010000001. Choose one of: 0.01, 0.1, 1, 3.") resistance=None
+range listed=1.0: validation=Ok(()) resistance=Some(MeterInputResistance { ohms: 0.1, kind: Shunt })
+range listed*(1+1e-13)=1.0000000000001: validation=Ok(()) resistance=Some(MeterInputResistance { ohms: 0.1, kind: Shunt })
+range listed*(1+1e-9)=1.000000001: validation=Err("AGILENT_34401A does not support fixed current range 1.000000001. Choose one of: 0.01, 0.1, 1, 3.") resistance=None
+range listed=3.0: validation=Ok(()) resistance=Some(MeterInputResistance { ohms: 0.1, kind: Shunt })
+range listed*(1+1e-13)=3.0000000000002998: validation=Ok(()) resistance=Some(MeterInputResistance { ohms: 0.1, kind: Shunt })
+range listed*(1+1e-9)=3.0000000030000002: validation=Err("AGILENT_34401A does not support fixed current range 3.0000000030000002. Choose one of: 0.01, 0.1, 1, 3.") resistance=None
+range 0=0.0: validation=Err("Fixed meter range must be finite and positive.") resistance=None
+range -0=-0.0: validation=Err("Fixed meter range must be finite and positive.") resistance=None
+range -maximum_input=-3.0: validation=Err("Fixed meter range must be finite and positive.") resistance=None
+range maximum_input=3.0: validation=Ok(()) resistance=Some(MeterInputResistance { ohms: 0.1, kind: Shunt })
+range maximum_input*1.01=3.0300000000000002: validation=Err("AGILENT_34401A does not support fixed current range 3.0300000000000002. Choose one of: 0.01, 0.1, 1, 3.") resistance=None
+range largest_fixed*10=30.0: validation=Err("AGILENT_34401A does not support fixed current range 30. Choose one of: 0.01, 0.1, 1, 3.") resistance=None
+range +inf=inf: validation=Err("Fixed meter range must be finite and positive.") resistance=Some(MeterInputResistance { ohms: 5.0, kind: Shunt })
+range -inf=-inf: validation=Err("Fixed meter range must be finite and positive.") resistance=Some(MeterInputResistance { ohms: 5.0, kind: Shunt })
+range NaN=NaN: validation=Err("Fixed meter range must be finite and positive.") resistance=None
+range -smallest_fixed=-0.01: validation=Err("Fixed meter range must be finite and positive.") resistance=None
+range smallest_fixed/10=0.001: validation=Err("AGILENT_34401A does not support fixed current range 0.001. Choose one of: 0.01, 0.1, 1, 3.") resistance=None
+-- mode=Vi --
+ranges=Ok([0.1, 1.0, 10.0, 100.0, 1000.0]) display_queries=Ok(Some(("SENS:VOLT:DC:RANG?", "SENS:VOLT:DC:RES?"))) range_resistances=[]
+auto=Ok(())
+auto with invalid inactive range=Ok(())
+range listed=0.1: validation=Ok(()) resistance=None
+range listed*(1+1e-13)=0.10000000000001: validation=Ok(()) resistance=None
+range listed*(1+1e-9)=0.10000000010000001: validation=Err("AGILENT_34401A does not support fixed voltage range 0.10000000010000001. Choose one of: 0.1, 1, 10, 100, 1000.") resistance=None
+range listed=1.0: validation=Ok(()) resistance=None
+range listed*(1+1e-13)=1.0000000000001: validation=Ok(()) resistance=None
+range listed*(1+1e-9)=1.000000001: validation=Err("AGILENT_34401A does not support fixed voltage range 1.000000001. Choose one of: 0.1, 1, 10, 100, 1000.") resistance=None
+range listed=10.0: validation=Ok(()) resistance=None
+range listed*(1+1e-13)=10.000000000000998: validation=Ok(()) resistance=None
+range listed*(1+1e-9)=10.00000001: validation=Err("AGILENT_34401A does not support fixed voltage range 10.00000001. Choose one of: 0.1, 1, 10, 100, 1000.") resistance=None
+range listed=100.0: validation=Ok(()) resistance=None
+range listed*(1+1e-13)=100.00000000000999: validation=Ok(()) resistance=None
+range listed*(1+1e-9)=100.00000010000001: validation=Err("AGILENT_34401A does not support fixed voltage range 100.00000010000001. Choose one of: 0.1, 1, 10, 100, 1000.") resistance=None
+range listed=1000.0: validation=Ok(()) resistance=None
+range listed*(1+1e-13)=1000.0000000000999: validation=Ok(()) resistance=None
+range listed*(1+1e-9)=1000.0000010000001: validation=Err("AGILENT_34401A does not support fixed voltage range 1000.0000010000001. Choose one of: 0.1, 1, 10, 100, 1000.") resistance=None
+range 0=0.0: validation=Err("Fixed meter range must be finite and positive.") resistance=None
+range -0=-0.0: validation=Err("Fixed meter range must be finite and positive.") resistance=None
+range -maximum_input=-1000.0: validation=Err("Fixed meter range must be finite and positive.") resistance=None
+range maximum_input=1000.0: validation=Ok(()) resistance=None
+range maximum_input*1.01=1010.0: validation=Err("AGILENT_34401A does not support fixed voltage range 1010. Choose one of: 0.1, 1, 10, 100, 1000.") resistance=None
+range largest_fixed*10=10000.0: validation=Err("AGILENT_34401A does not support fixed voltage range 10000. Choose one of: 0.1, 1, 10, 100, 1000.") resistance=None
+range +inf=inf: validation=Err("Fixed meter range must be finite and positive.") resistance=None
+range -inf=-inf: validation=Err("Fixed meter range must be finite and positive.") resistance=None
+range NaN=NaN: validation=Err("Fixed meter range must be finite and positive.") resistance=None
+range -smallest_fixed=-0.1: validation=Err("Fixed meter range must be finite and positive.") resistance=None
+range smallest_fixed/10=0.01: validation=Err("AGILENT_34401A does not support fixed voltage range 0.01. Choose one of: 0.1, 1, 10, 100, 1000.") resistance=None
+
+== AGILENT_34411A ==
+InstrumentDescriptor { id: "AGILENT_34411A", role: Meter, dialect: Scpi, simulation: false, capabilities: Meter(MeterCapabilities { voltage: true, current: true }) }
+profile=Meter(MeterProfile { maximum_input_voltage: 1000.0, maximum_input_current: 3.0, auto_range_required: false, voltage_ranges: [0.1, 1.0, 10.0, 100.0, 1000.0], current_ranges: [0.0001, 0.001, 0.01, 0.1, 1.0, 3.0], nplc: Discrete([0.001, 0.002, 0.006, 0.02, 0.06, 0.2, 1.0, 2.0, 10.0, 100.0]) })
+-- mode=Iv --
+ranges=Ok([0.0001, 0.001, 0.01, 0.1, 1.0, 3.0]) display_queries=Ok(Some(("SENS:CURR:DC:RANG?", "SENS:CURR:DC:RES?"))) range_resistances=[MeterRangeResistance { range: 0.0001, ohms: 200.0, kind: Shunt }, MeterRangeResistance { range: 0.001, ohms: 200.0, kind: Shunt }, MeterRangeResistance { range: 0.01, ohms: 2.0, kind: Shunt }, MeterRangeResistance { range: 0.1, ohms: 2.0, kind: Shunt }, MeterRangeResistance { range: 1.0, ohms: 0.1, kind: Shunt }, MeterRangeResistance { range: 3.0, ohms: 0.1, kind: Shunt }]
+auto=Ok(())
+auto with invalid inactive range=Ok(())
+range listed=0.0001: validation=Ok(()) resistance=Some(MeterInputResistance { ohms: 200.0, kind: Shunt })
+range listed*(1+1e-13)=0.00010000000000000999: validation=Ok(()) resistance=Some(MeterInputResistance { ohms: 200.0, kind: Shunt })
+range listed*(1+1e-9)=0.00010000000010000001: validation=Ok(()) resistance=Some(MeterInputResistance { ohms: 200.0, kind: Shunt })
+range listed=0.001: validation=Ok(()) resistance=Some(MeterInputResistance { ohms: 200.0, kind: Shunt })
+range listed*(1+1e-13)=0.0010000000000001: validation=Ok(()) resistance=Some(MeterInputResistance { ohms: 200.0, kind: Shunt })
+range listed*(1+1e-9)=0.001000000001: validation=Ok(()) resistance=Some(MeterInputResistance { ohms: 200.0, kind: Shunt })
+range listed=0.01: validation=Ok(()) resistance=Some(MeterInputResistance { ohms: 2.0, kind: Shunt })
+range listed*(1+1e-13)=0.010000000000001: validation=Ok(()) resistance=Some(MeterInputResistance { ohms: 2.0, kind: Shunt })
+range listed*(1+1e-9)=0.010000000010000001: validation=Err("AGILENT_34411A does not support fixed current range 0.010000000010000001. Choose one of: 0.0001, 0.001, 0.01, 0.1, 1, 3.") resistance=None
+range listed=0.1: validation=Ok(()) resistance=Some(MeterInputResistance { ohms: 2.0, kind: Shunt })
+range listed*(1+1e-13)=0.10000000000001: validation=Ok(()) resistance=Some(MeterInputResistance { ohms: 2.0, kind: Shunt })
+range listed*(1+1e-9)=0.10000000010000001: validation=Err("AGILENT_34411A does not support fixed current range 0.10000000010000001. Choose one of: 0.0001, 0.001, 0.01, 0.1, 1, 3.") resistance=None
+range listed=1.0: validation=Ok(()) resistance=Some(MeterInputResistance { ohms: 0.1, kind: Shunt })
+range listed*(1+1e-13)=1.0000000000001: validation=Ok(()) resistance=Some(MeterInputResistance { ohms: 0.1, kind: Shunt })
+range listed*(1+1e-9)=1.000000001: validation=Err("AGILENT_34411A does not support fixed current range 1.000000001. Choose one of: 0.0001, 0.001, 0.01, 0.1, 1, 3.") resistance=None
+range listed=3.0: validation=Ok(()) resistance=Some(MeterInputResistance { ohms: 0.1, kind: Shunt })
+range listed*(1+1e-13)=3.0000000000002998: validation=Ok(()) resistance=Some(MeterInputResistance { ohms: 0.1, kind: Shunt })
+range listed*(1+1e-9)=3.0000000030000002: validation=Err("AGILENT_34411A does not support fixed current range 3.0000000030000002. Choose one of: 0.0001, 0.001, 0.01, 0.1, 1, 3.") resistance=None
+range listed=0.0001: validation=Ok(()) resistance=Some(MeterInputResistance { ohms: 200.0, kind: Shunt })
+range listed*(1+1e-13)=0.00010000000000000999: validation=Ok(()) resistance=Some(MeterInputResistance { ohms: 200.0, kind: Shunt })
+range listed*(1+1e-9)=0.00010000000010000001: validation=Ok(()) resistance=Some(MeterInputResistance { ohms: 200.0, kind: Shunt })
+range listed=0.001: validation=Ok(()) resistance=Some(MeterInputResistance { ohms: 200.0, kind: Shunt })
+range listed*(1+1e-13)=0.0010000000000001: validation=Ok(()) resistance=Some(MeterInputResistance { ohms: 200.0, kind: Shunt })
+range listed*(1+1e-9)=0.001000000001: validation=Ok(()) resistance=Some(MeterInputResistance { ohms: 200.0, kind: Shunt })
+range listed=0.01: validation=Ok(()) resistance=Some(MeterInputResistance { ohms: 2.0, kind: Shunt })
+range listed*(1+1e-13)=0.010000000000001: validation=Ok(()) resistance=Some(MeterInputResistance { ohms: 2.0, kind: Shunt })
+range listed*(1+1e-9)=0.010000000010000001: validation=Err("AGILENT_34411A does not support fixed current range 0.010000000010000001. Choose one of: 0.0001, 0.001, 0.01, 0.1, 1, 3.") resistance=None
+range listed=0.1: validation=Ok(()) resistance=Some(MeterInputResistance { ohms: 2.0, kind: Shunt })
+range listed*(1+1e-13)=0.10000000000001: validation=Ok(()) resistance=Some(MeterInputResistance { ohms: 2.0, kind: Shunt })
+range listed*(1+1e-9)=0.10000000010000001: validation=Err("AGILENT_34411A does not support fixed current range 0.10000000010000001. Choose one of: 0.0001, 0.001, 0.01, 0.1, 1, 3.") resistance=None
+range listed=1.0: validation=Ok(()) resistance=Some(MeterInputResistance { ohms: 0.1, kind: Shunt })
+range listed*(1+1e-13)=1.0000000000001: validation=Ok(()) resistance=Some(MeterInputResistance { ohms: 0.1, kind: Shunt })
+range listed*(1+1e-9)=1.000000001: validation=Err("AGILENT_34411A does not support fixed current range 1.000000001. Choose one of: 0.0001, 0.001, 0.01, 0.1, 1, 3.") resistance=None
+range listed=3.0: validation=Ok(()) resistance=Some(MeterInputResistance { ohms: 0.1, kind: Shunt })
+range listed*(1+1e-13)=3.0000000000002998: validation=Ok(()) resistance=Some(MeterInputResistance { ohms: 0.1, kind: Shunt })
+range listed*(1+1e-9)=3.0000000030000002: validation=Err("AGILENT_34411A does not support fixed current range 3.0000000030000002. Choose one of: 0.0001, 0.001, 0.01, 0.1, 1, 3.") resistance=None
+range 0=0.0: validation=Err("Fixed meter range must be finite and positive.") resistance=None
+range -0=-0.0: validation=Err("Fixed meter range must be finite and positive.") resistance=None
+range -maximum_input=-3.0: validation=Err("Fixed meter range must be finite and positive.") resistance=None
+range maximum_input=3.0: validation=Ok(()) resistance=Some(MeterInputResistance { ohms: 0.1, kind: Shunt })
+range maximum_input*1.01=3.0300000000000002: validation=Err("AGILENT_34411A does not support fixed current range 3.0300000000000002. Choose one of: 0.0001, 0.001, 0.01, 0.1, 1, 3.") resistance=None
+range largest_fixed*10=30.0: validation=Err("AGILENT_34411A does not support fixed current range 30. Choose one of: 0.0001, 0.001, 0.01, 0.1, 1, 3.") resistance=None
+range +inf=inf: validation=Err("Fixed meter range must be finite and positive.") resistance=Some(MeterInputResistance { ohms: 200.0, kind: Shunt })
+range -inf=-inf: validation=Err("Fixed meter range must be finite and positive.") resistance=Some(MeterInputResistance { ohms: 200.0, kind: Shunt })
+range NaN=NaN: validation=Err("Fixed meter range must be finite and positive.") resistance=None
+range -smallest_fixed=-0.0001: validation=Err("Fixed meter range must be finite and positive.") resistance=None
+range smallest_fixed/10=1e-5: validation=Err("AGILENT_34411A does not support fixed current range 0.00001. Choose one of: 0.0001, 0.001, 0.01, 0.1, 1, 3.") resistance=None
+-- mode=Vi --
+ranges=Ok([0.1, 1.0, 10.0, 100.0, 1000.0]) display_queries=Ok(Some(("SENS:VOLT:DC:RANG?", "SENS:VOLT:DC:RES?"))) range_resistances=[]
+auto=Ok(())
+auto with invalid inactive range=Ok(())
+range listed=0.1: validation=Ok(()) resistance=None
+range listed*(1+1e-13)=0.10000000000001: validation=Ok(()) resistance=None
+range listed*(1+1e-9)=0.10000000010000001: validation=Err("AGILENT_34411A does not support fixed voltage range 0.10000000010000001. Choose one of: 0.1, 1, 10, 100, 1000.") resistance=None
+range listed=1.0: validation=Ok(()) resistance=None
+range listed*(1+1e-13)=1.0000000000001: validation=Ok(()) resistance=None
+range listed*(1+1e-9)=1.000000001: validation=Err("AGILENT_34411A does not support fixed voltage range 1.000000001. Choose one of: 0.1, 1, 10, 100, 1000.") resistance=None
+range listed=10.0: validation=Ok(()) resistance=None
+range listed*(1+1e-13)=10.000000000000998: validation=Ok(()) resistance=None
+range listed*(1+1e-9)=10.00000001: validation=Err("AGILENT_34411A does not support fixed voltage range 10.00000001. Choose one of: 0.1, 1, 10, 100, 1000.") resistance=None
+range listed=100.0: validation=Ok(()) resistance=None
+range listed*(1+1e-13)=100.00000000000999: validation=Ok(()) resistance=None
+range listed*(1+1e-9)=100.00000010000001: validation=Err("AGILENT_34411A does not support fixed voltage range 100.00000010000001. Choose one of: 0.1, 1, 10, 100, 1000.") resistance=None
+range listed=1000.0: validation=Ok(()) resistance=None
+range listed*(1+1e-13)=1000.0000000000999: validation=Ok(()) resistance=None
+range listed*(1+1e-9)=1000.0000010000001: validation=Err("AGILENT_34411A does not support fixed voltage range 1000.0000010000001. Choose one of: 0.1, 1, 10, 100, 1000.") resistance=None
+range 0=0.0: validation=Err("Fixed meter range must be finite and positive.") resistance=None
+range -0=-0.0: validation=Err("Fixed meter range must be finite and positive.") resistance=None
+range -maximum_input=-1000.0: validation=Err("Fixed meter range must be finite and positive.") resistance=None
+range maximum_input=1000.0: validation=Ok(()) resistance=None
+range maximum_input*1.01=1010.0: validation=Err("AGILENT_34411A does not support fixed voltage range 1010. Choose one of: 0.1, 1, 10, 100, 1000.") resistance=None
+range largest_fixed*10=10000.0: validation=Err("AGILENT_34411A does not support fixed voltage range 10000. Choose one of: 0.1, 1, 10, 100, 1000.") resistance=None
+range +inf=inf: validation=Err("Fixed meter range must be finite and positive.") resistance=None
+range -inf=-inf: validation=Err("Fixed meter range must be finite and positive.") resistance=None
+range NaN=NaN: validation=Err("Fixed meter range must be finite and positive.") resistance=None
+range -smallest_fixed=-0.1: validation=Err("Fixed meter range must be finite and positive.") resistance=None
+range smallest_fixed/10=0.01: validation=Err("AGILENT_34411A does not support fixed voltage range 0.01. Choose one of: 0.1, 1, 10, 100, 1000.") resistance=None
+
+== KEYSIGHT_34411A ==
+InstrumentDescriptor { id: "KEYSIGHT_34411A", role: Meter, dialect: Scpi, simulation: false, capabilities: Meter(MeterCapabilities { voltage: true, current: true }) }
+profile=Meter(MeterProfile { maximum_input_voltage: 1000.0, maximum_input_current: 3.0, auto_range_required: false, voltage_ranges: [0.1, 1.0, 10.0, 100.0, 1000.0], current_ranges: [0.0001, 0.001, 0.01, 0.1, 1.0, 3.0], nplc: Discrete([0.001, 0.002, 0.006, 0.02, 0.06, 0.2, 1.0, 2.0, 10.0, 100.0]) })
+-- mode=Iv --
+ranges=Ok([0.0001, 0.001, 0.01, 0.1, 1.0, 3.0]) display_queries=Ok(Some(("SENS:CURR:DC:RANG?", "SENS:CURR:DC:RES?"))) range_resistances=[MeterRangeResistance { range: 0.0001, ohms: 200.0, kind: Shunt }, MeterRangeResistance { range: 0.001, ohms: 200.0, kind: Shunt }, MeterRangeResistance { range: 0.01, ohms: 2.0, kind: Shunt }, MeterRangeResistance { range: 0.1, ohms: 2.0, kind: Shunt }, MeterRangeResistance { range: 1.0, ohms: 0.1, kind: Shunt }, MeterRangeResistance { range: 3.0, ohms: 0.1, kind: Shunt }]
+auto=Ok(())
+auto with invalid inactive range=Ok(())
+range listed=0.0001: validation=Ok(()) resistance=Some(MeterInputResistance { ohms: 200.0, kind: Shunt })
+range listed*(1+1e-13)=0.00010000000000000999: validation=Ok(()) resistance=Some(MeterInputResistance { ohms: 200.0, kind: Shunt })
+range listed*(1+1e-9)=0.00010000000010000001: validation=Ok(()) resistance=Some(MeterInputResistance { ohms: 200.0, kind: Shunt })
+range listed=0.001: validation=Ok(()) resistance=Some(MeterInputResistance { ohms: 200.0, kind: Shunt })
+range listed*(1+1e-13)=0.0010000000000001: validation=Ok(()) resistance=Some(MeterInputResistance { ohms: 200.0, kind: Shunt })
+range listed*(1+1e-9)=0.001000000001: validation=Ok(()) resistance=Some(MeterInputResistance { ohms: 200.0, kind: Shunt })
+range listed=0.01: validation=Ok(()) resistance=Some(MeterInputResistance { ohms: 2.0, kind: Shunt })
+range listed*(1+1e-13)=0.010000000000001: validation=Ok(()) resistance=Some(MeterInputResistance { ohms: 2.0, kind: Shunt })
+range listed*(1+1e-9)=0.010000000010000001: validation=Err("KEYSIGHT_34411A does not support fixed current range 0.010000000010000001. Choose one of: 0.0001, 0.001, 0.01, 0.1, 1, 3.") resistance=None
+range listed=0.1: validation=Ok(()) resistance=Some(MeterInputResistance { ohms: 2.0, kind: Shunt })
+range listed*(1+1e-13)=0.10000000000001: validation=Ok(()) resistance=Some(MeterInputResistance { ohms: 2.0, kind: Shunt })
+range listed*(1+1e-9)=0.10000000010000001: validation=Err("KEYSIGHT_34411A does not support fixed current range 0.10000000010000001. Choose one of: 0.0001, 0.001, 0.01, 0.1, 1, 3.") resistance=None
+range listed=1.0: validation=Ok(()) resistance=Some(MeterInputResistance { ohms: 0.1, kind: Shunt })
+range listed*(1+1e-13)=1.0000000000001: validation=Ok(()) resistance=Some(MeterInputResistance { ohms: 0.1, kind: Shunt })
+range listed*(1+1e-9)=1.000000001: validation=Err("KEYSIGHT_34411A does not support fixed current range 1.000000001. Choose one of: 0.0001, 0.001, 0.01, 0.1, 1, 3.") resistance=None
+range listed=3.0: validation=Ok(()) resistance=Some(MeterInputResistance { ohms: 0.1, kind: Shunt })
+range listed*(1+1e-13)=3.0000000000002998: validation=Ok(()) resistance=Some(MeterInputResistance { ohms: 0.1, kind: Shunt })
+range listed*(1+1e-9)=3.0000000030000002: validation=Err("KEYSIGHT_34411A does not support fixed current range 3.0000000030000002. Choose one of: 0.0001, 0.001, 0.01, 0.1, 1, 3.") resistance=None
+range listed=0.0001: validation=Ok(()) resistance=Some(MeterInputResistance { ohms: 200.0, kind: Shunt })
+range listed*(1+1e-13)=0.00010000000000000999: validation=Ok(()) resistance=Some(MeterInputResistance { ohms: 200.0, kind: Shunt })
+range listed*(1+1e-9)=0.00010000000010000001: validation=Ok(()) resistance=Some(MeterInputResistance { ohms: 200.0, kind: Shunt })
+range listed=0.001: validation=Ok(()) resistance=Some(MeterInputResistance { ohms: 200.0, kind: Shunt })
+range listed*(1+1e-13)=0.0010000000000001: validation=Ok(()) resistance=Some(MeterInputResistance { ohms: 200.0, kind: Shunt })
+range listed*(1+1e-9)=0.001000000001: validation=Ok(()) resistance=Some(MeterInputResistance { ohms: 200.0, kind: Shunt })
+range listed=0.01: validation=Ok(()) resistance=Some(MeterInputResistance { ohms: 2.0, kind: Shunt })
+range listed*(1+1e-13)=0.010000000000001: validation=Ok(()) resistance=Some(MeterInputResistance { ohms: 2.0, kind: Shunt })
+range listed*(1+1e-9)=0.010000000010000001: validation=Err("KEYSIGHT_34411A does not support fixed current range 0.010000000010000001. Choose one of: 0.0001, 0.001, 0.01, 0.1, 1, 3.") resistance=None
+range listed=0.1: validation=Ok(()) resistance=Some(MeterInputResistance { ohms: 2.0, kind: Shunt })
+range listed*(1+1e-13)=0.10000000000001: validation=Ok(()) resistance=Some(MeterInputResistance { ohms: 2.0, kind: Shunt })
+range listed*(1+1e-9)=0.10000000010000001: validation=Err("KEYSIGHT_34411A does not support fixed current range 0.10000000010000001. Choose one of: 0.0001, 0.001, 0.01, 0.1, 1, 3.") resistance=None
+range listed=1.0: validation=Ok(()) resistance=Some(MeterInputResistance { ohms: 0.1, kind: Shunt })
+range listed*(1+1e-13)=1.0000000000001: validation=Ok(()) resistance=Some(MeterInputResistance { ohms: 0.1, kind: Shunt })
+range listed*(1+1e-9)=1.000000001: validation=Err("KEYSIGHT_34411A does not support fixed current range 1.000000001. Choose one of: 0.0001, 0.001, 0.01, 0.1, 1, 3.") resistance=None
+range listed=3.0: validation=Ok(()) resistance=Some(MeterInputResistance { ohms: 0.1, kind: Shunt })
+range listed*(1+1e-13)=3.0000000000002998: validation=Ok(()) resistance=Some(MeterInputResistance { ohms: 0.1, kind: Shunt })
+range listed*(1+1e-9)=3.0000000030000002: validation=Err("KEYSIGHT_34411A does not support fixed current range 3.0000000030000002. Choose one of: 0.0001, 0.001, 0.01, 0.1, 1, 3.") resistance=None
+range 0=0.0: validation=Err("Fixed meter range must be finite and positive.") resistance=None
+range -0=-0.0: validation=Err("Fixed meter range must be finite and positive.") resistance=None
+range -maximum_input=-3.0: validation=Err("Fixed meter range must be finite and positive.") resistance=None
+range maximum_input=3.0: validation=Ok(()) resistance=Some(MeterInputResistance { ohms: 0.1, kind: Shunt })
+range maximum_input*1.01=3.0300000000000002: validation=Err("KEYSIGHT_34411A does not support fixed current range 3.0300000000000002. Choose one of: 0.0001, 0.001, 0.01, 0.1, 1, 3.") resistance=None
+range largest_fixed*10=30.0: validation=Err("KEYSIGHT_34411A does not support fixed current range 30. Choose one of: 0.0001, 0.001, 0.01, 0.1, 1, 3.") resistance=None
+range +inf=inf: validation=Err("Fixed meter range must be finite and positive.") resistance=Some(MeterInputResistance { ohms: 200.0, kind: Shunt })
+range -inf=-inf: validation=Err("Fixed meter range must be finite and positive.") resistance=Some(MeterInputResistance { ohms: 200.0, kind: Shunt })
+range NaN=NaN: validation=Err("Fixed meter range must be finite and positive.") resistance=None
+range -smallest_fixed=-0.0001: validation=Err("Fixed meter range must be finite and positive.") resistance=None
+range smallest_fixed/10=1e-5: validation=Err("KEYSIGHT_34411A does not support fixed current range 0.00001. Choose one of: 0.0001, 0.001, 0.01, 0.1, 1, 3.") resistance=None
+-- mode=Vi --
+ranges=Ok([0.1, 1.0, 10.0, 100.0, 1000.0]) display_queries=Ok(Some(("SENS:VOLT:DC:RANG?", "SENS:VOLT:DC:RES?"))) range_resistances=[]
+auto=Ok(())
+auto with invalid inactive range=Ok(())
+range listed=0.1: validation=Ok(()) resistance=None
+range listed*(1+1e-13)=0.10000000000001: validation=Ok(()) resistance=None
+range listed*(1+1e-9)=0.10000000010000001: validation=Err("KEYSIGHT_34411A does not support fixed voltage range 0.10000000010000001. Choose one of: 0.1, 1, 10, 100, 1000.") resistance=None
+range listed=1.0: validation=Ok(()) resistance=None
+range listed*(1+1e-13)=1.0000000000001: validation=Ok(()) resistance=None
+range listed*(1+1e-9)=1.000000001: validation=Err("KEYSIGHT_34411A does not support fixed voltage range 1.000000001. Choose one of: 0.1, 1, 10, 100, 1000.") resistance=None
+range listed=10.0: validation=Ok(()) resistance=None
+range listed*(1+1e-13)=10.000000000000998: validation=Ok(()) resistance=None
+range listed*(1+1e-9)=10.00000001: validation=Err("KEYSIGHT_34411A does not support fixed voltage range 10.00000001. Choose one of: 0.1, 1, 10, 100, 1000.") resistance=None
+range listed=100.0: validation=Ok(()) resistance=None
+range listed*(1+1e-13)=100.00000000000999: validation=Ok(()) resistance=None
+range listed*(1+1e-9)=100.00000010000001: validation=Err("KEYSIGHT_34411A does not support fixed voltage range 100.00000010000001. Choose one of: 0.1, 1, 10, 100, 1000.") resistance=None
+range listed=1000.0: validation=Ok(()) resistance=None
+range listed*(1+1e-13)=1000.0000000000999: validation=Ok(()) resistance=None
+range listed*(1+1e-9)=1000.0000010000001: validation=Err("KEYSIGHT_34411A does not support fixed voltage range 1000.0000010000001. Choose one of: 0.1, 1, 10, 100, 1000.") resistance=None
+range 0=0.0: validation=Err("Fixed meter range must be finite and positive.") resistance=None
+range -0=-0.0: validation=Err("Fixed meter range must be finite and positive.") resistance=None
+range -maximum_input=-1000.0: validation=Err("Fixed meter range must be finite and positive.") resistance=None
+range maximum_input=1000.0: validation=Ok(()) resistance=None
+range maximum_input*1.01=1010.0: validation=Err("KEYSIGHT_34411A does not support fixed voltage range 1010. Choose one of: 0.1, 1, 10, 100, 1000.") resistance=None
+range largest_fixed*10=10000.0: validation=Err("KEYSIGHT_34411A does not support fixed voltage range 10000. Choose one of: 0.1, 1, 10, 100, 1000.") resistance=None
+range +inf=inf: validation=Err("Fixed meter range must be finite and positive.") resistance=None
+range -inf=-inf: validation=Err("Fixed meter range must be finite and positive.") resistance=None
+range NaN=NaN: validation=Err("Fixed meter range must be finite and positive.") resistance=None
+range -smallest_fixed=-0.1: validation=Err("Fixed meter range must be finite and positive.") resistance=None
+range smallest_fixed/10=0.01: validation=Err("KEYSIGHT_34411A does not support fixed voltage range 0.01. Choose one of: 0.1, 1, 10, 100, 1000.") resistance=None
+
+== KEYSIGHT_34465A ==
+InstrumentDescriptor { id: "KEYSIGHT_34465A", role: Meter, dialect: Scpi, simulation: false, capabilities: Meter(MeterCapabilities { voltage: true, current: true }) }
+profile=Meter(MeterProfile { maximum_input_voltage: 1000.0, maximum_input_current: 10.0, auto_range_required: false, voltage_ranges: [0.1, 1.0, 10.0, 100.0, 1000.0], current_ranges: [1e-6, 1e-5, 0.0001, 0.001, 0.01, 0.1, 1.0, 3.0, 10.0], nplc: Discrete([0.001, 0.002, 0.006, 0.02, 0.06, 0.2, 1.0, 10.0, 100.0]) })
+-- mode=Iv --
+ranges=Ok([1e-6, 1e-5, 0.0001, 0.001, 0.01, 0.1, 1.0, 3.0, 10.0]) display_queries=Ok(Some(("SENS:CURR:DC:RANG?", "SENS:CURR:DC:RES?"))) range_resistances=[]
+auto=Ok(())
+auto with invalid inactive range=Ok(())
+range listed=1e-6: validation=Ok(()) resistance=None
+range listed*(1+1e-13)=1.0000000000001e-6: validation=Ok(()) resistance=None
+range listed*(1+1e-9)=1.000000001e-6: validation=Ok(()) resistance=None
+range listed=1e-5: validation=Ok(()) resistance=None
+range listed*(1+1e-13)=1.0000000000001e-5: validation=Ok(()) resistance=None
+range listed*(1+1e-9)=1.0000000010000002e-5: validation=Ok(()) resistance=None
+range listed=0.0001: validation=Ok(()) resistance=None
+range listed*(1+1e-13)=0.00010000000000000999: validation=Ok(()) resistance=None
+range listed*(1+1e-9)=0.00010000000010000001: validation=Ok(()) resistance=None
+range listed=0.001: validation=Ok(()) resistance=None
+range listed*(1+1e-13)=0.0010000000000001: validation=Ok(()) resistance=None
+range listed*(1+1e-9)=0.001000000001: validation=Ok(()) resistance=None
+range listed=0.01: validation=Ok(()) resistance=None
+range listed*(1+1e-13)=0.010000000000001: validation=Ok(()) resistance=None
+range listed*(1+1e-9)=0.010000000010000001: validation=Err("KEYSIGHT_34465A does not support fixed current range 0.010000000010000001. Choose one of: 0.000001, 0.00001, 0.0001, 0.001, 0.01, 0.1, 1, 3, 10.") resistance=None
+range listed=0.1: validation=Ok(()) resistance=None
+range listed*(1+1e-13)=0.10000000000001: validation=Ok(()) resistance=None
+range listed*(1+1e-9)=0.10000000010000001: validation=Err("KEYSIGHT_34465A does not support fixed current range 0.10000000010000001. Choose one of: 0.000001, 0.00001, 0.0001, 0.001, 0.01, 0.1, 1, 3, 10.") resistance=None
+range listed=1.0: validation=Ok(()) resistance=None
+range listed*(1+1e-13)=1.0000000000001: validation=Ok(()) resistance=None
+range listed*(1+1e-9)=1.000000001: validation=Err("KEYSIGHT_34465A does not support fixed current range 1.000000001. Choose one of: 0.000001, 0.00001, 0.0001, 0.001, 0.01, 0.1, 1, 3, 10.") resistance=None
+range listed=3.0: validation=Ok(()) resistance=None
+range listed*(1+1e-13)=3.0000000000002998: validation=Ok(()) resistance=None
+range listed*(1+1e-9)=3.0000000030000002: validation=Err("KEYSIGHT_34465A does not support fixed current range 3.0000000030000002. Choose one of: 0.000001, 0.00001, 0.0001, 0.001, 0.01, 0.1, 1, 3, 10.") resistance=None
+range listed=10.0: validation=Ok(()) resistance=None
+range listed*(1+1e-13)=10.000000000000998: validation=Ok(()) resistance=None
+range listed*(1+1e-9)=10.00000001: validation=Err("KEYSIGHT_34465A does not support fixed current range 10.00000001. Choose one of: 0.000001, 0.00001, 0.0001, 0.001, 0.01, 0.1, 1, 3, 10.") resistance=None
+range 0=0.0: validation=Err("Fixed meter range must be finite and positive.") resistance=None
+range -0=-0.0: validation=Err("Fixed meter range must be finite and positive.") resistance=None
+range -maximum_input=-10.0: validation=Err("Fixed meter range must be finite and positive.") resistance=None
+range maximum_input=10.0: validation=Ok(()) resistance=None
+range maximum_input*1.01=10.1: validation=Err("KEYSIGHT_34465A does not support fixed current range 10.1. Choose one of: 0.000001, 0.00001, 0.0001, 0.001, 0.01, 0.1, 1, 3, 10.") resistance=None
+range largest_fixed*10=100.0: validation=Err("KEYSIGHT_34465A does not support fixed current range 100. Choose one of: 0.000001, 0.00001, 0.0001, 0.001, 0.01, 0.1, 1, 3, 10.") resistance=None
+range +inf=inf: validation=Err("Fixed meter range must be finite and positive.") resistance=None
+range -inf=-inf: validation=Err("Fixed meter range must be finite and positive.") resistance=None
+range NaN=NaN: validation=Err("Fixed meter range must be finite and positive.") resistance=None
+range -smallest_fixed=-1e-6: validation=Err("Fixed meter range must be finite and positive.") resistance=None
+range smallest_fixed/10=1e-7: validation=Err("KEYSIGHT_34465A does not support fixed current range 0.0000001. Choose one of: 0.000001, 0.00001, 0.0001, 0.001, 0.01, 0.1, 1, 3, 10.") resistance=None
+-- mode=Vi --
+ranges=Ok([0.1, 1.0, 10.0, 100.0, 1000.0]) display_queries=Ok(Some(("SENS:VOLT:DC:RANG?", "SENS:VOLT:DC:RES?"))) range_resistances=[]
+auto=Ok(())
+auto with invalid inactive range=Ok(())
+range listed=0.1: validation=Ok(()) resistance=None
+range listed*(1+1e-13)=0.10000000000001: validation=Ok(()) resistance=None
+range listed*(1+1e-9)=0.10000000010000001: validation=Err("KEYSIGHT_34465A does not support fixed voltage range 0.10000000010000001. Choose one of: 0.1, 1, 10, 100, 1000.") resistance=None
+range listed=1.0: validation=Ok(()) resistance=None
+range listed*(1+1e-13)=1.0000000000001: validation=Ok(()) resistance=None
+range listed*(1+1e-9)=1.000000001: validation=Err("KEYSIGHT_34465A does not support fixed voltage range 1.000000001. Choose one of: 0.1, 1, 10, 100, 1000.") resistance=None
+range listed=10.0: validation=Ok(()) resistance=None
+range listed*(1+1e-13)=10.000000000000998: validation=Ok(()) resistance=None
+range listed*(1+1e-9)=10.00000001: validation=Err("KEYSIGHT_34465A does not support fixed voltage range 10.00000001. Choose one of: 0.1, 1, 10, 100, 1000.") resistance=None
+range listed=100.0: validation=Ok(()) resistance=None
+range listed*(1+1e-13)=100.00000000000999: validation=Ok(()) resistance=None
+range listed*(1+1e-9)=100.00000010000001: validation=Err("KEYSIGHT_34465A does not support fixed voltage range 100.00000010000001. Choose one of: 0.1, 1, 10, 100, 1000.") resistance=None
+range listed=1000.0: validation=Ok(()) resistance=None
+range listed*(1+1e-13)=1000.0000000000999: validation=Ok(()) resistance=None
+range listed*(1+1e-9)=1000.0000010000001: validation=Err("KEYSIGHT_34465A does not support fixed voltage range 1000.0000010000001. Choose one of: 0.1, 1, 10, 100, 1000.") resistance=None
+range 0=0.0: validation=Err("Fixed meter range must be finite and positive.") resistance=None
+range -0=-0.0: validation=Err("Fixed meter range must be finite and positive.") resistance=None
+range -maximum_input=-1000.0: validation=Err("Fixed meter range must be finite and positive.") resistance=None
+range maximum_input=1000.0: validation=Ok(()) resistance=None
+range maximum_input*1.01=1010.0: validation=Err("KEYSIGHT_34465A does not support fixed voltage range 1010. Choose one of: 0.1, 1, 10, 100, 1000.") resistance=None
+range largest_fixed*10=10000.0: validation=Err("KEYSIGHT_34465A does not support fixed voltage range 10000. Choose one of: 0.1, 1, 10, 100, 1000.") resistance=None
+range +inf=inf: validation=Err("Fixed meter range must be finite and positive.") resistance=None
+range -inf=-inf: validation=Err("Fixed meter range must be finite and positive.") resistance=None
+range NaN=NaN: validation=Err("Fixed meter range must be finite and positive.") resistance=None
+range -smallest_fixed=-0.1: validation=Err("Fixed meter range must be finite and positive.") resistance=None
+range smallest_fixed/10=0.01: validation=Err("KEYSIGHT_34465A does not support fixed voltage range 0.01. Choose one of: 0.1, 1, 10, 100, 1000.") resistance=None
+
+== ADCMT_7461A ==
+InstrumentDescriptor { id: "ADCMT_7461A", role: Meter, dialect: Adc7461, simulation: false, capabilities: Meter(MeterCapabilities { voltage: true, current: true }) }
+profile=Meter(MeterProfile { maximum_input_voltage: 1000.0, maximum_input_current: 3.0, auto_range_required: false, voltage_ranges: [0.1, 1.0], current_ranges: [], nplc: Continuous { minimum: 0.02, maximum: 100.0 } })
+-- mode=Iv --
+ranges=Ok([]) display_queries=Ok(None) range_resistances=[MeterRangeResistance { range: 0.001, ohms: 103.0, kind: Terminal }, MeterRangeResistance { range: 0.01, ohms: 10.5, kind: Terminal }, MeterRangeResistance { range: 0.1, ohms: 1.5, kind: Terminal }, MeterRangeResistance { range: 1.0, ohms: 0.5, kind: Terminal }, MeterRangeResistance { range: 3.0, ohms: 0.5, kind: Terminal }]
+auto=Ok(())
+auto with invalid inactive range=Ok(())
+range listed=0.001: validation=Err("ADCMT_7461A has no verified fixed current range support. Select Auto.") resistance=Some(MeterInputResistance { ohms: 103.0, kind: Terminal })
+range listed*(1+1e-13)=0.0010000000000001: validation=Err("ADCMT_7461A has no verified fixed current range support. Select Auto.") resistance=Some(MeterInputResistance { ohms: 103.0, kind: Terminal })
+range listed*(1+1e-9)=0.001000000001: validation=Err("ADCMT_7461A has no verified fixed current range support. Select Auto.") resistance=Some(MeterInputResistance { ohms: 103.0, kind: Terminal })
+range listed=0.01: validation=Err("ADCMT_7461A has no verified fixed current range support. Select Auto.") resistance=Some(MeterInputResistance { ohms: 10.5, kind: Terminal })
+range listed*(1+1e-13)=0.010000000000001: validation=Err("ADCMT_7461A has no verified fixed current range support. Select Auto.") resistance=Some(MeterInputResistance { ohms: 10.5, kind: Terminal })
+range listed*(1+1e-9)=0.010000000010000001: validation=Err("ADCMT_7461A has no verified fixed current range support. Select Auto.") resistance=None
+range listed=0.1: validation=Err("ADCMT_7461A has no verified fixed current range support. Select Auto.") resistance=Some(MeterInputResistance { ohms: 1.5, kind: Terminal })
+range listed*(1+1e-13)=0.10000000000001: validation=Err("ADCMT_7461A has no verified fixed current range support. Select Auto.") resistance=Some(MeterInputResistance { ohms: 1.5, kind: Terminal })
+range listed*(1+1e-9)=0.10000000010000001: validation=Err("ADCMT_7461A has no verified fixed current range support. Select Auto.") resistance=None
+range listed=1.0: validation=Err("ADCMT_7461A has no verified fixed current range support. Select Auto.") resistance=Some(MeterInputResistance { ohms: 0.5, kind: Terminal })
+range listed*(1+1e-13)=1.0000000000001: validation=Err("ADCMT_7461A has no verified fixed current range support. Select Auto.") resistance=Some(MeterInputResistance { ohms: 0.5, kind: Terminal })
+range listed*(1+1e-9)=1.000000001: validation=Err("ADCMT_7461A has no verified fixed current range support. Select Auto.") resistance=None
+range listed=3.0: validation=Err("ADCMT_7461A has no verified fixed current range support. Select Auto.") resistance=Some(MeterInputResistance { ohms: 0.5, kind: Terminal })
+range listed*(1+1e-13)=3.0000000000002998: validation=Err("ADCMT_7461A has no verified fixed current range support. Select Auto.") resistance=Some(MeterInputResistance { ohms: 0.5, kind: Terminal })
+range listed*(1+1e-9)=3.0000000030000002: validation=Err("ADCMT_7461A has no verified fixed current range support. Select Auto.") resistance=None
+range 0=0.0: validation=Err("Fixed meter range must be finite and positive.") resistance=None
+range -0=-0.0: validation=Err("Fixed meter range must be finite and positive.") resistance=None
+range -maximum_input=-3.0: validation=Err("Fixed meter range must be finite and positive.") resistance=None
+range maximum_input=3.0: validation=Err("ADCMT_7461A has no verified fixed current range support. Select Auto.") resistance=Some(MeterInputResistance { ohms: 0.5, kind: Terminal })
+range maximum_input*1.01=3.0300000000000002: validation=Err("ADCMT_7461A has no verified fixed current range support. Select Auto.") resistance=None
+range largest_fixed*10=0.0: validation=Err("Fixed meter range must be finite and positive.") resistance=None
+range +inf=inf: validation=Err("Fixed meter range must be finite and positive.") resistance=Some(MeterInputResistance { ohms: 103.0, kind: Terminal })
+range -inf=-inf: validation=Err("Fixed meter range must be finite and positive.") resistance=Some(MeterInputResistance { ohms: 103.0, kind: Terminal })
+range NaN=NaN: validation=Err("Fixed meter range must be finite and positive.") resistance=None
+-- mode=Vi --
+ranges=Ok([0.1, 1.0]) display_queries=Ok(None) range_resistances=[]
+auto=Ok(())
+auto with invalid inactive range=Ok(())
+range listed=0.1: validation=Ok(()) resistance=None
+range listed*(1+1e-13)=0.10000000000001: validation=Ok(()) resistance=None
+range listed*(1+1e-9)=0.10000000010000001: validation=Err("ADCMT_7461A does not support fixed voltage range 0.10000000010000001. Choose one of: 0.1, 1.") resistance=None
+range listed=1.0: validation=Ok(()) resistance=None
+range listed*(1+1e-13)=1.0000000000001: validation=Ok(()) resistance=None
+range listed*(1+1e-9)=1.000000001: validation=Err("ADCMT_7461A does not support fixed voltage range 1.000000001. Choose one of: 0.1, 1.") resistance=None
+range 0=0.0: validation=Err("Fixed meter range must be finite and positive.") resistance=None
+range -0=-0.0: validation=Err("Fixed meter range must be finite and positive.") resistance=None
+range -maximum_input=-1000.0: validation=Err("Fixed meter range must be finite and positive.") resistance=None
+range maximum_input=1000.0: validation=Err("ADCMT_7461A does not support fixed voltage range 1000. Choose one of: 0.1, 1.") resistance=None
+range maximum_input*1.01=1010.0: validation=Err("ADCMT_7461A does not support fixed voltage range 1010. Choose one of: 0.1, 1.") resistance=None
+range largest_fixed*10=10.0: validation=Err("ADCMT_7461A does not support fixed voltage range 10. Choose one of: 0.1, 1.") resistance=None
+range +inf=inf: validation=Err("Fixed meter range must be finite and positive.") resistance=None
+range -inf=-inf: validation=Err("Fixed meter range must be finite and positive.") resistance=None
+range NaN=NaN: validation=Err("Fixed meter range must be finite and positive.") resistance=None
+range -smallest_fixed=-0.1: validation=Err("Fixed meter range must be finite and positive.") resistance=None
+range smallest_fixed/10=0.01: validation=Err("ADCMT_7461A does not support fixed voltage range 0.01. Choose one of: 0.1, 1.") resistance=None
+
+== SIMULATED_METER ==
+InstrumentDescriptor { id: "SIMULATED_METER", role: Meter, dialect: Simulation, simulation: true, capabilities: Meter(MeterCapabilities { voltage: true, current: true }) }
+profile=Meter(MeterProfile { maximum_input_voltage: 10.0, maximum_input_current: 1.0, auto_range_required: false, voltage_ranges: [0.1, 1.0, 10.0], current_ranges: [1e-6, 1e-5, 0.0001, 0.001, 0.01, 0.1, 1.0], nplc: Continuous { minimum: 0.001, maximum: 100.0 } })
+-- mode=Iv --
+ranges=Ok([1e-6, 1e-5, 0.0001, 0.001, 0.01, 0.1, 1.0]) display_queries=Ok(None) range_resistances=[]
+auto=Ok(())
+auto with invalid inactive range=Ok(())
+range listed=1e-6: validation=Ok(()) resistance=None
+range listed*(1+1e-13)=1.0000000000001e-6: validation=Ok(()) resistance=None
+range listed*(1+1e-9)=1.000000001e-6: validation=Ok(()) resistance=None
+range listed=1e-5: validation=Ok(()) resistance=None
+range listed*(1+1e-13)=1.0000000000001e-5: validation=Ok(()) resistance=None
+range listed*(1+1e-9)=1.0000000010000002e-5: validation=Ok(()) resistance=None
+range listed=0.0001: validation=Ok(()) resistance=None
+range listed*(1+1e-13)=0.00010000000000000999: validation=Ok(()) resistance=None
+range listed*(1+1e-9)=0.00010000000010000001: validation=Ok(()) resistance=None
+range listed=0.001: validation=Ok(()) resistance=None
+range listed*(1+1e-13)=0.0010000000000001: validation=Ok(()) resistance=None
+range listed*(1+1e-9)=0.001000000001: validation=Ok(()) resistance=None
+range listed=0.01: validation=Ok(()) resistance=None
+range listed*(1+1e-13)=0.010000000000001: validation=Ok(()) resistance=None
+range listed*(1+1e-9)=0.010000000010000001: validation=Err("SIMULATED_METER does not support fixed current range 0.010000000010000001. Choose one of: 0.000001, 0.00001, 0.0001, 0.001, 0.01, 0.1, 1.") resistance=None
+range listed=0.1: validation=Ok(()) resistance=None
+range listed*(1+1e-13)=0.10000000000001: validation=Ok(()) resistance=None
+range listed*(1+1e-9)=0.10000000010000001: validation=Err("SIMULATED_METER does not support fixed current range 0.10000000010000001. Choose one of: 0.000001, 0.00001, 0.0001, 0.001, 0.01, 0.1, 1.") resistance=None
+range listed=1.0: validation=Ok(()) resistance=None
+range listed*(1+1e-13)=1.0000000000001: validation=Ok(()) resistance=None
+range listed*(1+1e-9)=1.000000001: validation=Err("SIMULATED_METER does not support fixed current range 1.000000001. Choose one of: 0.000001, 0.00001, 0.0001, 0.001, 0.01, 0.1, 1.") resistance=None
+range 0=0.0: validation=Err("Fixed meter range must be finite and positive.") resistance=None
+range -0=-0.0: validation=Err("Fixed meter range must be finite and positive.") resistance=None
+range -maximum_input=-1.0: validation=Err("Fixed meter range must be finite and positive.") resistance=None
+range maximum_input=1.0: validation=Ok(()) resistance=None
+range maximum_input*1.01=1.01: validation=Err("SIMULATED_METER does not support fixed current range 1.01. Choose one of: 0.000001, 0.00001, 0.0001, 0.001, 0.01, 0.1, 1.") resistance=None
+range largest_fixed*10=10.0: validation=Err("SIMULATED_METER does not support fixed current range 10. Choose one of: 0.000001, 0.00001, 0.0001, 0.001, 0.01, 0.1, 1.") resistance=None
+range +inf=inf: validation=Err("Fixed meter range must be finite and positive.") resistance=None
+range -inf=-inf: validation=Err("Fixed meter range must be finite and positive.") resistance=None
+range NaN=NaN: validation=Err("Fixed meter range must be finite and positive.") resistance=None
+range -smallest_fixed=-1e-6: validation=Err("Fixed meter range must be finite and positive.") resistance=None
+range smallest_fixed/10=1e-7: validation=Err("SIMULATED_METER does not support fixed current range 0.0000001. Choose one of: 0.000001, 0.00001, 0.0001, 0.001, 0.01, 0.1, 1.") resistance=None
+-- mode=Vi --
+ranges=Ok([0.1, 1.0, 10.0]) display_queries=Ok(None) range_resistances=[]
+auto=Ok(())
+auto with invalid inactive range=Ok(())
+range listed=0.1: validation=Ok(()) resistance=None
+range listed*(1+1e-13)=0.10000000000001: validation=Ok(()) resistance=None
+range listed*(1+1e-9)=0.10000000010000001: validation=Err("SIMULATED_METER does not support fixed voltage range 0.10000000010000001. Choose one of: 0.1, 1, 10.") resistance=None
+range listed=1.0: validation=Ok(()) resistance=None
+range listed*(1+1e-13)=1.0000000000001: validation=Ok(()) resistance=None
+range listed*(1+1e-9)=1.000000001: validation=Err("SIMULATED_METER does not support fixed voltage range 1.000000001. Choose one of: 0.1, 1, 10.") resistance=None
+range listed=10.0: validation=Ok(()) resistance=None
+range listed*(1+1e-13)=10.000000000000998: validation=Ok(()) resistance=None
+range listed*(1+1e-9)=10.00000001: validation=Err("SIMULATED_METER does not support fixed voltage range 10.00000001. Choose one of: 0.1, 1, 10.") resistance=None
+range 0=0.0: validation=Err("Fixed meter range must be finite and positive.") resistance=None
+range -0=-0.0: validation=Err("Fixed meter range must be finite and positive.") resistance=None
+range -maximum_input=-10.0: validation=Err("Fixed meter range must be finite and positive.") resistance=None
+range maximum_input=10.0: validation=Ok(()) resistance=None
+range maximum_input*1.01=10.1: validation=Err("SIMULATED_METER does not support fixed voltage range 10.1. Choose one of: 0.1, 1, 10.") resistance=None
+range largest_fixed*10=100.0: validation=Err("SIMULATED_METER does not support fixed voltage range 100. Choose one of: 0.1, 1, 10.") resistance=None
+range +inf=inf: validation=Err("Fixed meter range must be finite and positive.") resistance=None
+range -inf=-inf: validation=Err("Fixed meter range must be finite and positive.") resistance=None
+range NaN=NaN: validation=Err("Fixed meter range must be finite and positive.") resistance=None
+range -smallest_fixed=-0.1: validation=Err("Fixed meter range must be finite and positive.") resistance=None
+range smallest_fixed/10=0.01: validation=Err("SIMULATED_METER does not support fixed voltage range 0.01. Choose one of: 0.1, 1, 10.") resistance=None
+
+== source functions with unregistered or meter ids ==
+model "": profile=Ok(false) range_query=Ok(None) protection=Ok(None)
+  mode=Iv: display=Ok(None) automatic=Err("Unsupported source model ''. Supported source models: YOKOGAWA_GS210, YOKOGAWA_7651.") fixed=Err("Unsupported source model ''. Supported source models: YOKOGAWA_GS210, YOKOGAWA_7651.")
+  mode=Vi: display=Ok(None) automatic=Err("Unsupported source model ''. Supported source models: YOKOGAWA_GS210, YOKOGAWA_7651.") fixed=Err("Unsupported source model ''. Supported source models: YOKOGAWA_GS210, YOKOGAWA_7651.")
+model "UNKNOWN_MODEL": profile=Ok(false) range_query=Ok(None) protection=Ok(None)
+  mode=Iv: display=Ok(None) automatic=Err("Unsupported source model 'UNKNOWN_MODEL'. Supported source models: YOKOGAWA_GS210, YOKOGAWA_7651.") fixed=Err("Unsupported source model 'UNKNOWN_MODEL'. Supported source models: YOKOGAWA_GS210, YOKOGAWA_7651.")
+  mode=Vi: display=Ok(None) automatic=Err("Unsupported source model 'UNKNOWN_MODEL'. Supported source models: YOKOGAWA_GS210, YOKOGAWA_7651.") fixed=Err("Unsupported source model 'UNKNOWN_MODEL'. Supported source models: YOKOGAWA_GS210, YOKOGAWA_7651.")
+model "yokogawa_gs210": profile=Ok(false) range_query=Ok(None) protection=Ok(None)
+  mode=Iv: display=Ok(None) automatic=Err("Unsupported source model 'yokogawa_gs210'. Supported source models: YOKOGAWA_GS210, YOKOGAWA_7651.") fixed=Err("Unsupported source model 'yokogawa_gs210'. Supported source models: YOKOGAWA_GS210, YOKOGAWA_7651.")
+  mode=Vi: display=Ok(None) automatic=Err("Unsupported source model 'yokogawa_gs210'. Supported source models: YOKOGAWA_GS210, YOKOGAWA_7651.") fixed=Err("Unsupported source model 'yokogawa_gs210'. Supported source models: YOKOGAWA_GS210, YOKOGAWA_7651.")
+model "AGILENT_34401A": profile=Ok(true) range_query=Ok(None) protection=Ok(None)
+  mode=Iv: display=Ok(None) automatic=Err("Unsupported source model 'AGILENT_34401A'. Supported source models: YOKOGAWA_GS210, YOKOGAWA_7651.") fixed=Err("Unsupported source model 'AGILENT_34401A'. Supported source models: YOKOGAWA_GS210, YOKOGAWA_7651.")
+  mode=Vi: display=Ok(None) automatic=Err("Unsupported source model 'AGILENT_34401A'. Supported source models: YOKOGAWA_GS210, YOKOGAWA_7651.") fixed=Err("Unsupported source model 'AGILENT_34401A'. Supported source models: YOKOGAWA_GS210, YOKOGAWA_7651.")
+model "AGILENT_34411A": profile=Ok(true) range_query=Ok(None) protection=Ok(None)
+  mode=Iv: display=Ok(None) automatic=Err("Unsupported source model 'AGILENT_34411A'. Supported source models: YOKOGAWA_GS210, YOKOGAWA_7651.") fixed=Err("Unsupported source model 'AGILENT_34411A'. Supported source models: YOKOGAWA_GS210, YOKOGAWA_7651.")
+  mode=Vi: display=Ok(None) automatic=Err("Unsupported source model 'AGILENT_34411A'. Supported source models: YOKOGAWA_GS210, YOKOGAWA_7651.") fixed=Err("Unsupported source model 'AGILENT_34411A'. Supported source models: YOKOGAWA_GS210, YOKOGAWA_7651.")
+model "KEYSIGHT_34411A": profile=Ok(true) range_query=Ok(None) protection=Ok(None)
+  mode=Iv: display=Ok(None) automatic=Err("Unsupported source model 'KEYSIGHT_34411A'. Supported source models: YOKOGAWA_GS210, YOKOGAWA_7651.") fixed=Err("Unsupported source model 'KEYSIGHT_34411A'. Supported source models: YOKOGAWA_GS210, YOKOGAWA_7651.")
+  mode=Vi: display=Ok(None) automatic=Err("Unsupported source model 'KEYSIGHT_34411A'. Supported source models: YOKOGAWA_GS210, YOKOGAWA_7651.") fixed=Err("Unsupported source model 'KEYSIGHT_34411A'. Supported source models: YOKOGAWA_GS210, YOKOGAWA_7651.")
+model "KEYSIGHT_34465A": profile=Ok(true) range_query=Ok(None) protection=Ok(None)
+  mode=Iv: display=Ok(None) automatic=Err("Unsupported source model 'KEYSIGHT_34465A'. Supported source models: YOKOGAWA_GS210, YOKOGAWA_7651.") fixed=Err("Unsupported source model 'KEYSIGHT_34465A'. Supported source models: YOKOGAWA_GS210, YOKOGAWA_7651.")
+  mode=Vi: display=Ok(None) automatic=Err("Unsupported source model 'KEYSIGHT_34465A'. Supported source models: YOKOGAWA_GS210, YOKOGAWA_7651.") fixed=Err("Unsupported source model 'KEYSIGHT_34465A'. Supported source models: YOKOGAWA_GS210, YOKOGAWA_7651.")
+model "ADCMT_7461A": profile=Ok(true) range_query=Ok(None) protection=Ok(None)
+  mode=Iv: display=Ok(None) automatic=Err("Unsupported source model 'ADCMT_7461A'. Supported source models: YOKOGAWA_GS210, YOKOGAWA_7651.") fixed=Err("Unsupported source model 'ADCMT_7461A'. Supported source models: YOKOGAWA_GS210, YOKOGAWA_7651.")
+  mode=Vi: display=Ok(None) automatic=Err("Unsupported source model 'ADCMT_7461A'. Supported source models: YOKOGAWA_GS210, YOKOGAWA_7651.") fixed=Err("Unsupported source model 'ADCMT_7461A'. Supported source models: YOKOGAWA_GS210, YOKOGAWA_7651.")
+model "SIMULATED_METER": profile=Ok(true) range_query=Ok(None) protection=Ok(None)
+  mode=Iv: display=Ok(None) automatic=Err("Unsupported source model 'SIMULATED_METER'. Supported source models: YOKOGAWA_GS210, YOKOGAWA_7651.") fixed=Err("Unsupported source model 'SIMULATED_METER'. Supported source models: YOKOGAWA_GS210, YOKOGAWA_7651.")
+  mode=Vi: display=Ok(None) automatic=Err("Unsupported source model 'SIMULATED_METER'. Supported source models: YOKOGAWA_GS210, YOKOGAWA_7651.") fixed=Err("Unsupported source model 'SIMULATED_METER'. Supported source models: YOKOGAWA_GS210, YOKOGAWA_7651.")
+
+== meter functions with unregistered or source ids ==
+model "": profile=Ok(false)
+  mode=Iv: ranges=Err("Unsupported meter model ''. Supported meter models: AGILENT_34401A, AGILENT_34411A, KEYSIGHT_34411A, KEYSIGHT_34465A, ADCMT_7461A, SIMULATED_METER.") display_queries=Ok(None) range_resistances=[] resistance=None auto=Ok(()) fixed=Err("Unsupported meter model ''. Supported meter models: AGILENT_34401A, AGILENT_34411A, KEYSIGHT_34411A, KEYSIGHT_34465A, ADCMT_7461A, SIMULATED_METER.")
+  mode=Vi: ranges=Err("Unsupported meter model ''. Supported meter models: AGILENT_34401A, AGILENT_34411A, KEYSIGHT_34411A, KEYSIGHT_34465A, ADCMT_7461A, SIMULATED_METER.") display_queries=Ok(None) range_resistances=[] resistance=None auto=Ok(()) fixed=Err("Unsupported meter model ''. Supported meter models: AGILENT_34401A, AGILENT_34411A, KEYSIGHT_34411A, KEYSIGHT_34465A, ADCMT_7461A, SIMULATED_METER.")
+model "UNKNOWN_MODEL": profile=Ok(false)
+  mode=Iv: ranges=Err("Unsupported meter model 'UNKNOWN_MODEL'. Supported meter models: AGILENT_34401A, AGILENT_34411A, KEYSIGHT_34411A, KEYSIGHT_34465A, ADCMT_7461A, SIMULATED_METER.") display_queries=Ok(None) range_resistances=[] resistance=None auto=Ok(()) fixed=Err("Unsupported meter model 'UNKNOWN_MODEL'. Supported meter models: AGILENT_34401A, AGILENT_34411A, KEYSIGHT_34411A, KEYSIGHT_34465A, ADCMT_7461A, SIMULATED_METER.")
+  mode=Vi: ranges=Err("Unsupported meter model 'UNKNOWN_MODEL'. Supported meter models: AGILENT_34401A, AGILENT_34411A, KEYSIGHT_34411A, KEYSIGHT_34465A, ADCMT_7461A, SIMULATED_METER.") display_queries=Ok(None) range_resistances=[] resistance=None auto=Ok(()) fixed=Err("Unsupported meter model 'UNKNOWN_MODEL'. Supported meter models: AGILENT_34401A, AGILENT_34411A, KEYSIGHT_34411A, KEYSIGHT_34465A, ADCMT_7461A, SIMULATED_METER.")
+model "yokogawa_gs210": profile=Ok(false)
+  mode=Iv: ranges=Err("Unsupported meter model 'yokogawa_gs210'. Supported meter models: AGILENT_34401A, AGILENT_34411A, KEYSIGHT_34411A, KEYSIGHT_34465A, ADCMT_7461A, SIMULATED_METER.") display_queries=Ok(None) range_resistances=[] resistance=None auto=Ok(()) fixed=Err("Unsupported meter model 'yokogawa_gs210'. Supported meter models: AGILENT_34401A, AGILENT_34411A, KEYSIGHT_34411A, KEYSIGHT_34465A, ADCMT_7461A, SIMULATED_METER.")
+  mode=Vi: ranges=Err("Unsupported meter model 'yokogawa_gs210'. Supported meter models: AGILENT_34401A, AGILENT_34411A, KEYSIGHT_34411A, KEYSIGHT_34465A, ADCMT_7461A, SIMULATED_METER.") display_queries=Ok(None) range_resistances=[] resistance=None auto=Ok(()) fixed=Err("Unsupported meter model 'yokogawa_gs210'. Supported meter models: AGILENT_34401A, AGILENT_34411A, KEYSIGHT_34411A, KEYSIGHT_34465A, ADCMT_7461A, SIMULATED_METER.")
+model "YOKOGAWA_GS210": profile=Ok(true)
+  mode=Iv: ranges=Err("Unsupported meter model 'YOKOGAWA_GS210'. Supported meter models: AGILENT_34401A, AGILENT_34411A, KEYSIGHT_34411A, KEYSIGHT_34465A, ADCMT_7461A, SIMULATED_METER.") display_queries=Ok(None) range_resistances=[] resistance=None auto=Ok(()) fixed=Err("Unsupported meter model 'YOKOGAWA_GS210'. Supported meter models: AGILENT_34401A, AGILENT_34411A, KEYSIGHT_34411A, KEYSIGHT_34465A, ADCMT_7461A, SIMULATED_METER.")
+  mode=Vi: ranges=Err("Unsupported meter model 'YOKOGAWA_GS210'. Supported meter models: AGILENT_34401A, AGILENT_34411A, KEYSIGHT_34411A, KEYSIGHT_34465A, ADCMT_7461A, SIMULATED_METER.") display_queries=Ok(None) range_resistances=[] resistance=None auto=Ok(()) fixed=Err("Unsupported meter model 'YOKOGAWA_GS210'. Supported meter models: AGILENT_34401A, AGILENT_34411A, KEYSIGHT_34411A, KEYSIGHT_34465A, ADCMT_7461A, SIMULATED_METER.")
+model "YOKOGAWA_7651": profile=Ok(true)
+  mode=Iv: ranges=Err("Unsupported meter model 'YOKOGAWA_7651'. Supported meter models: AGILENT_34401A, AGILENT_34411A, KEYSIGHT_34411A, KEYSIGHT_34465A, ADCMT_7461A, SIMULATED_METER.") display_queries=Ok(None) range_resistances=[] resistance=None auto=Ok(()) fixed=Err("Unsupported meter model 'YOKOGAWA_7651'. Supported meter models: AGILENT_34401A, AGILENT_34411A, KEYSIGHT_34411A, KEYSIGHT_34465A, ADCMT_7461A, SIMULATED_METER.")
+  mode=Vi: ranges=Err("Unsupported meter model 'YOKOGAWA_7651'. Supported meter models: AGILENT_34401A, AGILENT_34411A, KEYSIGHT_34411A, KEYSIGHT_34465A, ADCMT_7461A, SIMULATED_METER.") display_queries=Ok(None) range_resistances=[] resistance=None auto=Ok(()) fixed=Err("Unsupported meter model 'YOKOGAWA_7651'. Supported meter models: AGILENT_34401A, AGILENT_34411A, KEYSIGHT_34411A, KEYSIGHT_34465A, ADCMT_7461A, SIMULATED_METER.")
+model "SIMULATED_SOURCE": profile=Ok(true)
+  mode=Iv: ranges=Err("Unsupported meter model 'SIMULATED_SOURCE'. Supported meter models: AGILENT_34401A, AGILENT_34411A, KEYSIGHT_34411A, KEYSIGHT_34465A, ADCMT_7461A, SIMULATED_METER.") display_queries=Ok(None) range_resistances=[] resistance=None auto=Ok(()) fixed=Err("Unsupported meter model 'SIMULATED_SOURCE'. Supported meter models: AGILENT_34401A, AGILENT_34411A, KEYSIGHT_34411A, KEYSIGHT_34465A, ADCMT_7461A, SIMULATED_METER.")
+  mode=Vi: ranges=Err("Unsupported meter model 'SIMULATED_SOURCE'. Supported meter models: AGILENT_34401A, AGILENT_34411A, KEYSIGHT_34411A, KEYSIGHT_34465A, ADCMT_7461A, SIMULATED_METER.") display_queries=Ok(None) range_resistances=[] resistance=None auto=Ok(()) fixed=Err("Unsupported meter model 'SIMULATED_SOURCE'. Supported meter models: AGILENT_34401A, AGILENT_34411A, KEYSIGHT_34411A, KEYSIGHT_34465A, ADCMT_7461A, SIMULATED_METER.")

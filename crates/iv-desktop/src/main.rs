@@ -1,0 +1,307 @@
+#![forbid(unsafe_code)]
+#![cfg_attr(all(windows, not(debug_assertions)), windows_subsystem = "windows")]
+
+mod client;
+mod compatibility;
+mod engine;
+mod gui_control;
+mod protocol;
+mod raw_csv;
+mod run_export;
+mod run_log;
+mod state;
+mod ui;
+
+use protocol::Command;
+use state::{OutputState, Phase};
+use std::sync::{
+    Arc,
+    atomic::{AtomicBool, Ordering},
+};
+use std::time::{Duration, Instant};
+
+fn argument(args: &[String], key: &str) -> Option<String> {
+    args.windows(2).find(|w| w[0] == key).map(|w| w[1].clone())
+}
+
+fn main() {
+    if let Err(error) = run() {
+        eprintln!("{error}");
+        std::process::exit(1);
+    }
+}
+
+fn run() -> Result<(), String> {
+    let boot = Instant::now();
+    let args: Vec<String> = std::env::args().collect();
+    if args.iter().any(|a| a == "--default-config") {
+        println!(
+            "{}",
+            serde_json::to_string(&iv_core::RunConfig::default()).map_err(|e| e.to_string())?
+        );
+        return Ok(());
+    }
+    if args.iter().any(|a| a == "--engine") {
+        return engine::serve();
+    }
+    if args.iter().any(|a| a == "--list") {
+        let paths = iv_transport::HelperPaths::discover()?;
+        let result = iv_transport::discover_resources(&paths);
+        println!(
+            "{}",
+            serde_json::json!({"resources":result.resources,"warnings":result.warnings})
+        );
+        return Ok(());
+    }
+    if args.iter().any(|a| a == "--identify") {
+        let paths = iv_transport::HelperPaths::discover()?;
+        let source = argument(&args, "--source").ok_or("--source is required")?;
+        let meter = argument(&args, "--meter").ok_or("--meter is required")?;
+        let mut pair = iv_transport::DevicePair::new(&paths);
+        let source_model =
+            argument(&args, "--source-model").unwrap_or_else(|| "YOKOGAWA_GS210".into());
+        let meter_model =
+            argument(&args, "--meter-model").unwrap_or_else(|| "AGILENT_34411A".into());
+        pair.connect_model(iv_transport::Role::Source, &source, &source_model)?;
+        if let Err(error) = pair.connect_model(iv_transport::Role::Meter, &meter, &meter_model) {
+            let _ = pair.close();
+            return Err(error);
+        }
+        let output = pair.query(iv_transport::Role::Source, ":OUTP?")?;
+        println!(
+            "{}",
+            serde_json::json!({"source":pair.source_identity,"meter":pair.meter_identity,"output":output})
+        );
+        pair.close()?;
+        return Ok(());
+    }
+    if args.iter().any(|a| a == "--measure") {
+        return command_measure(&args);
+    }
+    if args.iter().any(|a| a == "--version") {
+        println!("KohdaLab IV {}", env!("CARGO_PKG_VERSION"));
+        return Ok(());
+    }
+    let startup_profile = argument(&args, "--config")
+        .map(|path| {
+            let path = std::path::PathBuf::from(path)
+                .canonicalize()
+                .map_err(|e| format!("GUI profile: {e}"))?;
+            ui::validate_startup_profile(&path)?;
+            Ok::<_, String>(path)
+        })
+        .transpose()?;
+    if cfg!(windows) {
+        let working = kohdalab_control_protocol::paths::AppPaths::for_app("iv")?
+            .root()
+            .to_path_buf();
+        std::fs::create_dir_all(&working)
+            .map_err(|e| format!("Create user data directory: {e}"))?;
+        std::env::set_current_dir(working).map_err(|e| format!("Open user data directory: {e}"))?;
+    }
+    let hardware_smoke = args.iter().any(|a| a == "--gui-hardware-smoke");
+    let hardware = if hardware_smoke {
+        if !args.iter().any(|a| a == "--confirm-open-circuit") {
+            return Err("Hardware GUI smoke requires --confirm-open-circuit".into());
+        }
+        Some((
+            argument(&args, "--source").ok_or("--source is required")?,
+            argument(&args, "--meter").ok_or("--meter is required")?,
+        ))
+    } else {
+        None
+    };
+    let footer_smoke = args.iter().any(|a| a == "--gui-footer-smoke");
+    if footer_smoke && (hardware_smoke || startup_profile.is_some()) {
+        return Err("Footer smoke uses an isolated simulation profile".into());
+    }
+    let smoke = footer_smoke
+        || hardware_smoke
+        || args.iter().any(|a| {
+            a == "--gui-smoke"
+                || a == "--gui-settings-smoke"
+                || a == "--gui-limit-smoke"
+                || a == "--gui-balanced-smoke"
+                || a == "--gui-reference-smoke"
+                || a == "--gui-two-column-smoke"
+                || a == "--gui-control-smoke"
+                || a == "--gui-dc-smoke"
+                || a == "--gui-inventory-smoke"
+        });
+    let screenshot = argument(&args, "--screenshot").map(std::path::PathBuf::from);
+    let icon =
+        eframe::icon_data::from_png_bytes(include_bytes!("../../../assets/kohdalab-iv-window.png"))
+            .map_err(|error| format!("Load application icon: {error}"))?;
+    let options = eframe::NativeOptions {
+        vsync: false,
+        viewport: eframe::egui::ViewportBuilder::default()
+            .with_icon(icon)
+            .with_inner_size(
+                if footer_smoke || args.iter().any(|a| a == "--gui-two-column-smoke") {
+                    [1500.0, 820.0]
+                } else if args.iter().any(|a| a == "--gui-dc-smoke") {
+                    [1240.0, 1000.0]
+                } else {
+                    [1240.0, 760.0]
+                },
+            )
+            .with_min_inner_size([1080.0, 650.0]),
+        ..Default::default()
+    };
+    let success = Arc::new(AtomicBool::new(false));
+    let gui_success = success.clone();
+    eframe::run_native(
+        concat!("KohdaLab IV v", env!("CARGO_PKG_VERSION")),
+        options,
+        Box::new(move |cc| {
+            Ok(Box::new(
+                ui::IvApp::new(
+                    cc,
+                    smoke,
+                    screenshot,
+                    gui_success,
+                    boot,
+                    hardware,
+                    startup_profile,
+                )
+                .map_err(std::io::Error::other)?,
+            ))
+        }),
+    )
+    .map_err(|e| e.to_string())?;
+    if smoke && !success.load(Ordering::Acquire) {
+        return Err("GUI smoke did not complete successfully".into());
+    }
+    Ok(())
+}
+
+pub(crate) fn open_circuit_config() -> iv_core::RunConfig {
+    iv_core::RunConfig {
+        mode: iv_core::Mode::Iv,
+        pattern: iv_core::Pattern::Linear,
+        start: -0.001,
+        stop: 0.001,
+        step: 0.001,
+        source_limit: 0.001,
+        compliance: 0.001,
+        source_compliance: Some(0.001),
+        ..Default::default()
+    }
+}
+
+pub(crate) fn validate_open_circuit(config: &iv_core::RunConfig) -> Result<(), String> {
+    let plan = iv_core::plan(config)?;
+    if config.mode != iv_core::Mode::Iv
+        || config.balanced_source.is_some()
+        || config.compliance > 0.001
+        || plan.hardware_compliance > 0.001
+        || plan.points.iter().any(|point| point.target.abs() > 0.001)
+        || iv_core::source_protection_profile(&config.source_model)?.is_none()
+    {
+        return Err("Open-circuit smoke requires a protected single voltage source, ±1 mV and 1 mA maximum.".into());
+    }
+    Ok(())
+}
+
+fn command_measure(args: &[String]) -> Result<(), String> {
+    let simulation = args.iter().any(|a| a == "--simulate");
+    if !simulation && !args.iter().any(|a| a == "--confirm-open-circuit") {
+        return Err("Hardware CLI preview requires --confirm-open-circuit and is limited to +/-1 mV, 1 mA. Use the GUI for a reviewed custom plan.".into());
+    }
+    let source = argument(args, "--source").unwrap_or_default();
+    let meter = argument(args, "--meter").unwrap_or_default();
+    let path = argument(args, "--output").ok_or("--output CSV path is required")?;
+    let mut config = open_circuit_config();
+    config.source_model = argument(args, "--source-model").unwrap_or(config.source_model);
+    config.meter_model = argument(args, "--meter-model").unwrap_or(config.meter_model);
+    if let Some(value) = argument(args, "--meter-current-range-a") {
+        config.meter_current_range = Some(value.parse().map_err(|_| "Invalid current range")?);
+    }
+    if simulation {
+        config.source_compliance = None;
+        config.start_settle_s = 0.02;
+        config.settle_s = 0.01;
+    }
+    if let Some(value) = argument(args, "--points-step-mv") {
+        config.step = value.parse::<f64>().map_err(|_| "Invalid step")? * 0.001;
+    }
+    if simulation {
+        iv_core::plan(&config)?;
+    } else {
+        validate_open_circuit(&config)?;
+    }
+    let client = client::Client::start(|| {})?;
+    client.send(Command::Connect {
+        source_model: config.source_model.clone(),
+        meter_model: config.meter_model.clone(),
+        simulation,
+        source,
+        meter,
+    })?;
+    let deadline = Instant::now() + Duration::from_secs(40);
+    loop {
+        let state = client.snapshot();
+        if state.connected {
+            break;
+        }
+        if !state.error.is_empty() {
+            return Err(state.error.to_string());
+        }
+        if Instant::now() > deadline {
+            return Err("Connection timed out".into());
+        }
+        std::thread::sleep(Duration::from_millis(20));
+    }
+    client.send(Command::Run { config, path })?;
+    let deadline = Instant::now() + Duration::from_secs(90);
+    loop {
+        let state = client.snapshot();
+        if state.run_id > 0
+            && matches!(
+                state.phase,
+                Phase::Completed
+                    | Phase::Stopped
+                    | Phase::Failed
+                    | Phase::ComplianceStop
+                    | Phase::SourceLimitStop
+            )
+        {
+            println!(
+                "{}",
+                serde_json::to_string(&state).map_err(|e| e.to_string())?
+            );
+            if state.phase != Phase::Completed
+                || state.output != OutputState::Off
+                || !state.error.is_empty()
+                || state.points != state.total
+            {
+                return Err(format!("Run did not complete cleanly: {}", state.message));
+            }
+            client.send(Command::Disconnect)?;
+            return Ok(());
+        }
+        if !state.error.is_empty() && state.run_id == 0 {
+            return Err(state.error.to_string());
+        }
+        if Instant::now() > deadline {
+            client.send(Command::Stop)?;
+            return Err("Measurement timed out; stop requested".into());
+        }
+        std::thread::sleep(Duration::from_millis(20));
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn open_circuit_check_rejects_widened_sweep_and_limiter() {
+        let mut config = super::open_circuit_config();
+        super::validate_open_circuit(&config).unwrap();
+        config.stop = 0.002;
+        config.source_limit = 0.002;
+        assert!(super::validate_open_circuit(&config).is_err());
+        let mut config = super::open_circuit_config();
+        config.source_compliance = Some(0.01);
+        assert!(super::validate_open_circuit(&config).is_err());
+    }
+}
