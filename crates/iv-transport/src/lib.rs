@@ -2369,6 +2369,10 @@ mod tests {
 
     #[test]
     fn visa_adapter_leases_coexist_and_exclude_native_backend() {
+        // A concurrent fork can briefly inherit the locked file descriptors
+        // until exec closes them, even when this test uses its own lock path.
+        #[cfg(unix)]
+        let _guard = GPIB_TEST_LOCK.lock().unwrap();
         let dir = std::env::temp_dir().join(format!("iv-shared-visa-test-{}", std::process::id()));
         let acquire = |shared| DeviceLease::acquire_in(&dir, "gpib-adapter", shared);
         let iv = acquire(true).unwrap();
