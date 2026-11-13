@@ -441,7 +441,11 @@ mod tests {
             write(false, "SENS:VOLT:DC:RANG:AUTO ON").unwrap(),
             vec![":SENSE:VOLTAGE:DC:RANGE:AUTO ON"]
         );
-        assert!(write(false, "SENS:VOLT:DC:RANG:AUTO OFF").unwrap().is_empty());
+        assert!(
+            write(false, "SENS:VOLT:DC:RANG:AUTO OFF")
+                .unwrap()
+                .is_empty()
+        );
         assert_eq!(
             write(false, "SENS:VOLT:DC:RANG 1.000000000000e-1").unwrap(),
             vec![":SENSE:VOLTAGE:DC:RANGE 0.1"]
@@ -450,12 +454,21 @@ mod tests {
             write(false, "SENS:VOLT:DC:RANG 1.000000000000e0").unwrap(),
             vec![":SENSE:VOLTAGE:DC:RANGE 1"]
         );
-        for unverified in ["1.000000000000e1", "1.000000000000e2", "1.000000000000e3", "2.0e-1"] {
+        for unverified in [
+            "1.000000000000e1",
+            "1.000000000000e2",
+            "1.000000000000e3",
+            "2.0e-1",
+        ] {
             assert!(write(false, &format!("SENS:VOLT:DC:RANG {unverified}")).is_err());
         }
         // Unsupported routes keep Auto as a no-op and reject fixed requests.
         assert!(write(true, "SENS:VOLT:DC:RANG:AUTO ON").unwrap().is_empty());
-        assert!(write(false, "SENS:CURR:DC:RANG:AUTO ON").unwrap().is_empty());
+        assert!(
+            write(false, "SENS:CURR:DC:RANG:AUTO ON")
+                .unwrap()
+                .is_empty()
+        );
         assert!(write(true, "SENS:CURR:DC:RANG:AUTO ON").unwrap().is_empty());
         for (usb, command) in [
             (true, "SENS:VOLT:DC:RANG:AUTO OFF"),
@@ -475,10 +488,20 @@ mod tests {
                 ..FakeIo::default()
             };
             let mut discard = true;
-            let reply = query(&mut io, Role::Meter, "ADCMT_7461A", false, &mut discard, command);
+            let reply = query(
+                &mut io,
+                Role::Meter,
+                "ADCMT_7461A",
+                false,
+                &mut discard,
+                command,
+            );
             assert_eq!(reply.unwrap(), "+1.00000E-01");
             assert_eq!(io.calls, vec![("QUERY".into(), wire.into())]);
-            assert!(discard, "a range query must not consume the pending discard");
+            assert!(
+                discard,
+                "a range query must not consume the pending discard"
+            );
         }
         for (usb, command) in [
             (true, "SENS:VOLT:DC:RANG?"),
@@ -488,8 +511,21 @@ mod tests {
         ] {
             let mut io = FakeIo::default();
             let mut discard = false;
-            assert!(query(&mut io, Role::Meter, "ADCMT_7461A", usb, &mut discard, command).is_err());
-            assert!(io.calls.is_empty(), "{usb} {command} reached the instrument");
+            assert!(
+                query(
+                    &mut io,
+                    Role::Meter,
+                    "ADCMT_7461A",
+                    usb,
+                    &mut discard,
+                    command
+                )
+                .is_err()
+            );
+            assert!(
+                io.calls.is_empty(),
+                "{usb} {command} reached the instrument"
+            );
         }
     }
 

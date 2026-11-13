@@ -2249,7 +2249,8 @@ fn monitor_reading(
                 "SENS:{}:DC:RANG?",
                 iv_core::measurement_definition(mode).meter_function
             );
-            let range_query = display_queries.map_or(default_range_query.as_str(), |(range, _)| range);
+            let range_query =
+                display_queries.map_or(default_range_query.as_str(), |(range, _)| range);
             let range = positive_reading(&monitor_query(pair, Role::Meter, range_query, control)?);
             // Idle OFF readings may autorange freely. Once any source is ON,
             // retain the baseline and enforce the same loading policy as a sweep.
@@ -2262,7 +2263,9 @@ fn monitor_reading(
                 return Err(off.map_or(error.clone(), |e| format!("{error} · {e}")));
             }
             let resolution = match display_queries {
-                Some((_, query)) => positive_reading(&monitor_query(pair, Role::Meter, query, control)?),
+                Some((_, query)) => {
+                    positive_reading(&monitor_query(pair, Role::Meter, query, control)?)
+                }
                 None => None,
             };
             (range, resolution)
@@ -3207,9 +3210,8 @@ fn execute(
                 &mut audit,
                 begin,
             )?;
-            let auto_monitored =
-                meter::monitored(config, device.scpi_range_route(Role::Meter))
-                    && iv_core::selected_meter_range(config).is_none();
+            let auto_monitored = meter::monitored(config, device.scpi_range_route(Role::Meter))
+                && iv_core::selected_meter_range(config).is_none();
             // Auto voltage meters report the CONF default range until their
             // first conversion; that baseline is primed just before OUTP ON.
             if auto_monitored && config.mode != Mode::Vi {

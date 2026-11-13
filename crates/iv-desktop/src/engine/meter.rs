@@ -209,9 +209,7 @@ impl RangeGuard {
             "AGILENT_34401A" => Some("INP:IMP:AUTO?"),
             // ADC 7461A manual sections 5.2.1 and 6.7.4. The three
             // lowest DCV ranges share the selectable input impedance.
-            "ADCMT_7461A" if pair.scpi_range_route(Role::Meter) => {
-                Some(":INPUT:IMPEDANCE:AUTO?")
-            }
+            "ADCMT_7461A" if pair.scpi_range_route(Role::Meter) => Some(":INPUT:IMPEDANCE:AUTO?"),
             _ => None,
         };
         if let Some(command) = impedance_query {
@@ -230,29 +228,29 @@ impl RangeGuard {
         let rejection = match (&result, parsed) {
             (Err(e), _) => Some(format!("Meter range priming READ failed: {e}")),
             (Ok(reply), None) => Some(format!("Meter range priming reading is invalid: {reply}")),
-            (Ok(_), Some(value)) if !value.is_finite() || value.abs() > 1e30 => Some(
-                "Meter range priming reported overload or an invalid reading.".to_owned(),
-            ),
+            (Ok(_), Some(value)) if !value.is_finite() || value.abs() > 1e30 => {
+                Some("Meter range priming reported overload or an invalid reading.".to_owned())
+            }
             _ => None,
         };
-        let evidence = append_transport_exchanges(
-            audit, "meter", "READ?", 0, None, &exchanges, &timing,
-        )
-        .and_then(|()| {
-            audit.append(&serde_json::json!({
-                "event":"meter_range_priming_reading", "point_index":0,
-                "reading_index":serde_json::Value::Null, "command":"READ?",
-                "normalized_response":result.as_ref().ok(),
-                "query_error":result.as_ref().err(), "error":rejection,
-                "parsed_value":parsed.filter(|v| v.is_finite()),
-                "source_output":"off_verified", "analysis_csv":false,
-                "timing":timing.json(),
-            }))
-        });
+        let evidence =
+            append_transport_exchanges(audit, "meter", "READ?", 0, None, &exchanges, &timing)
+                .and_then(|()| {
+                    audit.append(&serde_json::json!({
+                        "event":"meter_range_priming_reading", "point_index":0,
+                        "reading_index":serde_json::Value::Null, "command":"READ?",
+                        "normalized_response":result.as_ref().ok(),
+                        "query_error":result.as_ref().err(), "error":rejection,
+                        "parsed_value":parsed.filter(|v| v.is_finite()),
+                        "source_output":"off_verified", "analysis_csv":false,
+                        "timing":timing.json(),
+                    }))
+                });
         if let Some(rejection) = rejection {
-            return Err(evidence.err().map_or(rejection.clone(), |a| {
-                format!("{rejection} · {a}")
-            }) + " Output was not enabled.");
+            return Err(evidence
+                .err()
+                .map_or(rejection.clone(), |a| format!("{rejection} · {a}"))
+                + " Output was not enabled.");
         }
         evidence?;
         let range = self.observed(pair, config, state, audit, (0, None), begin)?;
@@ -393,16 +391,31 @@ mod tests {
         assert!(guard.check(&config, Some(1.0)).is_err());
         assert!(guard.check(&config, None).is_err());
         assert!(
-            verify(&config, |cmd| Ok(if cmd.ends_with("AUTO?") { "1" } else { "0.1" }.into()))
-                .is_err()
+            verify(&config, |cmd| Ok(if cmd.ends_with("AUTO?") {
+                "1"
+            } else {
+                "0.1"
+            }
+            .into()))
+            .is_err()
         );
         assert!(
-            verify(&config, |cmd| Ok(if cmd.ends_with("AUTO?") { "0" } else { "+1.00000E+00" }.into()))
-                .is_err()
+            verify(&config, |cmd| Ok(if cmd.ends_with("AUTO?") {
+                "0"
+            } else {
+                "+1.00000E+00"
+            }
+            .into()))
+            .is_err()
         );
         assert!(
-            verify(&config, |cmd| Ok(if cmd.ends_with("AUTO?") { "0" } else { "+1.00000E-01" }.into()))
-                .is_ok()
+            verify(&config, |cmd| Ok(if cmd.ends_with("AUTO?") {
+                "0"
+            } else {
+                "+1.00000E-01"
+            }
+            .into()))
+            .is_ok()
         );
     }
 
