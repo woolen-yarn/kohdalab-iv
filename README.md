@@ -75,11 +75,11 @@ On first normal GUI launch, IV atomically creates its missing default configurat
 | --- | --- | --- |
 | Windows x64 | Setup EXE | ZIP |
 | macOS Apple silicon | DMG（Applicationsへコピー） | App ZIP |
-| Linux | 配布準備中 / Pending | 配布準備中 / Pending |
+| Ubuntu 24.04 x64 (Simulation only / シミュレーション専用) | DEB | tar.gz |
 
-Download the four packages and SHA-256 checksums from [v1.0.0 Releases](https://github.com/woolen-yarn/kohdalab-iv/releases/tag/v1.0.0). Windows Setup is unsigned. macOS uses ad hoc signing and is not notarized.
+Download packages and SHA-256 checksums from [Releases](https://github.com/woolen-yarn/kohdalab-iv/releases/latest). Windows Setup is unsigned. macOS uses ad hoc signing and is not notarized.
 
-[v1.0.0 Releases](https://github.com/woolen-yarn/kohdalab-iv/releases/tag/v1.0.0) から配布物とSHA-256を取得できます。Windows Setupは未署名、macOSはad hoc署名・未公証です。
+[Releases](https://github.com/woolen-yarn/kohdalab-iv/releases/latest) から配布物とSHA-256を取得できます。Windows Setupは未署名、macOSはad hoc署名・未公証です。
 
 ## Hardware / 対応機器
 

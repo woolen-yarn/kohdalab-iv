@@ -2,6 +2,19 @@
 [CmdletBinding()]
 param([Parameter(Mandatory=$true)][string]$InstallationDirectory)
 $ErrorActionPreference='Stop'
+
+function Get-Sha256([string]$Path) {
+    # Windows PowerShell 5.1 defines Get-FileHash in a script module that an
+    # inherited PowerShell 7 PSModulePath can hide, so hash with .NET directly.
+    $stream = [IO.File]::Open($Path, [IO.FileMode]::Open, [IO.FileAccess]::Read, [IO.FileShare]::Read)
+    try {
+        $sha = [Security.Cryptography.SHA256]::Create()
+        try {
+            return ([BitConverter]::ToString($sha.ComputeHash($stream))).Replace('-', '').ToLowerInvariant()
+        } finally { $sha.Dispose() }
+    } finally { $stream.Dispose() }
+}
+
 $ProgressPreference='SilentlyContinue'
 $logDirectory=Join-Path $env:LOCALAPPDATA 'KohdaLab IV Installer'
 New-Item -ItemType Directory -Path $logDirectory -Force | Out-Null
@@ -60,7 +73,7 @@ try {
  if((Get-Item -LiteralPath $archiveDir).Attributes -band [IO.FileAttributes]::ReparsePoint){throw 'Refusing a reparse-point backup directory.'}
  $archive=Join-Path $archiveDir ('KohdaLab-IV-uninstall-backup-'+(Get-Date -Format 'yyyyMMdd-HHmmss-fff')+'.zip')
  $hashes=@{}
- foreach($file in Get-ChildItem -LiteralPath $installed -Recurse -File){$hashes[$file.FullName.Substring($installed.Length+1).Replace('\','/')]=(Get-FileHash -LiteralPath $file.FullName -Algorithm SHA256).Hash}
+ foreach($file in Get-ChildItem -LiteralPath $installed -Recurse -File){$hashes[$file.FullName.Substring($installed.Length+1).Replace('\','/')]=(Get-Sha256 $file.FullName)}
  [IO.Compression.ZipFile]::CreateFromDirectory($installed,$archive,[IO.Compression.CompressionLevel]::Optimal,$false)
  $zip=[IO.Compression.ZipFile]::OpenRead($archive)
  try {
@@ -77,7 +90,7 @@ try {
  # Verify the snapshot is still current before changing any installation file.
  $current=@(Get-ChildItem -LiteralPath $installed -Recurse -File)
  if($current.Count -ne $hashes.Count){throw 'Installation changed while its backup was created.'}
- foreach($file in $current){if((Get-FileHash -LiteralPath $file.FullName -Algorithm SHA256).Hash -ne $hashes[$file.FullName.Substring($installed.Length+1).Replace('\','/')]){throw 'Installation changed while backing up.'}}
+ foreach($file in $current){if((Get-Sha256 $file.FullName) -ne $hashes[$file.FullName.Substring($installed.Length+1).Replace('\','/')]){throw 'Installation changed while backing up.'}}
  # Recheck immediately before changing any app or registration state.
  foreach($process in @(Get-Process -Name kohdalab-iv,kohdalab-iv-next,iv-cli -ErrorAction SilentlyContinue)){
   if(!$process.Path -or $process.Path.StartsWith($installed+'\',[StringComparison]::OrdinalIgnoreCase)){throw 'Close KohdaLab IV before uninstalling.'}

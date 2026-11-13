@@ -409,6 +409,19 @@ pub fn serve() -> Result<(), String> {
         let (gui_job_id, command) = match rx.recv_timeout(wait) {
             Ok(command) => command,
             Err(mpsc::RecvTimeoutError::Timeout) => {
+                // The reader can decide a rejection while an owner is still
+                // active and store it just after that owner drained the slots.
+                // Once no owner or safety command remains to report it, the
+                // idle loop must surface it, or the error and GUI job are lost.
+                if !control.running.load(Ordering::Acquire)
+                    && control.pending_safety.load(Ordering::Acquire) == 0
+                    && let Some(rejected_jobs) = take_rejected_requests(&control, &mut state)
+                {
+                    for id in rejected_jobs {
+                        complete_gui_job(&mut state, id);
+                    }
+                    publish(&latest, &state);
+                }
                 if inventory::service_command(pair.as_mut(), &mut state, &control) {
                     publish(&latest, &state);
                 }
@@ -1062,52 +1075,14 @@ pub fn serve() -> Result<(), String> {
         if owns_output {
             control.running.store(false, Ordering::Release);
         }
-        let rejected_gate_job = control
-            .gate_request_rejected
-            .lock()
-            .ok()
-            .and_then(|mut rejected| rejected.take());
-        let rejected_source_dc_job = control
-            .source_dc_request_rejected
-            .lock()
-            .ok()
-            .and_then(|mut rejected| rejected.take());
-        let rejected_run_job = control
-            .run_request_rejected
-            .lock()
-            .ok()
-            .and_then(|mut rejected| rejected.take());
-        if rejected_gate_job.is_some() {
-            // This is a command-admission error, not a late configuration
-            // change.  The request was discarded while the run owned both
-            // the IV outputs and the gate remained at its verified level.
-            state.phase = Phase::Failed;
-            state.error = "Gate voltage changes are rejected while an IV run is active. Wait for the run to finish, then set the gate voltage.".into();
-            state.message = "Gate voltage was not changed during the IV run.".into();
-        }
-        if rejected_source_dc_job.is_some() {
-            state.phase = Phase::Failed;
-            state.error = "Source DC changes are rejected while an IV run is active. Wait for the run to finish, then enable DC output.".into();
-            state.message = "Source DC output was not changed during the IV run.".into();
-        }
-        if rejected_run_job.is_some() {
-            state.phase = Phase::Failed;
-            state.error = "A measurement is already active or queued. Wait for it to finish before starting another run.".into();
-            state.message = "The second Start request was not queued.".into();
-        }
+        let rejected_jobs = take_rejected_requests(&control, &mut state);
         if let Some(id) = gui_job_id {
             complete_gui_job(&mut state, id);
         }
-        // A tagged gate update rejected while a run held the outputs has no
-        // queued command to complete.  Record its final admission error only
-        // after the run's cleanup and error handling have finished.
-        if let Some(Some(id)) = rejected_gate_job {
-            complete_gui_job(&mut state, id);
-        }
-        if let Some(Some(id)) = rejected_source_dc_job {
-            complete_gui_job(&mut state, id);
-        }
-        if let Some(Some(id)) = rejected_run_job {
+        // A tagged request rejected while another operation held the outputs
+        // has no queued command to complete.  Record its final admission
+        // error only after the owner's cleanup and error handling finished.
+        for id in rejected_jobs.into_iter().flatten() {
             complete_gui_job(&mut state, id);
         }
         publish(&latest, &state);
@@ -1414,6 +1389,46 @@ fn display_snapshot(state: &Snapshot) -> Snapshot {
         }
     }
     snapshot
+}
+
+/// Drain admission rejections recorded by the stdin reader, latch their
+/// errors into `state`, and return the GUI job ids that still need a
+/// completion.  `None` means no request was rejected since the last drain.
+fn take_rejected_requests(control: &Control, state: &mut Snapshot) -> Option<Vec<String>> {
+    let take = |slot: &Mutex<Option<Option<String>>>| {
+        slot.lock().ok().and_then(|mut rejected| rejected.take())
+    };
+    let gate = take(&control.gate_request_rejected);
+    let source_dc = take(&control.source_dc_request_rejected);
+    let run = take(&control.run_request_rejected);
+    if gate.is_none() && source_dc.is_none() && run.is_none() {
+        return None;
+    }
+    if gate.is_some() {
+        // This is a command-admission error, not a late configuration
+        // change.  The request was discarded while the run owned both
+        // the IV outputs and the gate remained at its verified level.
+        state.phase = Phase::Failed;
+        state.error = "Gate voltage changes are rejected while an IV run is active. Wait for the run to finish, then set the gate voltage.".into();
+        state.message = "Gate voltage was not changed during the IV run.".into();
+    }
+    if source_dc.is_some() {
+        state.phase = Phase::Failed;
+        state.error = "Source DC changes are rejected while an IV run is active. Wait for the run to finish, then enable DC output.".into();
+        state.message = "Source DC output was not changed during the IV run.".into();
+    }
+    if run.is_some() {
+        state.phase = Phase::Failed;
+        state.error = "A measurement is already active or queued. Wait for it to finish before starting another run.".into();
+        state.message = "The second Start request was not queued.".into();
+    }
+    Some(
+        [gate, source_dc, run]
+            .into_iter()
+            .flatten()
+            .flatten()
+            .collect(),
+    )
 }
 
 fn publish(shared: &StateFeed, state: &Snapshot) {

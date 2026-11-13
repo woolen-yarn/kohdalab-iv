@@ -1,0 +1,90 @@
+name: Linux simulation packages
+on:
+  workflow_dispatch:
+  pull_request:
+permissions:
+  contents: read
+concurrency:
+  group: linux-package-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  linux:
+    name: Ubuntu 24.04 x64 DEB and portable (simulation only)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 40
+    env:
+      SIM_FEATURE: kohdalab-iv/simulation-only
+    steps:
+      - uses: actions/checkout@v7
+      - name: Build and GUI smoke dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libegl1 libxkbcommon-dev libwayland-dev xvfb xauth mesa-utils libgl1-mesa-dri
+      - name: Install Rust toolchain
+        run: rustup toolchain install 1.99.0 --profile minimal --component clippy
+      - name: Lints with hardware compiled out
+        run: cargo clippy --workspace --all-targets --locked --features "$SIM_FEATURE" -- -D warnings
+      - name: Transport refuses every helper launch
+        run: cargo test -p iv-transport --features simulation-only --locked --lib simulation_only -- --nocapture
+      - name: Release build (simulation only)
+        run: cargo build --release --locked -p kohdalab-iv --features simulation-only
+      - name: Redistribution packaging policy
+        run: python3 tests/test_distribution_policy.py
+      - name: Package DEB and portable tarball
+        run: |
+          set -euo pipefail
+          export SOURCE_DATE_EPOCH=$(git log -1 --format=%ct)
+          python3 scripts/package_linux.py --binaries-dir target/release
+      - name: Verify extracted artifacts
+        id: verify
+        run: |
+          set -euo pipefail
+          v=$(python3 -c "import tomllib,pathlib; print(tomllib.loads(pathlib.Path('Cargo.toml').read_text())['workspace']['package']['version'])")
+          base="dist/kohdalab-iv-$v-linux-x64-simulation"
+          echo "deb=$base.deb" >> "$GITHUB_OUTPUT"
+          python3 scripts/verify_linux_packages.py --tarball "$base.tar.gz" --deb "$base.deb" --version "$v" --report dist/linux-package-verification.json
+      - name: Install DEB with apt and smoke the installed app
+        run: |
+          set -euo pipefail
+          sudo apt-get install -y "./${{ steps.verify.outputs.deb }}"
+          home=$(mktemp -d)
+          HOME="$home" iv-cli --version
+          if HOME="$home" iv-cli --list 2> list.err; then echo "hardware discovery was not refused"; exit 1; fi
+          grep -q simulation-only list.err
+          # Software OpenGL under Xvfb; renders the real GUI with simulated instruments.
+          HOME="$home" LIBGL_ALWAYS_SOFTWARE=1 timeout 180 xvfb-run -a -s "-screen 0 1600x1100x24" \
+            kohdalab-iv --gui-smoke --screenshot dist/iv-linux-simulation.png
+          test -s dist/iv-linux-simulation.png
+      - name: Python control clients against the installed binary (simulation only)
+        run: KOHDALAB_IV_EXE=/opt/kohdalab-iv/iv-cli python3 -m unittest discover -s bindings/python -p 'test_*.py' -v
+      - name: Remove DEB cleanly
+        run: |
+          set -euo pipefail
+          sudo apt-get remove -y kohdalab-iv
+          test ! -e /opt/kohdalab-iv
+          test ! -e /usr/bin/kohdalab-iv
+      - name: Record build origin and checksums
+        run: |
+          python3 - <<'PYCODE'
+          import hashlib, json, os, pathlib
+          root = pathlib.Path("dist")
+          archives = sorted([*root.glob("*.deb"), *root.glob("*.tar.gz")])
+          if len(archives) != 2:
+              raise SystemExit(f"Expected one DEB and one tarball, found {archives}")
+          (root / "SHA256SUMS.txt").write_text("".join(hashlib.sha256(path.read_bytes()).hexdigest() + "  " + path.name + "\n" for path in archives))
+          (root / "BUILD-ORIGIN.json").write_text(json.dumps({key: os.environ.get(key) for key in ["GITHUB_REPOSITORY", "GITHUB_SHA", "GITHUB_RUN_ID", "GITHUB_RUN_ATTEMPT", "GITHUB_WORKFLOW"]}, indent=2) + "\n")
+          PYCODE
+      - name: Upload Linux review artifacts
+        uses: actions/upload-artifact@v7
+        with:
+          name: linux-simulation-${{ github.sha }}
+          if-no-files-found: error
+          retention-days: 14
+          path: |
+            dist/*.deb
+            dist/*.tar.gz
+            dist/*.sha256
+            dist/*.png
+            dist/linux-package-verification.json
+            dist/BUILD-ORIGIN.json
+            dist/SHA256SUMS.txt

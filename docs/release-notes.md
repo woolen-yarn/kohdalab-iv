@@ -1,3 +1,9 @@
+# KohdaLab IV 1.0.1
+
+Align the documented instrument catalog and common Python SDK. / 機種一覧の検査と共通Python SDKを更新しました。
+
+---
+
 # KohdaLab IV 1.4.8
 
 Windows x64 and Apple Silicon Mac packages. Device cards support inline label editing and an expandable two-column layout. All Connect retains successful connections if one device fails. Long sweeps draw fewer markers.

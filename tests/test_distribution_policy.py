@@ -2,6 +2,7 @@
 import io
 from pathlib import Path
 import sys
+import tarfile
 import tempfile
 import unittest
 from unittest.mock import patch
@@ -91,6 +92,57 @@ class DistributionPolicyTests(unittest.TestCase):
             file.write_bytes(archive(files))
             with self.assertRaisesRegex(ValueError, "THIRD_PARTY_NOTICES.md"):
                 validate_archive(file)
+
+    def test_linux_tarball_and_deb_are_checked_like_portable_zips(self):
+        source_files = {name: b"source" for name in SOURCE_FILES}
+        source_files["native/vendor/libusb-1.0.30.tar.bz2"] = (
+            Path(__file__).resolve().parents[1] / "native/vendor/libusb-1.0.30.tar.bz2"
+        ).read_bytes()
+        payload = {
+            "REDISTRIBUTION.md": b"terms",
+            "support/THIRD_PARTY_NOTICES.md": b"notices",
+            "support/SOURCE.zip": archive(source_files),
+            **{f"support/licenses/{name}": b"license" for name in LICENSES},
+        }
+
+        def tarball(files, mode="w:gz"):
+            result = io.BytesIO()
+            with tarfile.open(fileobj=result, mode=mode) as bundle:
+                for name, data in files.items():
+                    info = tarfile.TarInfo(name)
+                    info.size = len(data)
+                    bundle.addfile(info, io.BytesIO(data))
+            return result.getvalue()
+
+        def deb(files):
+            members = [
+                ("debian-binary", b"2.0\n"),
+                ("control.tar.xz", tarball({"./control": b"Package: x\n"}, "w:xz")),
+                ("data.tar.xz", tarball({f"./opt/kohdalab-iv/{k}": v for k, v in files.items()}, "w:xz")),
+            ]
+            body = b"!<arch>\n"
+            for name, data in members:
+                body += f"{name:<16}{0:<12}{0:<6}{0:<6}{100644:<8}{len(data):<10}`\n".encode() + data
+                body += b"\n" if len(data) % 2 else b""
+            return body
+
+        with tempfile.TemporaryDirectory() as directory:
+            portable = Path(directory) / "kohdalab-iv-1.0.0-linux-x64-simulation.tar.gz"
+            package = Path(directory) / "kohdalab-iv-1.0.0-linux-x64-simulation.deb"
+            portable.write_bytes(tarball({f"kohdalab-iv/{k}": v for k, v in payload.items()}))
+            package.write_bytes(deb(payload))
+            validate_archive(portable)
+            validate_archive(package)
+
+            broken = dict(payload)
+            del broken["support/licenses/LGPL-3.0.txt"]
+            package.write_bytes(deb(broken))
+            with self.assertRaisesRegex(ValueError, "LGPL-3.0.txt"):
+                validate_archive(package)
+            hidden = {**payload, "support/renamed.hex": b":00000001FF"}
+            portable.write_bytes(tarball({f"kohdalab-iv/{k}": v for k, v in hidden.items()}))
+            with self.assertRaisesRegex(ValueError, "firmware"):
+                validate_archive(portable)
 
 
 if __name__ == "__main__":

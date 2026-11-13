@@ -1,6 +1,6 @@
 # Changelog / 変更履歴
 
-## Unreleased
+## 1.0.1
 
 - Device cards group connection actions and instrument settings. Opening the DC editor keeps the current live display. / Deviceカードに接続操作と機器設定をまとめました。DC欄を開いてもライブ表示を維持します。
 - Official VISA sessions can share one GPIB adapter across distinct addresses. Native GPIB retains the exclusive adapter lease. / 公式VISAは異なるGPIBアドレスでアダプターを共有できます。ネイティブGPIBはアダプターを排他します。

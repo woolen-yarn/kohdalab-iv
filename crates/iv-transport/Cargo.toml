@@ -5,6 +5,11 @@ edition.workspace = true
 license.workspace = true
 rust-version.workspace = true
 
+[features]
+# Compile out every helper/hub process launch. Used by the Linux packages,
+# which are distributed for simulation only and carry no instrument helpers.
+simulation-only = []
+
 [dependencies]
 fs2 = "0.4"
 iv-core.workspace = true

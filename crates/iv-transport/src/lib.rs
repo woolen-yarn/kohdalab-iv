@@ -25,6 +25,20 @@ use std::sync::{Arc, Mutex, mpsc};
 use std::thread::{self, JoinHandle};
 use std::time::{Duration, Instant};
 
+/// True when this build cannot start any instrument helper or shared-hub
+/// client (`simulation-only` feature). Simulated instruments never reach this
+/// crate, so they keep working; every physical route fails closed.
+pub const SIMULATION_ONLY: bool = cfg!(feature = "simulation-only");
+pub const SIMULATION_ONLY_MESSAGE: &str = "This KohdaLab IV build is simulation-only. Instrument discovery and hardware connections are disabled; use the Windows or macOS release for real instruments.";
+
+fn refuse_hardware() -> Result<(), String> {
+    if SIMULATION_ONLY {
+        Err(SIMULATION_ONLY_MESSAGE.into())
+    } else {
+        Ok(())
+    }
+}
+
 const MAX_LINE: usize = 64 * 1024;
 const MAX_PAYLOAD: usize = 16 * 1024;
 const STARTUP_LIMIT: usize = 64 * 1024;
@@ -42,6 +56,9 @@ impl HelperPaths {
     /// Finds a co-located portable helper set.  An explicit directory is useful
     /// for development and avoids accepting a helper from an unrelated PATH.
     pub fn discover() -> Result<Self, String> {
+        // Checked before any environment override or co-located helper is
+        // considered, so a dropped-in helper cannot re-enable hardware.
+        refuse_hardware()?;
         let mut roots = Vec::new();
         if let Some(value) = std::env::var_os("KOHDALAB_IV_HELPER_DIR") {
             roots.push(PathBuf::from(value));
@@ -1928,6 +1945,9 @@ impl HelperSession {
         lease: DeviceLease,
         exit_address: u8,
     ) -> Result<Self, String> {
+        // Second gate: `HelperPaths` has public fields, so refuse at the single
+        // persistent-process spawn point too (helpers and hub clients alike).
+        refuse_hardware()?;
         let mut command = Command::new(path);
         command
             .args(args)
@@ -2327,6 +2347,7 @@ fn parse_resources(payload: &str, kind: &str) -> Result<Vec<ResourceInfo>, Strin
 }
 
 fn run_oneshot(path: &Path, args: &[&str], timeout: Duration) -> Result<String, String> {
+    refuse_hardware()?;
     let mut command = Command::new(path);
     command
         .args(args)
@@ -2948,5 +2969,55 @@ done
         assert!(pair.disconnect(Role::Source).is_err());
         assert!(!pair.is_connected(Role::Source));
         assert!(pair.source_identity.is_empty());
+    }
+}
+
+#[cfg(all(test, unix, feature = "simulation-only"))]
+mod simulation_only_tests {
+    use super::*;
+    use std::os::unix::fs::PermissionsExt;
+
+    /// Even with valid, executable helpers handed in directly, a
+    /// simulation-only build must not start a single helper process.
+    #[test]
+    fn simulation_only_never_starts_a_helper() {
+        let dir = std::env::temp_dir().join(format!("iv-simulation-only-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(&dir).unwrap();
+        let marker = dir.join("helper-started");
+        let helper = dir.join("helper");
+        fs::write(
+            &helper,
+            format!("#!/bin/sh\ntouch '{}'\nexit 1\n", marker.display()),
+        )
+        .unwrap();
+        fs::set_permissions(&helper, fs::Permissions::from_mode(0o700)).unwrap();
+        fs::copy(&helper, dir.join("kohdalab-visa-helper")).unwrap();
+        let paths = HelperPaths {
+            gpib: helper.clone(),
+            usbtmc: helper,
+            setup: None,
+        };
+
+        assert_eq!(
+            HelperPaths::discover().unwrap_err(),
+            SIMULATION_ONLY_MESSAGE
+        );
+        assert!(discover_resources(&paths).resources.is_empty());
+        let mut pair = DevicePair::new(&paths);
+        assert!(
+            pair.connect_model(Role::Source, "GPIB0::1::INSTR", "YOKOGAWA_GS210")
+                .is_err()
+        );
+        assert!(
+            pair.connect_model(
+                Role::Meter,
+                "USB0::0x2A8D::0x0101::X::INSTR",
+                "KEYSIGHT_34465A"
+            )
+            .is_err()
+        );
+        assert!(!marker.exists(), "a helper process was started");
+        let _ = fs::remove_dir_all(&dir);
     }
 }
