@@ -83,16 +83,20 @@ Download the four packages and SHA-256 checksums from [v1.0.0 Releases](https://
 
 | Model / 機器 | Role / 役割 | Physical connection verified on Windows / Windowsで実機確認した接続 |
 | --- | --- | --- |
-| Yokogawa GS210 | Source | GPIB / VISA, USBTMC / VISA |
-| Yokogawa 7651 | Source | GPIB / VISA |
-| Agilent 34401A | Meter | GPIB / VISA |
-| ADCMT 7461A | Meter | GPIB / VISA |
-| Keysight 34465A | Meter | USBTMC / VISA |
-| Agilent 34411A | Meter | GPIB / VISA, USBTMC / VISA |
+| Yokogawa GS210 (`YOKOGAWA_GS210`) | Source | GPIB / VISA, USBTMC / VISA |
+| Yokogawa 7651 (`YOKOGAWA_7651`) | Source | GPIB / VISA |
+| Agilent 34401A (`AGILENT_34401A`) | Meter | GPIB / VISA |
+| ADCMT 7461A (`ADCMT_7461A`) | Meter | GPIB / VISA |
+| Keysight 34465A (`KEYSIGHT_34465A`) | Meter | USBTMC / VISA |
+| Agilent 34411A (`AGILENT_34411A`) | Meter | GPIB / VISA, USBTMC / VISA |
 
 These routes were exercised during Windows commissioning. Select the detected resource in **Device → Refresh** with the manufacturer's 64-bit VISA installed. See [test scope and package qualification](docs/validation-v1-candidate.md) and [hardware setup](docs/reference/hardware.md).
 
 上表はWindowsで実機確認した接続経路です。メーカーの64-bit VISAを使用し、**Device → Refresh** で対象を選びます。試験範囲は[検証表](docs/validation-v1-candidate.md)、接続手順は[ハードウェア設定](docs/reference/hardware.md)を参照してください。
+
+The catalog also includes the `KEYSIGHT_34411A` model ID and the `SIMULATED_SOURCE` and `SIMULATED_METER` profiles.
+
+カタログには `KEYSIGHT_34411A` の機種IDと、模擬用の `SIMULATED_SOURCE`・`SIMULATED_METER` もあります。
 
 ## Quick start / はじめに
 
