@@ -102,10 +102,13 @@ try {
  $state | ConvertTo-Json | Set-Content -LiteralPath (Join-Path $prepared 'installer-state.json') -Encoding UTF8
  $manifest['installer-state.json']=(Get-Sha256 (Join-Path $prepared 'installer-state.json'))
  $manifest | ConvertTo-Json -Depth 4 | Set-Content -LiteralPath (Join-Path $prepared 'FILES.json') -Encoding UTF8
+ # GetNewClosure() binds the scriptblock to a new dynamic module that cannot
+ # see this script's functions, so capture Get-Sha256 as a variable first.
+ $getSha256=${function:Get-Sha256}
  $register = {
   param($InstallPath)
  # Verify activation before creating Windows application registration.
- if((Get-Sha256 (Join-Path $installed 'Uninstall.exe')) -ne $manifest['Uninstall.exe']){throw 'Installed uninstaller verification failed.'}
+ if((& $getSha256 (Join-Path $installed 'Uninstall.exe')) -ne $manifest['Uninstall.exe']){throw 'Installed uninstaller verification failed.'}
  New-Item -ItemType Directory -Path $menu -Force | Out-Null
  $shell=New-Object -ComObject WScript.Shell
  foreach($path in @((Join-Path $menu 'KohdaLab IV.lnk'),(Join-Path $desktop 'KohdaLab IV.lnk'))){
