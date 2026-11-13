@@ -415,13 +415,12 @@ pub fn serve() -> Result<(), String> {
                 // idle loop must surface it, or the error and GUI job are lost.
                 if !control.running.load(Ordering::Acquire)
                     && control.pending_safety.load(Ordering::Acquire) == 0
+                    && let Some(rejected_jobs) = take_rejected_requests(&control, &mut state)
                 {
-                    if let Some(rejected_jobs) = take_rejected_requests(&control, &mut state) {
-                        for id in rejected_jobs {
-                            complete_gui_job(&mut state, id);
-                        }
-                        publish(&latest, &state);
+                    for id in rejected_jobs {
+                        complete_gui_job(&mut state, id);
                     }
+                    publish(&latest, &state);
                 }
                 if inventory::service_command(pair.as_mut(), &mut state, &control) {
                     publish(&latest, &state);
@@ -1423,7 +1422,13 @@ fn take_rejected_requests(control: &Control, state: &mut Snapshot) -> Option<Vec
         state.error = "A measurement is already active or queued. Wait for it to finish before starting another run.".into();
         state.message = "The second Start request was not queued.".into();
     }
-    Some([gate, source_dc, run].into_iter().flatten().flatten().collect())
+    Some(
+        [gate, source_dc, run]
+            .into_iter()
+            .flatten()
+            .flatten()
+            .collect(),
+    )
 }
 
 fn publish(shared: &StateFeed, state: &Snapshot) {
