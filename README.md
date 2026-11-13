@@ -81,22 +81,20 @@ Download the four packages and SHA-256 checksums from [v1.0.0 Releases](https://
 
 ## Hardware / 対応機器
 
-| Model / 機器 | Role / 役割 | Physical connection verified on Windows / Windowsで実機確認した接続 |
+| Model / 機器 | Role · model ID / 役割・モデルID | Physical connection verified on Windows / Windowsで実機確認した接続 |
 | --- | --- | --- |
-| Yokogawa GS210 (`YOKOGAWA_GS210`) | Source | GPIB / VISA, USBTMC / VISA |
-| Yokogawa 7651 (`YOKOGAWA_7651`) | Source | GPIB / VISA |
-| Agilent 34401A (`AGILENT_34401A`) | Meter | GPIB / VISA |
-| ADCMT 7461A (`ADCMT_7461A`) | Meter | GPIB / VISA |
-| Keysight 34465A (`KEYSIGHT_34465A`) | Meter | USBTMC / VISA |
-| Agilent 34411A (`AGILENT_34411A`) | Meter | GPIB / VISA, USBTMC / VISA |
+| Yokogawa GS210 | Source · `YOKOGAWA_GS210` | GPIB / VISA, USBTMC / VISA |
+| Yokogawa 7651 | Source · `YOKOGAWA_7651` | GPIB / VISA |
+| Agilent 34401A | Meter · `AGILENT_34401A` | GPIB / VISA |
+| ADCMT 7461A | Meter · `ADCMT_7461A` | GPIB / VISA |
+| Keysight 34465A | Meter · `KEYSIGHT_34465A` | USBTMC / VISA |
+| Agilent / Keysight 34411A | Meter · `AGILENT_34411A`, `KEYSIGHT_34411A` | GPIB / VISA, USBTMC / VISA |
+| Simulated source / シミュレーション | Source · `SIMULATED_SOURCE` | Simulation only / シミュレーションのみ |
+| Simulated meter / シミュレーション | Meter · `SIMULATED_METER` | Simulation only / シミュレーションのみ |
 
-These routes were exercised during Windows commissioning. Select the detected resource in **Device → Refresh** with the manufacturer's 64-bit VISA installed. See [test scope and package qualification](docs/validation-v1-candidate.md) and [hardware setup](docs/reference/hardware.md).
+The hardware routes in the table were exercised during Windows commissioning. The model IDs are used with both IV and VI plans. Model IDs are the values stored in settings and used by the Python client; the 34411A has Agilent and Keysight IDs for the same hardware. Simulated models need no hardware or VISA. Select the detected resource in **Device → Refresh** with the manufacturer's 64-bit VISA installed. See [test scope and package qualification](docs/validation-v1-candidate.md) and [hardware setup](docs/reference/hardware.md).
 
-上表はWindowsで実機確認した接続経路です。メーカーの64-bit VISAを使用し、**Device → Refresh** で対象を選びます。試験範囲は[検証表](docs/validation-v1-candidate.md)、接続手順は[ハードウェア設定](docs/reference/hardware.md)を参照してください。
-
-The catalog also includes the `KEYSIGHT_34411A` model ID and the `SIMULATED_SOURCE` and `SIMULATED_METER` profiles.
-
-カタログには `KEYSIGHT_34411A` の機種IDと、模擬用の `SIMULATED_SOURCE`・`SIMULATED_METER` もあります。
+表の実機接続経路はWindowsで確認しました。モデルIDはIV・VIの測定計画で使用します。モデルIDは設定ファイルとPythonクライアントで使う値で、34411AはAgilent・Keysightの両IDが同一機種を指します。シミュレーション機種は機器・VISAを必要としません。メーカーの64-bit VISAを使用し、**Device → Refresh** で対象を選びます。試験範囲は[検証表](docs/validation-v1-candidate.md)、接続手順は[ハードウェア設定](docs/reference/hardware.md)を参照してください。
 
 ## Quick start / はじめに
 
