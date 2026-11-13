@@ -19,7 +19,7 @@ DC I-V・V-I 測定、ソース／メーターのライブ監視、USB/GPIB 計�
 - ライブ監視、ソース保護、解析CSV・raw CSV・ライフサイクルlog・条件manifestの4ファイル測定bundle。
 - デスクトップ GUI と任意の Python/Jupyter クライアントで共通の Rust エンジン。
 
-[Downloads / ダウンロード](#downloads--ダウンロード) · [Hardware and verification / 対応機器と実機検証](#hardware-and-verification--対応機器と実機検証) · [Try without hardware / 機器なしで試す](docs/guides/quick-start.md) · [Python and API / PythonとAPI](docs/reference/common-control-api.md)
+[Downloads / ダウンロード](#downloads--ダウンロード) · [Hardware and verification / 対応機器と実機検証](#hardware--対応機器) · [Try without hardware / 機器なしで試す](docs/guides/quick-start.md) · [Python and API / PythonとAPI](docs/reference/common-control-api.md)
 
 ## Downloads / ダウンロード
 
@@ -35,16 +35,18 @@ DC I-V・V-I 測定、ソース／メーターのライブ監視、USB/GPIB 計�
 
 Windows Setup is unsigned. macOS uses ad hoc signing and is not notarized. / Windows Setupは未署名です。macOS版はアドホック署名で、Appleの公証を受けていません。
 
-## Hardware and verification / 対応機器と実機検証
+## Hardware / 対応機器
 
-| Model / 機器 | Role / 役割 | Connection / 接続方法 | Physical test scope / 実機検証の範囲 |
-| --- | --- | --- | --- |
-| Yokogawa GS210 | Source / ソース | GPIB / VISA, USBTMC / VISA | Sweep with 34401A / 34401Aとの掃引 |
-| Yokogawa 7651 | Source / ソース | GPIB / VISA | 4-wire I source / V meter sweep / 4端子掃引 |
-| Agilent 34401A | Meter / メーター | GPIB / VISA | Voltage with GS210 / GS210との電圧測定 |
-| ADCMT 7461A | Meter / メーター | GPIB / VISA | Fixed and Auto range with 7651 / 7651との固定・自動レンジ試験。USB未確認 |
-| Keysight 34465A | Meter / メーター | USBTMC / VISA | Seven-point fixed-range sweep and output OFF / 固定レンジ7点掃引、出力OFF |
-| Agilent / Keysight 34411A | Meter / メーター | GPIB / VISA, USBTMC / VISA | Earlier tests passed; USB not detected in the latest trial / 過去試験は合格。直近はUSB未検出 |
+| Model / 機器 | Role · model ID / 役割・モデルID | Connection and physical test scope / 接続方法・実機検証の範囲 |
+| --- | --- | --- |
+| Yokogawa GS210 | Source / ソース · `YOKOGAWA_GS210` | GPIB / VISA, USBTMC / VISA · Sweep with 34401A / 34401Aとの掃引 |
+| Yokogawa 7651 | Source / ソース · `YOKOGAWA_7651` | GPIB / VISA · 4-wire I source / V meter sweep / 4端子掃引 |
+| Agilent 34401A | Meter / メーター · `AGILENT_34401A` | GPIB / VISA · Voltage with GS210 / GS210との電圧測定 |
+| ADCMT 7461A | Meter / メーター · `ADCMT_7461A` | GPIB / VISA · Fixed and Auto range with 7651 / 7651との固定・自動レンジ試験。USB未確認 |
+| Keysight 34465A | Meter / メーター · `KEYSIGHT_34465A` | USBTMC / VISA · Seven-point fixed-range sweep and output OFF / 固定レンジ7点掃引、出力OFF |
+| Agilent / Keysight 34411A | Meter / メーター · `AGILENT_34411A`, `KEYSIGHT_34411A` | GPIB / VISA, USBTMC / VISA · Earlier tests passed; USB not detected in the latest trial / 過去試験は合格。直近はUSB未検出 |
+| Simulated source / シミュレーション | Source · `SIMULATED_SOURCE` | Simulation only / シミュレーション専用 |
+| Simulated meter / シミュレーション | Meter · `SIMULATED_METER` | Simulation only / シミュレーション専用 |
 
 The table records earlier Windows tests. Use the manufacturer’s 64-bit VISA and select the resource under **Device → Refresh**. / 表は過去のWindows実機試験です。メーカーの64-bit VISAを使い、**Device → Refresh** でリソースを選びます。
 
