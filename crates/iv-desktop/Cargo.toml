@@ -27,6 +27,6 @@ egui_plot = "0.35"
 image = { version = "0.25", default-features = false, features = ["png"] }
 time = { version = "0.3", features = ["formatting"] }
 toml = "1.1"
-rfd = { version = "0.17.2", default-features = false, features = ["xdg-portal", "pollster"] }
+rfd = { version = "0.18.0", default-features = false, features = ["xdg-portal", "pollster"] }
 
 tempfile = "3"
