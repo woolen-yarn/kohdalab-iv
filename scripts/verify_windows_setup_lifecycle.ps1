@@ -45,6 +45,10 @@ function Read-Manifest([string]$directory){
  foreach($entry in $json.PSObject.Properties){$table[$entry.Name.Replace('/','\')]=([string]$entry.Value).ToLowerInvariant()}
  return $table
 }
+function IV-Processes {
+ # Setup refuses to install while any IV GUI/engine process runs, wherever it lives.
+ return @(Get-Process -Name kohdalab-iv,kohdalab-iv-next,iv-cli,'KohdaLab IV' -ErrorAction SilentlyContinue | ForEach-Object {$path=try{$_.Path}catch{$null};"$($_.ProcessName) PID $($_.Id) $path"})
+}
 function Wait-Removed([int]$seconds){
  $deadline=[DateTime]::UtcNow.AddSeconds($seconds)
  while(((Test-Path -LiteralPath $install) -or (Test-Path -LiteralPath $key)) -and [DateTime]::UtcNow -lt $deadline){Start-Sleep -Milliseconds 500}
@@ -70,6 +74,13 @@ try {
  $checks.Add("Portable ZIP extracted and all $($portableManifest.Count) files match its FILES.json")
 
  $stage='silent install'
+ # Earlier CI steps launch the GUI and engine; Setup correctly refuses to run
+ # while any of them is alive, so name a leftover process instead of failing
+ # later with only an exit code.
+ $deadline=[DateTime]::UtcNow.AddSeconds(30)
+ while((IV-Processes).Count -and [DateTime]::UtcNow -lt $deadline){Start-Sleep -Milliseconds 500}
+ $running=IV-Processes
+ Require (!$running.Count) ("IV processes from earlier steps are still running; Setup would refuse to install: "+($running -join '; '))
  # /D is an existing NSIS option that this Setup intentionally ignores; pass a
  # temporary target to prove that a caller cannot redirect the installation.
  $ignoredTarget=Join-Path $work 'ignored-install-target'
@@ -137,7 +148,9 @@ try {
 } catch {
  $failure=$_
  $logs=Join-Path $env:LOCALAPPDATA 'KohdaLab IV Installer'
- foreach($log in @('setup.log','uninstall.log')){$path=Join-Path $logs $log;if(Test-Path -LiteralPath $path){Write-Host "----- $log -----";Get-Content -LiteralPath $path | Write-Host}}
+ foreach($log in @('setup.log','uninstall.log')){$path=Join-Path $logs $log;if(Test-Path -LiteralPath $path){Write-Host "----- $log -----";Get-Content -LiteralPath $path | Write-Host}else{Write-Host "----- $log missing ($path) -----"}}
+ Write-Host '----- running IV processes -----'
+ foreach($line in (IV-Processes)){Write-Host $line}
  try {
   New-Item -ItemType Directory -Force -Path (Split-Path -Parent $report) | Out-Null
   [ordered]@{result='failed';stage=$stage;error=$failure.Exception.Message;completed=@($checks)} | ConvertTo-Json -Depth 4 | Set-Content -LiteralPath $report -Encoding UTF8

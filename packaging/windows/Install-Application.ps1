@@ -232,7 +232,9 @@ function Assert-NotRunning([string]$InstallPath, [bool]$IsTest) {
                     if ($process.Path -and -not $process.Path.StartsWith((Get-FullPath $InstallPath), [StringComparison]::OrdinalIgnoreCase)) { continue }
                 } catch { continue }
             }
-            throw "Close KohdaLab IV and any iv-cli/Python automation before installing. Running process: $($process.ProcessName)"
+            $processPath = try { $process.Path } catch { $null }
+            if (-not $processPath) { $processPath = 'path unavailable' }
+            throw "Close KohdaLab IV and any iv-cli/Python automation before installing. Running process: $($process.ProcessName) (PID $($process.Id), $processPath)"
         }
     }
 }

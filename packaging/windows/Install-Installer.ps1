@@ -8,39 +8,64 @@ param(
 $ErrorActionPreference='Stop'
 $ProgressPreference='SilentlyContinue'
 $logDirectory=Join-Path $env:LOCALAPPDATA 'KohdaLab IV Installer'
+$logPath=Join-Path $logDirectory 'setup.log'
 New-Item -ItemType Directory -Path $logDirectory -Force | Out-Null
-Start-Transcript -Path (Join-Path $logDirectory 'setup.log') -Append -Force | Out-Null
-$package=[IO.Path]::GetFullPath($PackageDirectory)
-$parent=Split-Path -Parent $package
-$prepared=Join-Path $parent ('prepared-'+[Guid]::NewGuid().ToString('N'))
-$identity=[Security.Principal.WindowsIdentity]::GetCurrent()
-if(!([Security.Principal.WindowsPrincipal]$identity).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)){throw 'Administrator approval is required for installation.'}
-$installed=Join-Path ([Environment]::GetFolderPath('ProgramFiles')) 'Kohdalab\KohdaLab IV'
-$key='HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\KohdaLabIV'
-$desktop=[Environment]::GetFolderPath('CommonDesktopDirectory')
-$menu=Join-Path ([Environment]::GetFolderPath('CommonPrograms')) 'KohdaLab IV'
-function Assert-SafeAncestry([string]$Path) {
- $cursor=[IO.Path]::GetFullPath($Path)
- while($cursor){
-  if((Test-Path -LiteralPath $cursor) -and ((Get-Item -LiteralPath $cursor -Force).Attributes -band [IO.FileAttributes]::ReparsePoint)){throw "Refusing reparse-point ancestor: $cursor"}
-  $parentPath=[IO.Directory]::GetParent($cursor)
-  $cursor=if($parentPath){$parentPath.FullName}else{$null}
- }
+$transcribing=$false
+try { Start-Transcript -Path $logPath -Append -Force | Out-Null; $transcribing=$true } catch { [IO.File]::AppendAllText($logPath,"Transcript could not start: $_`r`n") }
+function Write-InstallerFailure($Record) {
+ # NSIS /S keeps no details list, and an error that escapes this script is only
+ # printed after Stop-Transcript. Record the cause while it is still logged.
+ $inner=if($Record.Exception.InnerException){$Record.Exception.InnerException.ToString()}else{'(none)'}
+ $text=@(
+  "KohdaLab IV Setup failed: $($Record.Exception.Message)",
+  "Exception: $($Record.Exception.GetType().FullName)",
+  "Position: $($Record.InvocationInfo.PositionMessage)",
+  "Script stack:`r`n$($Record.ScriptStackTrace)",
+  "Inner exception: $inner"
+ ) -join "`r`n"
+ if($transcribing){Write-Host $text}else{try{[IO.File]::AppendAllText($logPath,$text+"`r`n")}catch{}}
+ [Console]::Error.WriteLine($text)
 }
-Assert-SafeAncestry $installed
-Assert-SafeAncestry $menu
-$oldRegistry=$null
-if(Test-Path -LiteralPath $key){
- $reg=Get-Item -LiteralPath $key
- $oldRegistry=@{};foreach($name in $reg.GetValueNames()){$oldRegistry[$name]=@($reg.GetValue($name,$null,[Microsoft.Win32.RegistryValueOptions]::DoNotExpandEnvironmentNames),$reg.GetValueKind($name).ToString())}
-}
-$menuLink=Join-Path $menu 'KohdaLab IV.lnk'
-$menuExisted=Test-Path -LiteralPath $menu
-Assert-SafeAncestry $menuLink
-$oldMenu=if(Test-Path -LiteralPath $menuLink){[IO.File]::ReadAllBytes($menuLink)}else{$null}
+# Everything that can fail runs inside the try below, so every failure is
+# recorded before the transcript stops.
+$prepared=$null
 $activationStarted=$false
+$oldRegistry=$null
+$oldMenu=$null
+$menuExisted=$true
+$menuLink=$null
+$menu=$null
+$key='HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\KohdaLabIV'
 $manifest=[ordered]@{}
 try {
+ Write-Host "KohdaLab IV Setup $ApplicationVersion starting; package $PackageDirectory; PowerShell $($PSVersionTable.PSVersion); 64-bit process $([Environment]::Is64BitProcess)"
+ $package=[IO.Path]::GetFullPath($PackageDirectory)
+ $parent=Split-Path -Parent $package
+ $prepared=Join-Path $parent ('prepared-'+[Guid]::NewGuid().ToString('N'))
+ $identity=[Security.Principal.WindowsIdentity]::GetCurrent()
+ if(!([Security.Principal.WindowsPrincipal]$identity).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)){throw 'Administrator approval is required for installation.'}
+ $installed=Join-Path ([Environment]::GetFolderPath('ProgramFiles')) 'Kohdalab\KohdaLab IV'
+ $desktop=[Environment]::GetFolderPath('CommonDesktopDirectory')
+ $menu=Join-Path ([Environment]::GetFolderPath('CommonPrograms')) 'KohdaLab IV'
+ function Assert-SafeAncestry([string]$Path) {
+  $cursor=[IO.Path]::GetFullPath($Path)
+  while($cursor){
+   if((Test-Path -LiteralPath $cursor) -and ((Get-Item -LiteralPath $cursor -Force).Attributes -band [IO.FileAttributes]::ReparsePoint)){throw "Refusing reparse-point ancestor: $cursor"}
+   $parentPath=[IO.Directory]::GetParent($cursor)
+   $cursor=if($parentPath){$parentPath.FullName}else{$null}
+  }
+ }
+ Assert-SafeAncestry $installed
+ Assert-SafeAncestry $menu
+ if(Test-Path -LiteralPath $key){
+  $reg=Get-Item -LiteralPath $key
+  $oldRegistry=@{};foreach($name in $reg.GetValueNames()){$oldRegistry[$name]=@($reg.GetValue($name,$null,[Microsoft.Win32.RegistryValueOptions]::DoNotExpandEnvironmentNames),$reg.GetValueKind($name).ToString())}
+ }
+ $menuLink=Join-Path $menu 'KohdaLab IV.lnk'
+ $menuExisted=Test-Path -LiteralPath $menu
+ Assert-SafeAncestry $menuLink
+ $oldMenu=if(Test-Path -LiteralPath $menuLink){[IO.File]::ReadAllBytes($menuLink)}else{$null}
+ Write-Host "Verifying the package and installing to $installed"
  foreach($item in @(Get-Item -LiteralPath $package -Force)+@(Get-ChildItem -LiteralPath $package -Recurse -Force)){
   if($item.Attributes -band [IO.FileAttributes]::ReparsePoint){throw 'Refusing a reparse-point installation package.'}
  }
@@ -99,6 +124,7 @@ try {
  Write-Output "Installed KohdaLab IV $ApplicationVersion; registered Windows uninstall and shortcuts."
 } catch {
  $failure=$_
+ Write-InstallerFailure $failure
  if($activationStarted){
   try {
    if(Test-Path -LiteralPath $key){Remove-Item -LiteralPath $key -Recurse}
@@ -112,6 +138,6 @@ try {
  }
  throw $failure
 } finally {
- if(Test-Path -LiteralPath $prepared){Remove-Item -LiteralPath $prepared -Recurse -Force -ErrorAction SilentlyContinue}
- Stop-Transcript | Out-Null
+ if($prepared -and (Test-Path -LiteralPath $prepared)){Remove-Item -LiteralPath $prepared -Recurse -Force -ErrorAction SilentlyContinue}
+ if($transcribing){Stop-Transcript | Out-Null}
 }
