@@ -115,7 +115,7 @@ jobs:
         with:
           name: signing-input-${{ github.sha }}
           if-no-files-found: error
-          retention-days: 14
+          retention-days: ${{ github.event_name == 'pull_request' && 1 || 7 }}
           path: |
             ${{ steps.package.outputs.payload }}/kohdalab-iv.exe
             ${{ steps.package.outputs.payload }}/iv-cli.exe
@@ -127,7 +127,7 @@ jobs:
         with:
           name: windows-unsigned-${{ github.sha }}
           if-no-files-found: error
-          retention-days: 14
+          retention-days: ${{ github.event_name == 'pull_request' && 1 || 7 }}
           path: |
             dist/*.zip
             dist/*-Setup.exe
@@ -168,7 +168,7 @@ jobs:
         with:
           name: macos-unsigned-${{ github.sha }}
           if-no-files-found: error
-          retention-days: 14
+          retention-days: ${{ github.event_name == 'pull_request' && 1 || 7 }}
           path: |
             dist/*.zip
             dist/*.dmg

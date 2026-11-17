@@ -79,7 +79,7 @@ jobs:
         with:
           name: linux-simulation-${{ github.sha }}
           if-no-files-found: error
-          retention-days: 14
+          retention-days: ${{ github.event_name == 'pull_request' && 1 || 7 }}
           path: |
             dist/*.deb
             dist/*.tar.gz
