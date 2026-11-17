@@ -111,6 +111,7 @@ jobs:
           ./scripts/verify_windows_setup_lifecycle.ps1 -SetupPath "dist/kohdalab-iv-$v-windows-x64-Setup.exe" -PortableZip "$payload.zip" -ExpectedVersion $v -ReportPath dist/windows-setup-lifecycle.json
       - name: Upload exact first-party signing input (unsigned)
         id: signing-input
+        if: github.event_name != 'pull_request'
         uses: actions/upload-artifact@v7
         with:
           name: signing-input-${{ github.sha }}
@@ -123,6 +124,7 @@ jobs:
             ${{ steps.package.outputs.payload }}/support/kohdalab-visa-helper.exe
             ${{ steps.package.outputs.payload }}/support/USB-Setup.exe
       - name: Upload unsigned review artifacts
+        if: github.event_name != 'pull_request'
         uses: actions/upload-artifact@v7
         with:
           name: windows-unsigned-${{ github.sha }}
@@ -164,6 +166,7 @@ jobs:
           (root / "BUILD-ORIGIN.json").write_text(json.dumps({key: os.environ.get(key) for key in ["GITHUB_REPOSITORY", "GITHUB_SHA", "GITHUB_RUN_ID", "GITHUB_RUN_ATTEMPT", "GITHUB_WORKFLOW"]}, indent=2) + "\n")
           PYCODE
       - name: Upload macOS review artifacts
+        if: github.event_name != 'pull_request'
         uses: actions/upload-artifact@v7
         with:
           name: macos-unsigned-${{ github.sha }}
