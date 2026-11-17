@@ -23,15 +23,15 @@ DC I-V・V-I 測定、ソース／メーターのライブ監視、USB/GPIB 計�
 
 ## Downloads / ダウンロード
 
-[Latest stable release / 最新安定版](https://github.com/woolen-yarn/kohdalab-iv/releases/latest) · [v1.0.1 release notes / リリースノート](https://github.com/woolen-yarn/kohdalab-iv/releases/tag/v1.0.1)
+[Latest stable release / 最新安定版](https://github.com/woolen-yarn/kohdalab-iv/releases/latest) · [v1.0.2 release notes / リリースノート](https://github.com/woolen-yarn/kohdalab-iv/releases/tag/v1.0.2)
 
 | OS / 対応環境 | Installer / インストーラー | Portable / ポータブル |
 | --- | --- | --- |
-| Windows x64 | [Setup (.exe)](https://github.com/woolen-yarn/kohdalab-iv/releases/download/v1.0.1/kohdalab-iv-1.0.1-windows-x64-Setup.exe) | [ZIP](https://github.com/woolen-yarn/kohdalab-iv/releases/download/v1.0.1/kohdalab-iv-1.0.1-windows-x64-portable.zip) |
-| macOS Apple Silicon | [DMG](https://github.com/woolen-yarn/kohdalab-iv/releases/download/v1.0.1/kohdalab-iv-1.0.1-macos-arm64.dmg) | [ZIP](https://github.com/woolen-yarn/kohdalab-iv/releases/download/v1.0.1/kohdalab-iv-1.0.1-macos-arm64-portable.zip) |
-| Ubuntu 24.04 x64 · Simulation only / シミュレーション専用 | [DEB](https://github.com/woolen-yarn/kohdalab-iv/releases/download/v1.0.1/kohdalab-iv-1.0.1-linux-x64-simulation.deb) | [tar.gz](https://github.com/woolen-yarn/kohdalab-iv/releases/download/v1.0.1/kohdalab-iv-1.0.1-linux-x64-simulation.tar.gz) |
+| Windows x64 | [Setup (.exe)](https://github.com/woolen-yarn/kohdalab-iv/releases/download/v1.0.2/kohdalab-iv-1.0.2-windows-x64-Setup.exe) | [ZIP](https://github.com/woolen-yarn/kohdalab-iv/releases/download/v1.0.2/kohdalab-iv-1.0.2-windows-x64-portable.zip) |
+| macOS Apple Silicon | [DMG](https://github.com/woolen-yarn/kohdalab-iv/releases/download/v1.0.2/kohdalab-iv-1.0.2-macos-arm64.dmg) | [ZIP](https://github.com/woolen-yarn/kohdalab-iv/releases/download/v1.0.2/kohdalab-iv-1.0.2-macos-arm64-portable.zip) |
+| Ubuntu 24.04 x64 · Simulation only / シミュレーション専用 | [DEB](https://github.com/woolen-yarn/kohdalab-iv/releases/download/v1.0.2/kohdalab-iv-1.0.2-linux-x64-simulation.deb) | [tar.gz](https://github.com/woolen-yarn/kohdalab-iv/releases/download/v1.0.2/kohdalab-iv-1.0.2-linux-x64-simulation.tar.gz) |
 
-[SHA-256](https://github.com/woolen-yarn/kohdalab-iv/releases/download/v1.0.1/SHA256SUMS.txt) · [Build kit / ビルドキット](https://github.com/woolen-yarn/kohdalab-iv/releases/download/v1.0.1/kohdalab-iv-1.0.1-build-kit.zip)
+[SHA-256](https://github.com/woolen-yarn/kohdalab-iv/releases/download/v1.0.2/SHA256SUMS.txt) · [Build kit / ビルドキット](https://github.com/woolen-yarn/kohdalab-iv/releases/download/v1.0.2/kohdalab-iv-1.0.2-build-kit.zip)
 
 Windows Setup is unsigned. macOS uses ad hoc signing and is not notarized. / Windows Setupは未署名です。macOS版はアドホック署名で、Appleの公証を受けていません。
 
