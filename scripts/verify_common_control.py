@@ -8,6 +8,7 @@ import signal
 import subprocess
 import sys
 import tempfile
+import time
 import uuid
 from pathlib import Path
 
@@ -95,6 +96,17 @@ def main():
         assert [float(row["voltage_V"]) for row in rows] == [-0.001, 0, 0.001]
         assert [float(row["current_A"]) for row in rows] == [-1e-6, 0, 1e-6]
         assert all(row["quality_flags"] == "simulated" for row in rows)
+        job_stop = client.stop_and_wait(first["job_id"])
+        assert job_stop["cleanup"] == "verified"
+        client.invoke("set_plan", plan={**plan, "start_settle_s": 10})
+        active = client.invoke("start", filename="stop-in-progress")
+        deadline = time.monotonic() + 5
+        while native.snapshot["phase"] != "Running":
+            assert time.monotonic() < deadline, native.snapshot
+            time.sleep(0.05)
+        active_stop = client.stop_and_wait(active["job_id"])
+        assert active_stop["status"] == "stopped", active_stop
+        assert active_stop["cleanup"] == "verified", active_stop
         stopped = client.stop_and_wait()
         assert stopped["cleanup"] == "verified"
         assert client.release()["released"]
@@ -110,6 +122,8 @@ def main():
             "duplicate_receipt": True,
             "exclusive_ownership": True,
             "stop_cleanup": "verified",
+            "completed_job_stop_cleanup": job_stop["cleanup"],
+            "active_job_stop_cleanup": active_stop["cleanup"],
             "reacquire": True,
         }
         (args.output_dir / "results.json").write_text(
