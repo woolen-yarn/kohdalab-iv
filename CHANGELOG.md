@@ -1,5 +1,11 @@
 # Changelog / 変更履歴
 
+## 1.0.2
+
+- Preserve individual DC OFF requests when they overlap with Stop. / Stopと重なっても装置ごとの個別DC OFF要求を保持します。
+- Verify Save Copy against the original measurement hashes and remove incomplete copies on mismatch. / 保存コピーを測定時のハッシュと照合し、不一致時は作成途中のコピーを削除します。
+- Verify job-scoped Python Stop using the sweep's terminal outputs and include independent DC outputs in app-wide confirmation. / PythonのジョブID付きStopは掃引終了時の出力を確認し、アプリ全体の確認では独立DC出力も確認します。
+
 ## 1.0.1
 
 - Device cards group connection actions and instrument settings. Opening the DC editor keeps the current live display. / Deviceカードに接続操作と機器設定をまとめました。DC欄を開いてもライブ表示を維持します。

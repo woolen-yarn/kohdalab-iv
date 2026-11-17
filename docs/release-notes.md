@@ -1,3 +1,11 @@
+# KohdaLab IV 1.0.2
+
+- Preserve individual DC OFF requests when they overlap with Stop. / Stopと重なっても装置ごとの個別DC OFF要求を保持します。
+- Verify Save Copy against the original measurement hashes and remove incomplete copies on mismatch. / 保存コピーを測定時のハッシュと照合し、不一致時は作成途中のコピーを削除します。
+- Verify job-scoped Python Stop using the sweep's terminal outputs and include independent DC outputs in app-wide confirmation. / PythonのジョブID付きStopは掃引終了時の出力を確認し、アプリ全体の確認では独立DC出力も確認します。
+
+---
+
 # KohdaLab IV 1.0.1
 
 Align the documented instrument catalog and common Python SDK. / 機種一覧の検査と共通Python SDKを更新しました。
