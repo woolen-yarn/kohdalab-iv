@@ -3,7 +3,7 @@
 # KohdaLab IV
 
 [![CI](https://github.com/woolen-yarn/kohdalab-iv/actions/workflows/test.yml/badge.svg)](https://github.com/woolen-yarn/kohdalab-iv/actions/workflows/test.yml)
-[![Release](https://img.shields.io/github/v/release/woolen-yarn/kohdalab-iv)](https://github.com/woolen-yarn/kohdalab-iv/releases/latest)
+[![Release](https://img.shields.io/github/v/release/woolen-yarn/kohdalab-iv)](https://github.com/woolen-yarn/kohdalab-iv/releases/tag/v1.0.2)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 
 Rust desktop application for DC I-V and V-I measurements, live source/meter monitoring, and USB/GPIB instrument control.
@@ -23,7 +23,7 @@ DC I-V・V-I 測定、ソース／メーターのライブ監視、USB/GPIB 計�
 
 ## Downloads / ダウンロード
 
-[Latest stable release / 最新安定版](https://github.com/woolen-yarn/kohdalab-iv/releases/latest) · [v1.0.2 release notes / リリースノート](https://github.com/woolen-yarn/kohdalab-iv/releases/tag/v1.0.2)
+[Stable release / 安定版](https://github.com/woolen-yarn/kohdalab-iv/releases/tag/v1.0.2) · [v1.0.2 release notes / リリースノート](https://github.com/woolen-yarn/kohdalab-iv/releases/tag/v1.0.2)
 
 | OS / 対応環境 | Installer / インストーラー | Portable / ポータブル |
 | --- | --- | --- |
@@ -246,3 +246,5 @@ dependencies retain their own licenses; keep the accompanying notices and source
 See [redistribution terms](REDISTRIBUTION.md), [code signing](CODE_SIGNING_POLICY.md), and [privacy](PRIVACY.md).
 
 プロジェクトコードは [MIT ライセンス](LICENSE)です。ネイティブヘルパーと再配布する依存関係にはそれぞれのライセンスが適用されるため、付属の通知とソースを保持してください。[再配布条件](REDISTRIBUTION.md)、[コード署名](CODE_SIGNING_POLICY.md)、[プライバシー](PRIVACY.md)も参照してください。
+
+[One-click distribution / ワンクリック配布](DISTRIBUTION.md)
