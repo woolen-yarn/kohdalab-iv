@@ -63,19 +63,6 @@ impl IvApp {
         }
         self.control = Some(control);
     }
-    fn common_receipt(&self, native: Value) -> Value {
-        let id = native["id"].as_str().unwrap_or("").to_owned();
-        let kind = native["kind"].as_str().unwrap_or("operation").to_owned();
-        let state = native["status"].as_str().unwrap_or("running").to_owned();
-        let cleanup = if state == "running" {
-            "not_required"
-        } else if native.get("error_code").and_then(Value::as_str) == Some("output_safety") {
-            "pending"
-        } else {
-            "unknown"
-        };
-        common::receipt(&id, &kind, &state, cleanup, None, native)
-    }
     fn common_api_value(&self, _control: &GuiControl, body: &Value, value: Value) -> Value {
         let Some(method) = body.get("_control_method").and_then(Value::as_str) else {
             return value;
@@ -88,7 +75,7 @@ impl IvApp {
             "describe" | "status" | "result" | "release" | "stop" | "output_off"
             | "gate_output_off" => value,
             _ if value.get("id").is_some() && value.get("status").is_some() => {
-                self.common_receipt(value)
+                common_receipt(value)
             }
             _ => value,
         }
@@ -205,7 +192,7 @@ impl IvApp {
                     .and_then(Value::as_str)
                     .ok_or("Missing job_id")?;
                 let native = control.result(id)?;
-                return Ok(self.common_receipt(native));
+                return Ok(common_receipt(native));
             }
             "capabilities" => {
                 return Ok(
@@ -673,6 +660,45 @@ fn api_devices(body: &Value, dual: bool, disconnect: bool) -> Result<Vec<String>
     Ok(devices)
 }
 
+fn common_receipt(native: Value) -> Value {
+    let id = native["id"].as_str().unwrap_or("").to_owned();
+    let kind = native["kind"].as_str().unwrap_or("operation").to_owned();
+    let state = native["status"].as_str().unwrap_or("running").to_owned();
+    let cleanup = if state == "running" {
+        "not_required"
+    } else if kind == "start" && matches!(state.as_str(), "completed" | "stopped") {
+        // Job-scoped Stop owns only the sweep sources. Use the job's
+        // terminal snapshot, never a later app-wide status.
+        let snapshot = &native["snapshot"];
+        let outputs = [
+            (&snapshot["source_connected"], &snapshot["output"]),
+            (&snapshot["source2_connected"], &snapshot["source2_output"]),
+        ];
+        if snapshot["error"].as_str() == Some("")
+            && outputs.iter().all(|(connected, output)| {
+                connected.as_bool() == Some(false)
+                    || (connected.as_bool() == Some(true) && output.as_str() == Some("Off"))
+            })
+        {
+            if outputs
+                .iter()
+                .any(|(connected, _)| connected.as_bool() == Some(true))
+            {
+                "verified"
+            } else {
+                "not_required"
+            }
+        } else {
+            "unknown"
+        }
+    } else if native.get("error_code").and_then(Value::as_str) == Some("output_safety") {
+        "pending"
+    } else {
+        "unknown"
+    };
+    common::receipt(&id, &kind, &state, cleanup, None, native)
+}
+
 fn api_optional_text<'a>(body: &'a Value, key: &str) -> Result<Option<&'a str>, String> {
     match body.get(key) {
         None | Some(Value::Null) => Ok(None),
@@ -684,6 +710,26 @@ fn api_optional_text<'a>(body: &'a Value, key: &str) -> Result<Option<&'a str>, 
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn sweep_receipt_uses_its_own_terminal_output_evidence() {
+        let mut receipt = json!({
+            "id": "run", "kind": "start", "status": "stopped",
+            "snapshot": {
+                "source_connected": true, "output": "Off",
+                "source2_connected": true, "source2_output": "Off",
+                "gate_output": "On", "error": ""
+            }
+        });
+        assert_eq!(common_receipt(receipt.clone())["cleanup"], "verified");
+        receipt["snapshot"]["source2_output"] = json!("Unknown");
+        assert_eq!(common_receipt(receipt.clone())["cleanup"], "unknown");
+        receipt["snapshot"]["source2_output"] = json!("Off");
+        receipt["snapshot"]["error"] = json!("Could not verify OFF");
+        assert_eq!(common_receipt(receipt.clone())["cleanup"], "unknown");
+        receipt["snapshot"] = Value::Null;
+        assert_eq!(common_receipt(receipt)["cleanup"], "unknown");
+    }
+
     #[test]
     fn output_names_and_device_lists_are_validated_before_mutation() {
         assert_eq!(api_filename("  sample.CSV ").unwrap(), "sample");

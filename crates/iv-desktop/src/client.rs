@@ -1,5 +1,6 @@
 use crate::protocol::{Command, Event, Snapshot, gui_job, validate_gui_job};
 use crate::state::{OutputState, Phase};
+use std::collections::BTreeSet;
 use std::io::{BufRead, BufReader, Read, Write};
 use std::process::{Child, Command as Process, Stdio};
 use std::sync::atomic::{AtomicBool, AtomicU8, AtomicU64, Ordering};
@@ -16,10 +17,23 @@ const SAFETY_SOURCE2_OFF: u8 = 8;
 const SAFETY_OUTPUT_OFF: u8 = 16;
 const SAFETY_SHUTDOWN: u8 = 32;
 
+#[derive(Default)]
+struct SafetyIntents {
+    flags: AtomicU8,
+    inventory_off: Mutex<BTreeSet<u64>>,
+}
+
+impl SafetyIntents {
+    fn pending(&self) -> bool {
+        self.flags.load(Ordering::Acquire) != SAFETY_NONE
+            || !self.inventory_off.lock().unwrap().is_empty()
+    }
+}
+
 pub struct Client {
     child: Child,
     commands: mpsc::SyncSender<Command>,
-    safety: Arc<AtomicU8>,
+    safety: Arc<SafetyIntents>,
     writer_alive: Arc<AtomicBool>,
     pub state: Arc<Mutex<Snapshot>>,
     state_revision: Arc<AtomicU64>,
@@ -45,7 +59,7 @@ impl Client {
         let input = child.stdin.take().ok_or("Missing engine input")?;
         let output = child.stdout.take().ok_or("Missing engine output")?;
         let (commands, receive) = mpsc::sync_channel::<Command>(16);
-        let safety = Arc::new(AtomicU8::new(SAFETY_NONE));
+        let safety = Arc::new(SafetyIntents::default());
         let writer_alive = Arc::new(AtomicBool::new(true));
         let writer_safety = safety.clone();
         let writer_alive_thread = writer_alive.clone();
@@ -161,21 +175,26 @@ impl Client {
 
 fn submit_command(
     commands: &mpsc::SyncSender<Command>,
-    safety: &AtomicU8,
+    safety: &SafetyIntents,
     writer_alive: &AtomicBool,
     command: Command,
 ) -> Result<(), String> {
     if let Command::GuiJob { id, command } = &command {
         validate_gui_job(id, command)?;
     }
-    if let Some(level) = safety_level(&command) {
+    let level = safety_level(&command);
+    if level.is_some() || matches!(command, Command::InventoryDcOff { .. }) {
         if !writer_alive.load(Ordering::Acquire) {
             return Err("Measurement engine command pipe is disconnected.".into());
         }
-        safety.fetch_or(level, Ordering::AcqRel);
+        if let Command::InventoryDcOff { id } = command {
+            safety.inventory_off.lock().unwrap().insert(id);
+        } else if let Some(level) = level {
+            safety.flags.fetch_or(level, Ordering::AcqRel);
+        }
         return Ok(());
     }
-    if needs_clear_safety(&command) && safety.load(Ordering::Acquire) != SAFETY_NONE {
+    if needs_clear_safety(&command) && safety.pending() {
         return Err(
             "A safety command is pending. Wait for Stop or Output Off before starting a run."
                 .into(),
@@ -247,14 +266,13 @@ fn write_command<W: Write>(output: &mut W, command: &Command) -> Result<(), ()> 
 fn writer_loop<W: Write>(
     mut output: W,
     receive: mpsc::Receiver<Command>,
-    safety: Arc<AtomicU8>,
+    safety: Arc<SafetyIntents>,
     alive: Arc<AtomicBool>,
 ) -> W {
     let mut heartbeat = Instant::now();
     let mut pending_normal: Option<Command> = None;
     loop {
-        let level = safety.load(Ordering::Acquire);
-        if level != SAFETY_NONE {
+        if safety.pending() {
             // Discard queued operations rather than allow Run/Gate ON to
             // execute after a safety request. Already-written commands see
             // the engine reader's immediate cancellation latch.
@@ -264,12 +282,25 @@ fn writer_loop<W: Write>(
                     Ok(_) => {}
                     Err(mpsc::TryRecvError::Empty) => break,
                     Err(mpsc::TryRecvError::Disconnected) => {
-                        safety.fetch_max(SAFETY_SHUTDOWN, Ordering::AcqRel);
+                        safety.flags.fetch_or(SAFETY_SHUTDOWN, Ordering::AcqRel);
                         break;
                     }
                 }
             }
-            let selected = safety.load(Ordering::Acquire);
+            let selected = safety.flags.load(Ordering::Acquire);
+            // Global shutdown already covers every inventory output. Otherwise,
+            // write pending individual OFFs before a plain sweep Stop.
+            if selected & !SAFETY_STOP == SAFETY_NONE {
+                let id = safety.inventory_off.lock().unwrap().first().copied();
+                if let Some(id) = id {
+                    if write_command(&mut output, &Command::InventoryDcOff { id }).is_err() {
+                        break;
+                    }
+                    safety.inventory_off.lock().unwrap().remove(&id);
+                    heartbeat = Instant::now();
+                    continue;
+                }
+            }
             if selected == SAFETY_NONE {
                 continue;
             }
@@ -277,7 +308,7 @@ fn writer_loop<W: Write>(
             if write_command(&mut output, &command).is_err() {
                 break;
             }
-            safety.fetch_and(!bit, Ordering::AcqRel);
+            safety.flags.fetch_and(!bit, Ordering::AcqRel);
             if bit == SAFETY_SHUTDOWN {
                 break;
             }
@@ -290,7 +321,7 @@ fn writer_loop<W: Write>(
             Ok(command) => {
                 // Safety may have arrived after this normal command was removed.
                 // Defer it to the bounded FIFO drain above in that case.
-                if safety.load(Ordering::Acquire) != SAFETY_NONE {
+                if safety.pending() {
                     pending_normal = Some(command);
                     continue;
                 }
@@ -308,7 +339,7 @@ fn writer_loop<W: Write>(
             }
             Err(mpsc::RecvTimeoutError::Timeout) => {}
             Err(mpsc::RecvTimeoutError::Disconnected) => {
-                safety.fetch_max(SAFETY_SHUTDOWN, Ordering::AcqRel);
+                safety.flags.fetch_or(SAFETY_SHUTDOWN, Ordering::AcqRel);
             }
         }
     }
@@ -359,10 +390,10 @@ mod tests {
         for _ in 0..16 {
             sender.try_send(Command::Discover).unwrap();
         }
-        let safety = AtomicU8::new(SAFETY_NONE);
+        let safety = SafetyIntents::default();
         let alive = AtomicBool::new(true);
         submit_command(&sender, &safety, &alive, Command::Stop).unwrap();
-        assert_eq!(safety.load(Ordering::Acquire), SAFETY_STOP);
+        assert_eq!(safety.flags.load(Ordering::Acquire), SAFETY_STOP);
         assert!(
             submit_command(
                 &sender,
@@ -411,7 +442,8 @@ mod tests {
                 range: None,
             })
             .unwrap();
-        let safety = Arc::new(AtomicU8::new(SAFETY_OUTPUT_OFF));
+        let safety = Arc::new(SafetyIntents::default());
+        safety.flags.store(SAFETY_OUTPUT_OFF, Ordering::Release);
         let alive = Arc::new(AtomicBool::new(true));
         let writer = TestWriter::default();
         let bytes = writer.0.clone();
@@ -439,7 +471,7 @@ mod tests {
     #[test]
     fn source_dc_off_is_a_priority_intent_and_does_not_replace_gate_off() {
         let (sender, receiver) = mpsc::sync_channel(16);
-        let safety = Arc::new(AtomicU8::new(SAFETY_NONE));
+        let safety = Arc::new(SafetyIntents::default());
         let alive = Arc::new(AtomicBool::new(true));
         submit_command(&sender, &safety, &alive, Command::GateOutputOff).unwrap();
         submit_command(
@@ -471,5 +503,51 @@ mod tests {
         assert!(wire.contains("\"gate_output_off\""), "{wire}");
         assert!(wire.contains("\"source_dc_off\""), "{wire}");
         assert!(wire.contains("\"secondary\":true"), "{wire}");
+    }
+    #[test]
+    fn inventory_off_survives_stop_with_a_full_normal_queue() {
+        let (sender, receiver) = mpsc::sync_channel(16);
+        let safety = Arc::new(SafetyIntents::default());
+        let alive = Arc::new(AtomicBool::new(true));
+        for _ in 0..16 {
+            sender.try_send(Command::Discover).unwrap();
+        }
+        for id in [8, 3, 8] {
+            submit_command(&sender, &safety, &alive, Command::InventoryDcOff { id }).unwrap();
+        }
+        submit_command(&sender, &safety, &alive, Command::Stop).unwrap();
+
+        let writer = TestWriter::default();
+        let bytes = writer.0.clone();
+        let handle = std::thread::spawn({
+            let safety = safety.clone();
+            let alive = alive.clone();
+            move || writer_loop(writer, receiver, safety, alive)
+        });
+        let deadline = Instant::now() + Duration::from_secs(1);
+        while safety.pending() && Instant::now() < deadline {
+            std::thread::sleep(Duration::from_millis(5));
+        }
+        submit_command(&sender, &safety, &alive, Command::Shutdown).unwrap();
+        handle.join().unwrap();
+
+        let wire = bytes.lock().unwrap();
+        let commands: Vec<Command> = std::str::from_utf8(&wire)
+            .unwrap()
+            .lines()
+            .map(|line| serde_json::from_str(line).unwrap())
+            .collect();
+        assert!(
+            matches!(
+                commands.as_slice(),
+                [
+                    Command::InventoryDcOff { id: 3 },
+                    Command::InventoryDcOff { id: 8 },
+                    Command::Stop,
+                    Command::Shutdown
+                ]
+            ),
+            "{commands:?}"
+        );
     }
 }

@@ -268,7 +268,11 @@ impl GuiControl {
             })
         {
             "pending"
-        } else if !state.source_connected && !state.source2_connected && !state.gate_connected {
+        } else if !state.source_connected
+            && !state.source2_connected
+            && !state.gate_connected
+            && !state.inventory_devices.iter().any(|entry| entry.source)
+        {
             "not_required"
         } else if outputs_off(state) {
             "verified"
@@ -615,6 +619,9 @@ pub fn outputs_off(state: &Snapshot) -> bool {
     (!state.source_connected || state.output == crate::state::OutputState::Off)
         && (!state.source2_connected || state.source2_output == crate::state::OutputState::Off)
         && (!state.gate_connected || state.gate_output == crate::state::OutputState::Off)
+        && state.inventory_devices.iter().all(|entry| {
+            !entry.source || entry.assigned || entry.output == crate::state::OutputState::Off
+        })
 }
 impl Drop for GuiControl {
     fn drop(&mut self) {
@@ -1237,6 +1244,29 @@ mod tests {
         state.output = crate::state::OutputState::Unknown;
         assert_eq!(control.common_cleanup(&state), "pending");
     }
+    #[test]
+    fn common_stop_does_not_certify_live_or_unknown_independent_outputs() {
+        let (_directory, mut control) = control();
+        let mut state = Snapshot {
+            safety_revision: 18,
+            ..Default::default()
+        };
+        state.inventory_devices.push(
+            serde_json::from_value(json!({
+                "id": 8, "source": true, "simulation": true, "model": "YOKOGAWA_GS210",
+                "resource": "", "identity": "", "mode": "dc_iv", "assigned": false,
+                "output": "On", "error": ""
+            }))
+            .unwrap(),
+        );
+        control.mark_common_stop(17);
+        assert_eq!(control.common_cleanup(&state), "pending");
+        state.inventory_devices[0].output = crate::state::OutputState::Unknown;
+        assert_eq!(control.common_cleanup(&state), "pending");
+        state.inventory_devices[0].output = crate::state::OutputState::Off;
+        assert_eq!(control.common_cleanup(&state), "verified");
+    }
+
     #[test]
     fn common_namespace_does_not_change_job_duplicate_fingerprints() {
         let native =
