@@ -809,12 +809,12 @@ impl IvApp {
         if simulation {
             view.tag = "SIM";
         }
-        view.status = if source && self.state.source_dc.is_some() {
-            "DC SET"
-        } else if running && stale {
+        view.status = if stale {
             "STALE"
         } else if last_sample.is_none() {
             "WAITING"
+        } else if source && self.state.source_dc.is_some() && running {
+            "DC LIVE"
         } else if running {
             "LIVE"
         } else {
@@ -905,7 +905,7 @@ impl IvApp {
         };
         let text = dc_text.unwrap_or_else(|| {
             if let Some(reading) = idle_reading {
-                return display_reading_at_scale(reading.value, reading.resolution, unit, scale);
+                return display_reading(reading.value, reading.resolution, unit);
             }
             paired_reading
                 .map(|record| {
@@ -922,7 +922,7 @@ impl IvApp {
                     } else {
                         (record.meter_value, record.meter_resolution)
                     };
-                    display_reading_at_scale(value, resolution, unit, scale)
+                    display_reading(value, resolution, unit)
                 })
                 .unwrap_or_else(|| format!("— {unit}"))
         });
@@ -1134,7 +1134,7 @@ impl IvApp {
         view.status = if stale { "STALE" } else { "LIVE" };
         view.status_active = !stale;
         view.value = if reading.resolution.is_some() {
-            display_reading_at_scale(reading.value, reading.resolution, view.unit, scale)
+            display_reading(reading.value, reading.resolution, view.unit)
         } else {
             fmt_quantity(reading.value, view.unit)
         };
@@ -1501,6 +1501,136 @@ mod tests {
         )
         .unwrap();
         (context, app)
+    }
+
+    #[test]
+    fn nanoamp_readout_uses_the_current_reading_not_old_milliamp_history() {
+        let (context, mut app) = app();
+        app.boot = Instant::now() - Duration::from_secs(2);
+        app.state.source_connected = true;
+        app.state.meter_connected = true;
+        app.state.connected = true;
+        app.state.output = OutputState::On;
+        app.state.source_dc = Some(crate::protocol::DcOutputState {
+            mode: Mode::Iv,
+            value: 0.001,
+            compliance: 0.001,
+            ramp_step: 0.001,
+            range: Some(1.0),
+        });
+        let point = iv_core::SweepPoint {
+            target: 0.001,
+            direction: "monitor".into(),
+            repeat_index: 0,
+            sweep_index: 0,
+            point_index: 0,
+            total_points: 0,
+        };
+        let mut record = iv_core::simulate_record(&RunConfig::default(), &point, 2.0);
+        record.meter_value = 1e-9;
+        record.meter_resolution = Some(1e-10);
+        app.live_reading = Some(record);
+        app.live_samples.push_back(LiveSample {
+            time: 1.0,
+            voltage: 0.001,
+            current: 1e-3,
+        });
+        app.live_samples.push_back(LiveSample {
+            time: 2.0,
+            voltage: 0.001,
+            current: 1e-9,
+        });
+        let _ = context.run_ui(Default::default(), |ui| {
+            egui::CentralPanel::default().show_inside(ui, |ui| {
+                let view = app.assigned_live_view(ui, false);
+                assert_eq!(view.value, "1.0 nA");
+                assert_eq!(
+                    view.scale.prefix, "m",
+                    "plot retains its full history extent"
+                );
+                assert_eq!(view.points.len(), 2);
+                assert_eq!(view.points.last().unwrap()[1], 1e-9);
+                assert_eq!(app.assigned_live_view(ui, true).status, "DC LIVE");
+            });
+        });
+    }
+
+    #[test]
+    fn held_dc_does_not_hide_stale_or_missing_live_data() {
+        let (context, mut app) = app();
+        app.boot = Instant::now() - Duration::from_secs(10);
+        app.state.source_connected = true;
+        app.state.output = OutputState::On;
+        app.state.source_dc = Some(crate::protocol::DcOutputState {
+            mode: Mode::Iv,
+            value: 0.001,
+            compliance: 0.001,
+            ramp_step: 0.001,
+            range: Some(1.0),
+        });
+        let _ = context.run_ui(Default::default(), |ui| {
+            egui::CentralPanel::default().show_inside(ui, |ui| {
+                assert_eq!(app.assigned_live_view(ui, true).status, "WAITING");
+            });
+        });
+        let point = iv_core::SweepPoint {
+            target: 0.001,
+            direction: "monitor".into(),
+            repeat_index: 0,
+            sweep_index: 0,
+            point_index: 0,
+            total_points: 0,
+        };
+        app.live_reading = Some(iv_core::simulate_record(&RunConfig::default(), &point, 1.0));
+        app.live_samples.push_back(LiveSample {
+            time: 1.0,
+            voltage: 0.001,
+            current: 1e-6,
+        });
+        let _ = context.run_ui(Default::default(), |ui| {
+            egui::CentralPanel::default().show_inside(ui, |ui| {
+                assert_eq!(app.assigned_live_view(ui, true).status, "STALE");
+            });
+        });
+    }
+
+    #[test]
+    fn meter_range_shows_the_held_dc_function_instead_of_the_sweep_function() {
+        fn collect(shape: &egui::epaint::Shape, text: &mut Vec<String>) {
+            match shape {
+                egui::epaint::Shape::Text(value) => text.push(value.galley.text().to_owned()),
+                egui::epaint::Shape::Vec(values) => values.iter().for_each(|v| collect(v, text)),
+                _ => {}
+            }
+        }
+        let (context, mut app) = app();
+        app.settings.config.mode = Mode::Vi; // Future sweep measures voltage.
+        app.settings.meter_model = "AGILENT_34411A".into();
+        app.settings.config.meter_current_range = Some(0.0001);
+        app.settings.config.meter_voltage_range = Some(10.0);
+        app.state.output = OutputState::On;
+        app.state.source_dc = Some(crate::protocol::DcOutputState {
+            mode: Mode::Iv,
+            value: 0.001,
+            compliance: 0.001,
+            ramp_step: 0.001,
+            range: Some(1.0),
+        });
+        let mut text = Vec::new();
+        for _ in 0..3 {
+            let output = context.run_ui(Default::default(), |ui| {
+                egui::CentralPanel::default().show_inside(ui, |ui| {
+                    ui.set_width(330.0);
+                    app.meter_measurement_controls(ui);
+                });
+            });
+            text.clear();
+            for shape in &output.shapes {
+                collect(&shape.shape, &mut text);
+            }
+        }
+        assert!(text.iter().any(|v| v == "Fixed · 100.0000 µA"), "{text:?}");
+        assert!(!text.iter().any(|v| v == "Fixed · 10.0000 V"), "{text:?}");
     }
 
     /// Lay out the production card list in a sidebar-sized column.

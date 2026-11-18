@@ -29,10 +29,16 @@ def main() -> None:
         ("independent-dc", "--gui-inventory-smoke", False),
         ("two-columns", "--gui-two-column-smoke", True),
         ("current-source", "--gui-current-source-smoke", False),
+        ("held-dc", "--gui-dc-smoke", False),
     ]:
         screenshot = output / f"{label}.png"
+        command = [str(binary), flag, "--screenshot", str(screenshot)]
+        if label == "held-dc":
+            # The production smoke waits for three post-ON acquisitions in
+            # the GUI history and captures while DC is still ON, then cleans up.
+            command.append("--screenshot-dc-on")
         result = subprocess.run(
-            [str(binary), flag, "--screenshot", str(screenshot)],
+            command,
             capture_output=True, text=True, timeout=45,
         )
         (output / f"{label}.stdout.log").write_text(result.stdout)

@@ -1,5 +1,11 @@
 # Changelog / 変更履歴
 
+## 1.0.5
+
+- Show the Meter range for the active manual DC function rather than a different planned sweep, and label the independent sweep threshold explicitly. / Meterのレンジは別の予定測定ではなく現在のDC動作に合わせ、掃引停止しきい値はSweep limitと明示します。
+- Keep DC live updates observable with explicit WAITING / DC LIVE / STALE status and continuously updating GUI-history regression checks. When a command error disables monitoring, verify ordinary sources OFF first, including a single Source; preserve failed OFF confirmation as Unknown and retain both errors. Even a refused range change or Start while DC is held now shuts these outputs down. / DCライブ表示をデータ待ち・更新中・更新停止に分け、ON中も履歴が増えることを検査します。エラーで監視を止める際はSource単独でもOFFを先に確認し、確認できない場合はUnknownと両方のエラーを保持します。DC保持中のレンジ変更やStartの拒否も、このOFF処理の対象です。
+- Scale live numeric readouts from the current value and queried resolution, independently of plot history, so a new nA reading is not buried in old mA units. Plot/CSV values retain their original precision. / ライブ数値は現在値と読み返した分解能から単位を選び、以前のmA履歴があってもnA値を読みやすく表示します。グラフ・CSVの数値精度は維持します。
+
 ## 1.0.4
 
 - New configurations start with exactly one Source and one Meter, and scalar-only legacy profiles add Source 2 only when it was used or configured. Every device saved in an inventory is kept. / 新しい設定はSource 1台とMeter 1台で始まり、旧形式の設定はSource 2を使用・設定していた場合だけ追加します。保存済みの機器はすべて保持します。

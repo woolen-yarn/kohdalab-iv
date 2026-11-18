@@ -417,6 +417,7 @@ pub fn serve() -> Result<(), String> {
                     && control.pending_safety.load(Ordering::Acquire) == 0
                     && let Some(rejected_jobs) = take_rejected_requests(&control, &mut state)
                 {
+                    stop_sources_before_monitor_halt(pair.as_mut(), &mut state, &control);
                     for id in rejected_jobs {
                         complete_gui_job(&mut state, id);
                     }
@@ -1059,16 +1060,12 @@ pub fn serve() -> Result<(), String> {
             _ => Ok(()),
         };
         if let Err(error) = result {
-            if state.source2_connected && state.output != OutputState::Off {
-                clean_output(pair.as_mut(), &mut state, None, &control);
+            state.error = error.into();
+            stop_sources_before_monitor_halt(pair.as_mut(), &mut state, &control);
+            if let Err(other) = shutdown_gate(pair.as_mut(), &mut state) {
+                state.error = format!("{} · {other}", state.error).into();
             }
-            let gate_error = shutdown_gate(pair.as_mut(), &mut state).err();
             state.phase = Phase::Failed;
-            state.error = match gate_error {
-                Some(other) => format!("{error} · {other}"),
-                None => error,
-            }
-            .into();
             state.message = "Review the error and reconnect if needed.".into();
         }
         acknowledge_safety(&control, safety_intent);
@@ -1076,6 +1073,9 @@ pub fn serve() -> Result<(), String> {
             control.running.store(false, Ordering::Release);
         }
         let rejected_jobs = take_rejected_requests(&control, &mut state);
+        if rejected_jobs.is_some() {
+            stop_sources_before_monitor_halt(pair.as_mut(), &mut state, &control);
+        }
         if let Some(id) = gui_job_id {
             complete_gui_job(&mut state, id);
         }
@@ -2433,6 +2433,27 @@ fn shutdown_gate_for_recording_failure(pair: Option<&mut DevicePair>, state: &mu
             ErrorKind::OutputSafety,
             format!("{previous}Gate shutdown after recording failure failed: {error}"),
         );
+        state.phase = Phase::Failed;
+    }
+}
+
+/// A latched error disables idle monitoring. A confirmed ON source must
+/// not remain ON without that monitor and its meter-loading guard.
+/// Keep both the original error and a failed OFF confirmation visible.
+fn stop_sources_before_monitor_halt(
+    pair: Option<&mut DevicePair>,
+    state: &mut Snapshot,
+    control: &Control,
+) {
+    // Unknown stays unverified. In particular, do not repeat an entire
+    // failed OFF/recovery budget merely to publish its existing failure.
+    if (state.source_connected && state.output == OutputState::On)
+        || (state.source2_connected && state.source2_output == OutputState::On)
+    {
+        let (_, result) = stop::sweep(pair, state, None, control);
+        if let Err(error) = result {
+            state.error = format!("{} · {error}", state.error).into();
+        }
         state.phase = Phase::Failed;
     }
 }
@@ -4253,6 +4274,55 @@ mod tests {
             closed: AtomicBool::new(false),
             heartbeat: Mutex::new(Instant::now()),
         }
+    }
+
+    #[test]
+    fn monitoring_halt_verifies_primary_or_secondary_off_and_preserves_failed_confirmation() {
+        for secondary in [false, true] {
+            let mut state = Snapshot {
+                source_connected: !secondary,
+                source_simulation: !secondary,
+                source2_connected: secondary,
+                source2_simulation: secondary,
+                error: "Original command error".into(),
+                ..Default::default()
+            };
+            if secondary {
+                state.source2_output = OutputState::On;
+            } else {
+                state.output = OutputState::On;
+            }
+            stop_sources_before_monitor_halt(None, &mut state, &live_control());
+            assert_eq!(
+                if secondary {
+                    state.source2_output
+                } else {
+                    state.output
+                },
+                OutputState::Off
+            );
+            assert_eq!(state.phase, Phase::Failed);
+            assert_eq!(state.error.as_str(), "Original command error");
+        }
+        let mut state = Snapshot {
+            source_connected: true,
+            source_simulation: false,
+            output: OutputState::On,
+            error: "Original command error".into(),
+            ..Default::default()
+        };
+        stop_sources_before_monitor_halt(None, &mut state, &live_control());
+        assert_eq!(state.output, OutputState::Unknown);
+        assert!(state.error.contains("Original command error"));
+        assert!(state.error.contains("Source transport is unavailable"));
+        assert_eq!(state.phase, Phase::Failed);
+        let error = state.error.clone();
+        stop_sources_before_monitor_halt(None, &mut state, &live_control());
+        assert_eq!(
+            state.error, error,
+            "do not repeat a failed OFF recovery budget"
+        );
+        assert_eq!(state.output, OutputState::Unknown);
     }
 
     #[test]

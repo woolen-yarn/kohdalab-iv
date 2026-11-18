@@ -2057,6 +2057,9 @@ impl IvApp {
     /// stops a run while the latter selects the meter input path.
     fn meter_measurement_controls(&mut self, ui: &mut egui::Ui) {
         let mode = self.settings.config.mode;
+        // Sweep protection belongs to the planned run. Range describes the
+        // live meter function, which may instead follow a held manual DC.
+        let range_mode = self.meter_live_mode();
         let protection_unit = if mode == Mode::Iv { "A" } else { "V" };
         let effective_source = self
             .preview
@@ -2070,7 +2073,7 @@ impl IvApp {
         };
         ui.add_space(4.0);
         ui.horizontal(|ui| {
-            form_label(ui, "Limit", 85.0);
+            form_label(ui, "Sweep limit", 85.0);
             let width = ui.available_width();
             ui.add_enabled_ui(!self.busy() && !self.python_locked(), |ui| {
                 let (meter_value, meter_unit) = match mode {
@@ -2106,19 +2109,19 @@ impl IvApp {
             |ui| {
                 ui.horizontal(|ui| {
                     form_label(ui, "Range", 85.0);
-                    match mode {
+                    match range_mode {
                         Mode::Iv => widgets::meter_range_choice(
                             ui,
                             "active_meter_current_range",
                             &meter_model,
-                            mode,
+                            range_mode,
                             &mut self.settings.config.meter_current_range,
                         ),
                         Mode::Vi => widgets::meter_range_choice(
                             ui,
                             "active_meter_voltage_range",
                             &meter_model,
-                            mode,
+                            range_mode,
                             &mut self.settings.config.meter_voltage_range,
                         ),
                     }
@@ -2137,7 +2140,7 @@ impl IvApp {
         if range_changed {
             self.send_meter_ranges();
         }
-        let fixed_range = match mode {
+        let fixed_range = match range_mode {
             Mode::Iv => self.settings.config.meter_current_range,
             Mode::Vi => self.settings.config.meter_voltage_range,
         };
@@ -2145,7 +2148,7 @@ impl IvApp {
             Mode::Iv => self.settings.current_compliance,
             Mode::Vi => self.settings.voltage_compliance,
         };
-        if fixed_range.is_some_and(|range| meter_limit > range) {
+        if mode == range_mode && fixed_range.is_some_and(|range| meter_limit > range) {
             ui.response().on_hover_text("Limit exceeds the fixed range. Instrument overload may stop first; changing Limit does not change Range.");
         }
         ui.horizontal(|ui| {
