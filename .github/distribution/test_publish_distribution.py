@@ -67,6 +67,16 @@ class FakeGitHub:
 
 
 class PublishDistributionTests(unittest.TestCase):
+    def test_git_and_github_output_is_decoded_as_utf8_on_windows(self):
+        payload = '{"commit":{"message":"測定モード切替"}}'
+        with patch.object(p.subprocess, "run", return_value=subprocess.CompletedProcess(
+            ["gh", "api"], 0, payload, ""
+        )) as execute:
+            result = p.run(["gh", "api", "repos/owner/iv/commits/tag"])
+        self.assertEqual(json.loads(result.stdout)["commit"]["message"], "測定モード切替")
+        self.assertEqual(execute.call_args.kwargs["encoding"], "utf-8")
+        self.assertTrue(execute.call_args.kwargs["text"])
+
     def setUp(self):
         temporary = tempfile.TemporaryDirectory()
         self.addCleanup(temporary.cleanup)
