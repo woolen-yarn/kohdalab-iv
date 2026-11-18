@@ -1,5 +1,10 @@
 # Changelog / 変更履歴
 
+## 1.0.4
+
+- New configurations start with exactly one Source and one Meter, and scalar-only legacy profiles add Source 2 only when it was used or configured. Every device saved in an inventory is kept. / 新しい設定はSource 1台とMeter 1台で始まり、旧形式の設定はSource 2を使用・設定していた場合だけ追加します。保存済みの機器はすべて保持します。
+- Original and added devices share one card: drag handle, editable label and Delete, Device with a compact connection state and Connect / Disconnect / Settings, the live display, Settings rows and DC output. Adding a device no longer changes measurement roles; Delete explains why it is unavailable. / 元の機器と追加した機器は同じカードを使います（ドラッグ、ラベル編集、Delete、Device内の接続・設定、ライブ表示、設定欄、DC出力）。機器の追加で測定の割り当ては変わらず、Deleteできない場合は理由を表示します。
+
 ## 1.0.3
 
 - Reset retained plot zoom on measurement-mode changes and each new run; keep manual zoom during the same run. / 測定モードの切替と新しい測定開始時にプロットを自動範囲へ戻し、同じ測定中の手動ズームは維持します。

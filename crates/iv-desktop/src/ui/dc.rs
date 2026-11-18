@@ -237,7 +237,13 @@ impl IvApp {
     }
 
     /// Device and DC disclosures share one row; closed DC controls add no height.
-    pub(super) fn source_card_header(&mut self, ui: &mut egui::Ui, id: u64, summary: &str) -> bool {
+    pub(super) fn source_card_header(
+        &mut self,
+        ui: &mut egui::Ui,
+        id: u64,
+        summary: &str,
+        connected: bool,
+    ) -> bool {
         let key = ui.make_persistent_id(("source_device_disclosure", id));
         let mut device_open = ui
             .ctx()
@@ -247,7 +253,7 @@ impl IvApp {
         let unknown = self.dc_connected(id) && self.dc_output(id) == OutputState::Unknown;
         ui.horizontal(|ui| {
             let width = super::widgets::device_width(ui);
-            super::widgets::device_disclosure(ui, summary, width, &mut device_open);
+            super::widgets::device_disclosure(ui, summary, connected, width, &mut device_open);
             let open = self.dc_open.contains(&id);
             let text = "DC output";
             let mut control = egui::Button::new(RichText::new(text).color(if dc_on {
@@ -678,7 +684,7 @@ impl IvApp {
         }
     }
 
-    fn send_dc_job(&mut self, command: Command) {
+    pub(super) fn send_dc_job(&mut self, command: Command) {
         let inventory_id = match &command {
             Command::SetInventoryDc { id, .. } => Some(*id),
             _ => None,
@@ -710,116 +716,6 @@ impl IvApp {
                 self.report(error);
             }
         }
-    }
-}
-
-impl IvApp {
-    pub(super) fn dc_stored_source_card(&mut self, ui: &mut egui::Ui, id: u64) {
-        let Some(index) = self
-            .settings
-            .sources
-            .iter()
-            .position(|entry| entry.id == id)
-        else {
-            return;
-        };
-        let entry = self.settings.sources[index].clone();
-        let registered = self.inventory_connected(id);
-        let connected = self.dc_gate_matches(id);
-        let editable = self.inventory_editable() && !connected && !registered;
-        let title = format!("Source {}", index + 1);
-        self.device_card(ui, true, id, &title, connected || registered, |app, ui| {
-            if app.source_card_header(ui, id, device_summary(&entry.model)) {
-                app.use_inventory_entry_button(ui, true, id);
-                if !connected {
-                    app.inventory_connection_controls(ui, true, id);
-                }
-                let mut model = entry.model.clone();
-                let mut resource = entry.resource.clone();
-                ui.add_enabled_ui(editable, |ui| {
-                    egui::ComboBox::from_id_salt(("bias_model", id))
-                        .width(ui.available_width())
-                        .selected_text(&model)
-                        .show_ui(ui, |ui| {
-                            for descriptor in instrument_catalog(InstrumentRole::Source) {
-                                ui.add_enabled_ui(model_supported(descriptor.id), |ui| {
-                                    ui.selectable_value(
-                                        &mut model,
-                                        descriptor.id.to_owned(),
-                                        descriptor.id,
-                                    );
-                                });
-                            }
-                        });
-                    ui.horizontal(|ui| {
-                        let width = (ui.available_width() - 28.0).max(60.0);
-                        let summary = resource_summary(&resource);
-                        compact_field(ui, ("bias_resource", id), &mut resource, width, summary);
-                        egui::ComboBox::from_id_salt(("bias_resources", id))
-                            .width(20.0)
-                            .selected_text("")
-                            .show_ui(ui, |ui| {
-                                ui.set_min_width(470.0);
-                                for item in &app.state.resources {
-                                    ui.selectable_value(
-                                        &mut resource,
-                                        item.resource.clone(),
-                                        &item.label,
-                                    );
-                                }
-                            });
-                    });
-                    if button(ui, "Refresh", 70.0, editable).clicked() {
-                        app.send(Command::Discover);
-                    }
-                });
-                if let Some(entry) = app.settings.sources.iter_mut().find(|entry| entry.id == id) {
-                    entry.model = model;
-                    entry.resource = resource;
-                }
-                app.dc_compliance_control(ui, id);
-                if button(
-                    ui,
-                    "Remove",
-                    62.0,
-                    editable && app.settings.sources.len() > 2,
-                )
-                .clicked()
-                    && app.settings.remove_source(id)
-                {
-                    app.dc_open.remove(&id);
-                }
-            }
-
-            if connected {
-                ui.add_space(5.0);
-                ui.label(
-                    RichText::new(
-                        app.state
-                            .gate_voltage
-                            .map(|v| fmt_quantity(v, "V"))
-                            .unwrap_or_else(|| "— V".into()),
-                    )
-                    .monospace()
-                    .size(22.0)
-                    .color(ORANGE),
-                );
-                ui.label(
-                    RichText::new(format!(
-                        "Source level · output {}",
-                        app.state.gate_output.to_lowercase()
-                    ))
-                    .small()
-                    .color(if app.state.gate_output == OutputState::Unknown {
-                        RED
-                    } else {
-                        MUTED
-                    }),
-                );
-            }
-            app.inventory_live_monitor(ui, id);
-            app.dc_controls(ui, id);
-        });
     }
 }
 

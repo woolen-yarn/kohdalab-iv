@@ -173,17 +173,17 @@ impl Default for Settings {
             source2: String::new(),
             source2_model: "YOKOGAWA_GS210".into(),
             source2_compliance_unit: 1,
-            sources: vec![
-                InstrumentEntry::source(1, "YOKOGAWA_GS210", String::new()),
-                InstrumentEntry::source(2, "YOKOGAWA_GS210", String::new()),
-            ],
-            meters: vec![InstrumentEntry::meter(3, "AGILENT_34411A", String::new())],
+            // A fresh profile has exactly the two mandatory instruments.
+            // Source 2, the reference Meter and a fixed bias are optional
+            // roles chosen later from devices the user adds.
+            sources: vec![InstrumentEntry::source(1, "YOKOGAWA_GS210", String::new())],
+            meters: vec![InstrumentEntry::meter(2, "AGILENT_34411A", String::new())],
             source1_id: 1,
-            source2_id: 2,
-            meter_id: 3,
+            source2_id: NO_DEVICE,
+            meter_id: 2,
             reference_meter_id: None,
-            dc_gate_id: 0,
-            next_inventory_id: 4,
+            dc_gate_id: NO_DEVICE,
+            next_inventory_id: 3,
             card_order: Vec::new(),
             two_card_columns: false,
             output_dir: kohdalab_control_protocol::paths::AppPaths::from_root(user_dir(), "iv")
@@ -218,13 +218,19 @@ impl Settings {
                 self.source_model.clone(),
                 self.source.clone(),
             ));
-            self.sources.push(InstrumentEntry::source(
-                2,
-                self.source2_model.clone(),
-                self.source2.clone(),
-            ));
             self.source1_id = 1;
-            self.source2_id = 2;
+            // Scalar-only profiles always carried Source 2 fields. Keep that
+            // device only when the profile actually used or configured it.
+            if self.config.balanced_source.is_some() || !self.source2.trim().is_empty() {
+                self.sources.push(InstrumentEntry::source(
+                    2,
+                    self.source2_model.clone(),
+                    self.source2.clone(),
+                ));
+                self.source2_id = 2;
+            } else {
+                self.source2_id = NO_DEVICE;
+            }
         }
         if self.meters.is_empty() {
             self.meters.push(InstrumentEntry::meter(
@@ -255,12 +261,16 @@ impl Settings {
         if !self.sources.iter().any(|entry| entry.id == self.source2_id)
             || self.source2_id == self.source1_id
         {
+            // Source 2 is an optional role over existing devices, never a
+            // placeholder: without another source it remains unassigned.
             self.source2_id = self
                 .sources
                 .iter()
                 .find(|entry| entry.id != self.source1_id)
-                .map(|entry| entry.id)
-                .unwrap_or(self.source1_id);
+                .map_or(NO_DEVICE, |entry| entry.id);
+        }
+        if self.dc_gate_id != NO_DEVICE && !self.sources.iter().any(|e| e.id == self.dc_gate_id) {
+            self.dc_gate_id = NO_DEVICE;
         }
         if !self.meters.iter().any(|entry| entry.id == self.meter_id) {
             self.meter_id = self.meters[0].id;
@@ -382,6 +392,7 @@ impl Settings {
         let mut entry = InstrumentEntry::source(id, "YOKOGAWA_GS210", String::new());
         entry.label = label.trim().to_owned();
         self.sources.push(entry);
+        self.append_card(id);
         id
     }
 
@@ -390,22 +401,118 @@ impl Settings {
         let mut entry = InstrumentEntry::meter(id, "AGILENT_34411A", String::new());
         entry.label = label.trim().to_owned();
         self.meters.push(entry);
+        self.append_card(id);
         id
     }
 
+    /// Saved card order: explicit order first, then any unsaved entries in
+    /// inventory order (sources before meters), as cards have always shown.
+    pub(super) fn ordered_cards(&self) -> Vec<(bool, u64)> {
+        let mut cards: Vec<_> = self
+            .sources
+            .iter()
+            .map(|entry| (true, entry.id))
+            .chain(self.meters.iter().map(|entry| (false, entry.id)))
+            .collect();
+        cards.sort_by_key(|&(_, id)| {
+            self.card_order
+                .iter()
+                .position(|&saved| saved == id)
+                .unwrap_or(usize::MAX)
+        });
+        cards
+    }
+
+    /// Added cards appear after every existing card in one-column layout.
+    fn append_card(&mut self, id: u64) {
+        let mut order: Vec<_> = self
+            .ordered_cards()
+            .into_iter()
+            .map(|(_, card)| card)
+            .filter(|&card| card != id)
+            .collect();
+        order.push(id);
+        self.card_order = order;
+    }
+
+    /// Move one card before or after another.  IDs never change; only the
+    /// saved display order does.
+    pub(super) fn move_card(&mut self, dragged: u64, target: u64, after: bool) -> bool {
+        let mut order: Vec<_> = self.ordered_cards().into_iter().map(|(_, id)| id).collect();
+        if dragged == target || !order.contains(&dragged) {
+            return false;
+        }
+        order.retain(|&id| id != dragged);
+        let Some(index) = order.iter().position(|&id| id == target) else {
+            return false;
+        };
+        order.insert(index + usize::from(after), dragged);
+        self.card_order = order;
+        true
+    }
+
+    /// Why a saved device cannot be deleted from the configuration itself.
+    /// Connection state is checked separately by the GUI.
+    pub(super) fn deletion_blocker(&self, source: bool, id: u64) -> Option<&'static str> {
+        if source {
+            if self.sources.len() <= 1 {
+                return Some(
+                    "Keep one Source in the measurement profile. Add a replacement first.",
+                );
+            }
+            if id == self.source1_id {
+                return Some(
+                    "This device is Source 1. Assign another Source in Settings → Devices first.",
+                );
+            }
+            if self.config.balanced_source.is_some() && id == self.source2_id {
+                return Some(
+                    "This device is Source 2 for Dual V-I. Assign another Source or leave Dual mode first.",
+                );
+            }
+        } else {
+            if self.meters.len() <= 1 {
+                return Some("Keep one Meter in the measurement profile. Add a replacement first.");
+            }
+            if id == self.meter_id {
+                return Some(
+                    "This device is the measurement Meter. Assign another Meter in Settings → Devices first.",
+                );
+            }
+            if self.reference_meter_id == Some(id) {
+                return Some(
+                    "This device is the optional second Meter. Choose \"Source value only\" in Settings → Devices first.",
+                );
+            }
+        }
+        None
+    }
+
     pub(super) fn remove_source(&mut self, id: u64) -> bool {
-        if id == self.source1_id || id == self.source2_id || self.sources.len() <= 2 {
+        if self.deletion_blocker(true, id).is_some() {
             return false;
         }
         self.sources.retain(|entry| entry.id != id);
+        self.card_order.retain(|&saved| saved != id);
+        if self.dc_gate_id == id {
+            self.dc_gate_id = NO_DEVICE;
+        }
+        if self.source2_id == id {
+            self.source2_id = self
+                .sources
+                .iter()
+                .find(|entry| entry.id != self.source1_id)
+                .map_or(NO_DEVICE, |entry| entry.id);
+        }
         true
     }
 
     pub(super) fn remove_meter(&mut self, id: u64) -> bool {
-        if id == self.meter_id || self.reference_meter_id == Some(id) || self.meters.len() <= 1 {
+        if self.deletion_blocker(false, id).is_some() {
             return false;
         }
         self.meters.retain(|entry| entry.id != id);
+        self.card_order.retain(|&saved| saved != id);
         true
     }
 
@@ -619,6 +726,9 @@ pub(super) fn load_settings(bytes: &[u8]) -> Result<Settings, String> {
 const fn default_inventory_id() -> u64 {
     1
 }
+
+/// Inventory IDs start at 1; zero marks an optional role without a device.
+pub(super) const NO_DEVICE: u64 = 0;
 
 #[cfg(test)]
 mod tests {
@@ -995,8 +1105,12 @@ mod tests {
     #[test]
     fn editing_inactive_second_source_survives_active_card_storage() {
         let mut settings = Settings::default();
+        let second = settings.add_source("");
         settings.migrate_inventory();
-        let second = settings.source2_id;
+        assert_eq!(
+            settings.source2_id, second,
+            "an existing device may fill Source 2"
+        );
         settings
             .sources
             .iter_mut()
@@ -1044,16 +1158,16 @@ mod tests {
     #[test]
     fn active_inventory_binding_preserves_inactive_devices() {
         let mut settings = Settings::default();
-        settings.add_source("");
-        let inactive = settings.sources[2].clone();
+        let added = settings.add_source("");
+        let inactive = settings.sources[1].clone();
         settings.source_model = "YOKOGAWA_7651".into();
         settings.source = "GPIB0::3::INSTR".into();
         settings.store_active_entries();
         settings.bind_active_entries();
         assert_eq!(settings.source_model, "YOKOGAWA_7651");
-        assert_eq!(settings.sources[2], inactive);
-        assert!(settings.remove_source(settings.sources[2].id));
-        assert_eq!(settings.sources.len(), 2);
+        assert_eq!(settings.sources[1], inactive);
+        assert!(settings.remove_source(added));
+        assert_eq!(settings.sources.len(), 1);
     }
 
     #[test]
@@ -1140,6 +1254,213 @@ mod tests {
         settings.swap_meter_roles_for_mode_change(iv_core::Mode::Iv, iv_core::Mode::Vi);
         assert_eq!(settings.meter_id, meter_i);
         assert_eq!(settings.reference_meter_id, None);
+    }
+}
+
+#[cfg(test)]
+mod inventory_tests {
+    use super::*;
+
+    fn source_ids(settings: &Settings) -> Vec<u64> {
+        settings.sources.iter().map(|entry| entry.id).collect()
+    }
+
+    fn meter_ids(settings: &Settings) -> Vec<u64> {
+        settings.meters.iter().map(|entry| entry.id).collect()
+    }
+
+    fn assert_one_source_one_meter(settings: &Settings) {
+        assert_eq!(settings.sources.len(), 1, "exactly one Source");
+        assert_eq!(settings.meters.len(), 1, "exactly one Meter");
+        assert_eq!(settings.source1_id, settings.sources[0].id);
+        assert_eq!(settings.meter_id, settings.meters[0].id);
+        assert_eq!(settings.source2_id, NO_DEVICE, "no phantom Source 2");
+        assert_eq!(settings.reference_meter_id, None);
+        assert_eq!(settings.dc_gate_id, NO_DEVICE);
+        assert_eq!(settings.ordered_cards().len(), 2);
+    }
+
+    #[test]
+    fn fresh_defaults_have_one_source_and_one_meter_through_migrate_save_and_reload() {
+        let mut settings = Settings::default();
+        assert_one_source_one_meter(&settings);
+        settings.migrate_inventory();
+        settings.migrate_inventory();
+        assert_one_source_one_meter(&settings);
+        settings.store_active_entries();
+        settings.bind_active_entries();
+        assert_one_source_one_meter(&settings);
+
+        let root = tempfile::tempdir().unwrap();
+        let (first_launch, _) = load_startup_settings_in(root.path()).unwrap();
+        assert_one_source_one_meter(&first_launch);
+        let path = settings_path_in(root.path());
+        save_settings(&first_launch, &path).unwrap();
+        let reloaded = load_settings(&std::fs::read(&path).unwrap()).unwrap();
+        assert_one_source_one_meter(&reloaded);
+        save_settings(&reloaded, &path).unwrap();
+        let json: serde_json::Value =
+            serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
+        assert_eq!(json["sources"].as_array().unwrap().len(), 1);
+        assert_eq!(json["meters"].as_array().unwrap().len(), 1);
+        assert_eq!(json["source2_id"], NO_DEVICE);
+    }
+
+    #[test]
+    fn scalar_legacy_profiles_keep_source2_only_when_it_was_used_or_configured() {
+        let single = load_settings(
+            br#"{"source_model":"YOKOGAWA_7651","source":"GPIB0::3::INSTR","meter":"GPIB0::7::INSTR"}"#,
+        )
+        .unwrap();
+        assert_one_source_one_meter(&single);
+        assert_eq!(single.sources[0].model, "YOKOGAWA_7651");
+        assert_eq!(single.meters[0].resource, "GPIB0::7::INSTR");
+
+        let mut dual = Settings::default();
+        dual.config.balanced_source = Some(iv_core::BalancedSourceConfig::default());
+        let mut value = serde_json::to_value(&dual).unwrap();
+        let object = value.as_object_mut().unwrap();
+        for key in ["sources", "meters", "source1_id", "source2_id", "meter_id"] {
+            object.remove(key);
+        }
+        let dual = load_settings(&serde_json::to_vec(&value).unwrap()).unwrap();
+        assert_eq!(dual.sources.len(), 2, "a Dual profile keeps its Source 2");
+        assert_ne!(dual.source2_id, NO_DEVICE);
+        assert_ne!(dual.source2_id, dual.source1_id);
+    }
+
+    /// Every explicitly saved inventory entry is kept, including a blank
+    /// second GS210 written by earlier versions or added by the user.
+    #[test]
+    fn saved_inventory_entries_are_all_preserved_including_blank_sources() {
+        let old = br#"{"application":"kohdalab-iv","schema_version":2,
+            "sources":[{"id":1,"model":"YOKOGAWA_GS210","resource":"GPIB0::3::INSTR"},
+                       {"id":2,"model":"YOKOGAWA_GS210","resource":""}],
+            "meters":[{"id":3,"model":"AGILENT_34411A","resource":"GPIB0::7::INSTR"}],
+            "source1_id":1,"source2_id":2,"meter_id":3,"next_inventory_id":4}"#;
+        let settings = load_settings(old).unwrap();
+        assert_eq!(source_ids(&settings), [1, 2]);
+        assert_eq!(meter_ids(&settings), [3]);
+        assert_eq!(settings.sources[1].resource, "");
+        assert_eq!(settings.sources[0].resource, "GPIB0::3::INSTR");
+        assert!(settings.next_inventory_id >= 4);
+    }
+
+    #[test]
+    fn repeated_save_and_load_keep_an_unlabeled_unconfigured_added_source() {
+        let root = tempfile::tempdir().unwrap();
+        let path = settings_path_in(root.path());
+        let mut settings = Settings::default();
+        let added = settings.add_source("");
+        let added_meter = settings.add_meter("");
+        let expected = (source_ids(&settings), meter_ids(&settings));
+        let order = settings.card_order.clone();
+        for round in 0..4 {
+            save_settings(&settings, &path).unwrap();
+            settings = load_settings(&std::fs::read(&path).unwrap()).unwrap();
+            settings.migrate_inventory();
+            assert_eq!(
+                (source_ids(&settings), meter_ids(&settings)),
+                expected,
+                "round {round}"
+            );
+            assert_eq!(settings.card_order, order, "round {round}");
+            let entry = settings.sources.iter().find(|e| e.id == added).unwrap();
+            assert!(entry.label.is_empty() && entry.resource.is_empty());
+            assert_eq!(entry.model, "YOKOGAWA_GS210");
+            assert_eq!(entry.dc, DcSettings::default());
+            assert!(settings.meters.iter().any(|e| e.id == added_meter));
+        }
+    }
+
+    #[test]
+    fn multi_device_and_dual_profiles_keep_devices_roles_labels_and_order() {
+        let mut original = Settings::default();
+        let bias = original.add_source("Bias");
+        let gate = original.add_source("Gate");
+        let reference = original.add_meter("Reference");
+        original.config.balanced_source = Some(iv_core::BalancedSourceConfig::default());
+        original.source2_id = bias;
+        original.dc_gate_id = gate;
+        original.reference_meter_id = Some(reference);
+        original.sources[1].resource = "GPIB0::4::INSTR".into();
+        original.meters[1].resource = "GPIB0::8::INSTR".into();
+        assert!(original.move_card(reference, original.source1_id, false));
+        let order = original.card_order.clone();
+        original.bind_active_entries();
+
+        let restored = load_settings(&serde_json::to_vec(&original).unwrap()).unwrap();
+        assert_eq!(source_ids(&restored), source_ids(&original));
+        assert_eq!(meter_ids(&restored), meter_ids(&original));
+        assert_eq!(restored.source2_id, bias);
+        assert_eq!(restored.dc_gate_id, gate);
+        assert_eq!(restored.reference_meter_id, Some(reference));
+        assert_eq!(restored.card_order, order);
+        assert_eq!(restored.ordered_cards()[0], (false, reference));
+        let labels: Vec<_> = restored.sources.iter().map(|e| e.label.as_str()).collect();
+        assert_eq!(labels, ["", "Bias", "Gate"]);
+        assert_eq!(restored.source2, "GPIB0::4::INSTR");
+    }
+
+    #[test]
+    fn add_rename_reorder_and_remove_keep_stable_ids() {
+        let mut settings = Settings::default();
+        let (source1, meter1) = (settings.source1_id, settings.meter_id);
+        let source2 = settings.add_source("  Gate  ");
+        let meter2 = settings.add_meter("");
+        assert_eq!([source2, meter2], [3, 4]);
+        assert_eq!(settings.sources[1].label, "Gate");
+        assert_eq!(
+            settings.ordered_cards(),
+            [
+                (true, source1),
+                (false, meter1),
+                (true, source2),
+                (false, meter2)
+            ],
+            "added cards appear after the existing cards"
+        );
+
+        settings.meters[1].label = "Hall".into();
+        assert!(settings.move_card(meter2, source1, false));
+        assert!(!settings.move_card(meter2, meter2, true));
+        assert_eq!(settings.ordered_cards()[0], (false, meter2));
+        assert_eq!(
+            settings.meters[1].id, meter2,
+            "rename and reorder keep the ID"
+        );
+
+        // Measurement roles and the last device of a kind are protected.
+        assert!(settings.deletion_blocker(true, source1).is_some());
+        assert!(settings.deletion_blocker(false, meter1).is_some());
+        settings.reference_meter_id = Some(meter2);
+        assert!(!settings.remove_meter(meter2));
+        settings.reference_meter_id = None;
+        settings.config.balanced_source = Some(iv_core::BalancedSourceConfig::default());
+        settings.source2_id = source2;
+        assert!(!settings.remove_source(source2));
+        settings.config.balanced_source = None;
+
+        settings.dc_gate_id = source2;
+        assert!(settings.remove_source(source2));
+        assert!(settings.remove_meter(meter2));
+        assert_eq!(settings.dc_gate_id, NO_DEVICE);
+        assert_eq!(settings.source2_id, NO_DEVICE);
+        assert_eq!([settings.source1_id, settings.meter_id], [source1, meter1]);
+        assert!(!settings.card_order.contains(&source2));
+        assert!(
+            settings
+                .deletion_blocker(true, source1)
+                .unwrap()
+                .contains("Keep one Source")
+        );
+        assert!(
+            settings
+                .deletion_blocker(false, meter1)
+                .unwrap()
+                .contains("Keep one Meter")
+        );
+        assert_eq!(settings.add_source(""), 5, "deleted IDs are not reused");
     }
 }
 

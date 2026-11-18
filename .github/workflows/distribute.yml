@@ -107,6 +107,9 @@ jobs:
         Copy-Item build/common-control-validation/results.json dist/common-control-validation.json
         Copy-Item build/gui-validation/source-and-meter.png dist/iv-windows-simulation.png
         Copy-Item build/gui-validation/two-columns.png dist/iv-windows-two-columns.png
+        # Preserve the exact Windows captures for visual review after CI.
+        python -c "import json,os,pathlib; pathlib.Path('dist/gui-evidence.json').write_text(json.dumps({'version':'$v','source_commit':os.environ['GITHUB_SHA'],'os':'Windows x64','mode':'Simulation; no hardware','renderer':'CI-only Mesa 26.2.4 llvmpipe; not bundled'},indent=2)+'\n',encoding='utf-8')"
+        Compress-Archive -Path dist/*.png,dist/gui-evidence.json -DestinationPath dist/iv-windows-gui-evidence.zip
     - name: Package portable, source kit and Setup
       id: package
       shell: pwsh
