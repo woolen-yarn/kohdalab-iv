@@ -854,7 +854,11 @@ impl IvApp {
                 .state
                 .source_dc
                 .as_ref()
-                .is_some_and(|dc| dc.value == 0.0011) =>
+                .is_some_and(|dc| dc.value == 0.0011)
+                // Observe repeated post-ON acquisitions in the production
+                // GUI history, rather than accepting one DC acknowledgement.
+                && self.live_samples.iter().rev().take(3)
+                    .filter(|sample| sample.voltage == 0.0011).count() == 3 =>
             {
                 self.settings.sources[0].dc.units[0] = 0;
                 if std::env::args().any(|arg| arg == "--screenshot-dc-on")

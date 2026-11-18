@@ -160,7 +160,7 @@ pub(super) fn meter_range_help(model: &str, mode: iv_core::Mode, range: Option<f
         "voltage"
     };
     let mut help = format!(
-        "{function} measurement range. Fixed holds one range for the whole sweep; Limit is a separate stop threshold."
+        "{function} measurement range. Fixed holds one range for the whole sweep; Limit is a separate stop threshold. Range is full-scale, not the smallest measurable signal. Readout units follow the current value; resolution and accuracy are separate from range."
     );
     if model == "ADCMT_7461A" && mode == iv_core::Mode::Vi {
         help.push_str(

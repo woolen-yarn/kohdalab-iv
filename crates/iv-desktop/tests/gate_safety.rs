@@ -246,6 +246,25 @@ fn successful_source_dc_change_preserves_independent_gate_bias() {
 }
 
 #[test]
+fn command_error_never_leaves_primary_dc_on_without_live_monitoring() {
+    let mut engine = Engine::start();
+    engine.send(json!({"command":"connect","simulation":true,"source":"","meter":""}));
+    engine.wait(|s| s["connected"] == true);
+    engine.send(json!({"command":"set_source_dc", "mode":"dc_iv", "value":0.001,
+        "compliance":0.001,"ramp_step":0.001}));
+    let first = engine.wait(|s| s["output"] == "On" && s["live"]["source_set"] == 0.001);
+    engine.wait(|s| s["live"]["timestamp"] != first["live"]["timestamp"]);
+    // Range changes are rejected while ON. A latched command error stops
+    // monitoring, so the ordinary source must be verified OFF first.
+    engine.send(json!({"command":"set_meter_ranges","meter_voltage_range":10.0}));
+    let failed = engine.wait(|s| s["phase"] == "Failed");
+    assert!(failed["error"].as_str().unwrap().contains("OFF before changing Meter range"));
+    assert_eq!(failed["output"], "Off", "{failed}");
+    assert!(failed["source_dc"].is_null(), "{failed}");
+    assert_eq!(failed["points"], 0);
+}
+
+#[test]
 fn simulated_idle_monitor_reports_live_manual_dc_levels_and_mode() {
     let mut engine = Engine::start();
     engine.send(json!({"command":"connect","simulation":true,"source":"","meter":""}));
@@ -260,6 +279,19 @@ fn simulated_idle_monitor_reports_live_manual_dc_levels_and_mode() {
             && s["live"]["source_set"] == 2e-6
     });
     assert_eq!(primary["live"]["meter_value"], 0.002);
+    // A held DC output must keep acquiring, not merely publish one value.
+    let mut timestamp = primary["live"]["timestamp"].clone();
+    for _ in 0..4 {
+        let sample = engine.wait(|s| {
+            !s["live"].is_null() && s["live"]["timestamp"] != timestamp
+        });
+        assert_eq!(sample["output"], "On");
+        assert_eq!(sample["source_dc"]["value"], 2e-6);
+        assert_eq!(sample["live"]["meter_value"], 0.002);
+        assert_eq!(sample["points"], 0);
+        assert_eq!(sample["path"], "");
+        timestamp = sample["live"]["timestamp"].clone();
+    }
 
     engine.send(json!({
         "command":"connect_source2", "simulation":true,

@@ -1,29 +1,15 @@
-# KohdaLab IV 1.0.3
+# KohdaLab IV 1.0.5
 
-Reset retained plot zoom on measurement-mode changes and each new run; keep manual zoom during the same run. / 測定モードの切替と新しい測定開始時にプロットを自動範囲へ戻し、同じ測定中の手動ズームは維持します。
+DC output keeps live acquisition active during normal operation. GUI simulation checks now require multiple acquisitions while output is ON. Source cards distinguish WAITING, DC LIVE and STALE.
 
----
+If an operation error stops monitoring, ordinary sources are verified OFF first, including a lone Source 1. This also applies to refused range changes or Start during held DC. Failed OFF confirmation remains Unknown; the original error and cleanup error both remain visible. Independent inventory outputs retain their existing ownership and cleanup policies.
 
-# KohdaLab IV 1.0.2
+Numeric readouts choose units from the current value and meter resolution, while plot axes retain the history scale. A new 1 nA value can read as nA despite earlier mA samples. Scientific values and CSV precision are unchanged. Range is full-scale, not a minimum measurable signal. Meter Range follows the active DC function even when a different sweep mode is planned; Sweep limit remains the threshold for that planned run.
 
-- Preserve individual DC OFF requests when they overlap with Stop. / Stopと重なっても装置ごとの個別DC OFF要求を保持します。
-- Verify Save Copy against the original measurement hashes and remove incomplete copies on mismatch. / 保存コピーを測定時のハッシュと照合し、不一致時は作成途中のコピーを削除します。
-- Verify job-scoped Python Stop using the sweep's terminal outputs and include independent DC outputs in app-wide confirmation. / PythonのジョブID付きStopは掃引終了時の出力を確認し、アプリ全体の確認では独立DC出力も確認します。
+DC出力は正常時にライブ取得を継続し、GUI SimulationでもON中に複数回更新されることを確認します。Sourceカードはデータ待ち・DC更新中・更新停止を区別します。
 
----
+エラーで監視を止める際は、Source 1単独を含め通常のSourceのOFFを先に確認します。DC中のレンジ変更やStartの拒否も対象です。確認できない場合はUnknownを維持し、元のエラーとOFF確認エラーを表示します。独立inventory出力の所有権・終了方針は従来通りです。
 
-# KohdaLab IV 1.0.1
+数値表示は現在値とメーターの分解能に合う単位を使い、グラフは履歴の軸範囲を維持します。以前にmA級の値があっても現在のnA値を読みやすくし、元データ・CSV精度は変更しません。レンジは測定上限で、最小測定値ではありません。予定した掃引モードが異なっていてもRangeは現在のDC動作に合わせ、Sweep limitは予定した掃引の停止しきい値として区別します。
 
-Align the documented instrument catalog and common Python SDK. / 機種一覧の検査と共通Python SDKを更新しました。
-
----
-
-# KohdaLab IV 1.4.8
-
-Windows x64 and Apple Silicon Mac packages. Device cards support inline label editing and an expandable two-column layout. All Connect retains successful connections if one device fails. Long sweeps draw fewer markers.
-
-Windows x64とApple Silicon Mac向けの配布版です。装置カードのラベルを直接編集でき、2列表示でも設定を展開できます。一括接続では、一部の装置が失敗しても接続できた装置を維持します。長い測定系列では点マーカーの描画を減らします。
-
-Dual V-I uses the measured voltage when available and falls back to the source difference. The `analysis_dual_v1` CSV adds four per-source columns to the existing 26. Single-source CSV keeps its existing schema.
-
-Dual V-Iの横軸は電圧計の実測値を優先し、実測値がなければソース間の差を使います。Dual用の `analysis_dual_v1` CSVは既存26列に各ソースの設定値と読返し値を計4列追加します。単一ソースのCSV形式は従来どおりです。
+Hardware was not tested for this change. / 今回の修正の実機検証は未実施です。
