@@ -1,3 +1,9 @@
+# KohdaLab IV 1.0.3
+
+Reset retained plot zoom on measurement-mode changes and each new run; keep manual zoom during the same run. / 測定モードの切替と新しい測定開始時にプロットを自動範囲へ戻し、同じ測定中の手動ズームは維持します。
+
+---
+
 # KohdaLab IV 1.0.2
 
 - Preserve individual DC OFF requests when they overlap with Stop. / Stopと重なっても装置ごとの個別DC OFF要求を保持します。

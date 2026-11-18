@@ -119,6 +119,7 @@ fn run() -> Result<(), String> {
         || hardware_smoke
         || args.iter().any(|a| {
             a == "--gui-smoke"
+                || a == "--gui-current-source-smoke"
                 || a == "--gui-settings-smoke"
                 || a == "--gui-limit-smoke"
                 || a == "--gui-balanced-smoke"

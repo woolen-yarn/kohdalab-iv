@@ -332,9 +332,12 @@ impl IvApp {
         hardware: Option<(String, String)>,
         startup_profile: Option<PathBuf>,
     ) -> Result<Self, String> {
-        if std::env::args()
-            .any(|arg| matches!(arg.as_str(), "--gui-dc-smoke" | "--gui-inventory-smoke"))
-            && (hardware.is_some() || startup_profile.is_some())
+        if std::env::args().any(|arg| {
+            matches!(
+                arg.as_str(),
+                "--gui-dc-smoke" | "--gui-inventory-smoke" | "--gui-current-source-smoke"
+            )
+        }) && (hardware.is_some() || startup_profile.is_some())
         {
             return Err("GUI output-control smoke requires its isolated simulation profile; hardware/config overrides are not allowed.".into());
         }
@@ -388,6 +391,18 @@ impl IvApp {
                 settings.config = crate::open_circuit_config();
                 crate::validate_open_circuit(&settings.config)?;
             }
+        }
+        if smoke && std::env::args().any(|arg| arg == "--gui-current-source-smoke") {
+            settings.config = measurement_definition(Mode::Vi).default_config();
+            settings.config.start = -0.0005;
+            settings.config.stop = 0.0005;
+            settings.config.step = 0.0001;
+            settings.config.source_limit = 0.001;
+            settings.config.compliance = 3.0;
+            settings.config.ramp_step = 0.0001;
+            settings.config.start_settle_s = 0.03;
+            settings.config.settle_s = 0.02;
+            settings.config.pattern = Pattern::Linear;
         }
         settings.migrate_inventory();
         if settings.simulation {
@@ -4740,6 +4755,16 @@ impl IvApp {
             extent[axis] = extent[axis].max(value);
         }
         let plot_id = ui.make_persistent_id(egui::Id::new(id));
+        let view = (plot_id, self.settings.config.mode, self.run_id);
+        ui.ctx().data_mut(|data| {
+            let key = ui.make_persistent_id("sweep_view_context");
+            if data.get_temp::<(egui::Id, Mode, u64)>(key) != Some(view) {
+                // Plot::auto_bounds sets the default, but retained manual zoom
+                // overrides it. A new mode, chart or run starts a fresh view.
+                data.remove::<PlotMemory>(plot_id);
+                data.insert_temp(key, view);
+            }
+        });
         if let Some(memory) = PlotMemory::load(ui.ctx(), plot_id) {
             for (axis, maximum) in extent.iter_mut().enumerate() {
                 if !memory.auto_bounds[axis] {
@@ -4846,6 +4871,20 @@ impl IvApp {
                     egui::Id::new("reference_plot_bounds"),
                     [frame.min.x, frame.min.y, frame.max.x, frame.max.y],
                 )
+            });
+        }
+        if self.smoke {
+            let bounds = plotted.transform.bounds();
+            ui.ctx().data_mut(|data| {
+                data.insert_temp(
+                    egui::Id::new("sweep_data_bounds"),
+                    [
+                        bounds.min()[0],
+                        bounds.min()[1],
+                        bounds.max()[0],
+                        bounds.max()[1],
+                    ],
+                );
             });
         }
         if let Some(memory) = PlotMemory::load(ui.ctx(), plot_id) {
@@ -5127,6 +5166,8 @@ impl eframe::App for IvApp {
                     println!(
                         "{}",
                         serde_json::json!({"gui_smoke":"passed","points":self.state.points,"output":self.state.output,"elapsed_s":self.started.elapsed().as_secs_f64(),"csv":self.state.path,
+                    "plot_data_bounds":ctx.data(|data|data.get_temp::<[f64;4]>(egui::Id::new("sweep_data_bounds"))),
+                    "mode":self.settings.config.mode,
                     "two_card_columns":self.settings.two_card_columns && ctx.content_rect().width() >= 1380.0,"plot_bounds":ctx.data(|data|data.get_temp::<[f32;4]>(egui::Id::new("reference_plot_bounds"))),"reference_meter_assigned":self.settings.reference_meter_id.is_some(),"first_ui_update_s":self.first_frame_s,"mean_ui_cpu_ms":self.ui_cpu_s*1000.0/self.ui_frames.max(1) as f64})
                     );
                 }
@@ -5559,6 +5600,87 @@ mod tests {
         assert!(!dual_uses_meter_axis(true, true, false));
         assert!(dual_uses_meter_axis(true, true, true));
         assert!(dual_uses_meter_axis(false, true, true));
+    }
+
+    #[test]
+    fn sweep_plot_refits_on_mode_run_and_dual_chart_changes_but_keeps_current_zoom() {
+        let context = egui::Context::default();
+        let creation_context = eframe::CreationContext::_new_kittest(context.clone());
+        let mut app = IvApp::new(
+            &creation_context,
+            true,
+            None,
+            Arc::new(AtomicBool::new(false)),
+            Instant::now(),
+            None,
+            None,
+        )
+        .unwrap();
+        // Use the production renderer, including its plot identity and memory.
+        let render = |app: &IvApp, id: &'static str, x: f64, y: f64| {
+            let samples = vec![
+                (-x, -y, "forward".into(), [None, None]),
+                (x, y, "forward".into(), [None, None]),
+            ];
+            let series = plot_series(&samples);
+            let mut actual_id = egui::Id::NULL;
+            let _ = context.run_ui(egui::RawInput::default(), |ui| {
+                actual_id = ui.make_persistent_id(egui::Id::new(id));
+                app.render_sweep_plot(
+                    ui,
+                    id,
+                    "Source",
+                    "",
+                    "A",
+                    "Voltage",
+                    "V",
+                    &samples,
+                    &series,
+                    [x, y],
+                    &[],
+                    &Default::default(),
+                    [0.0; 2],
+                    300.0,
+                    false,
+                );
+            });
+            (actual_id, PlotMemory::load(&context, actual_id).unwrap())
+        };
+        let zoom = |id| {
+            let mut memory = PlotMemory::load(&context, id).unwrap();
+            memory.auto_bounds = false.into();
+            memory.set_bounds(egui_plot::PlotBounds::from_min_max(
+                [-1.0, -0.001],
+                [1.0, 0.001],
+            ));
+            memory.store(&context, id);
+        };
+        let (id, _) = render(&app, "iv_plot", 0.0005, 1.026);
+        zoom(id);
+        let (_, retained) = render(&app, "iv_plot", 0.0005, 1.026);
+        assert!(!retained.auto_bounds.x && !retained.auto_bounds.y);
+        assert_eq!(retained.bounds().max(), [1.0, 0.001]);
+
+        app.settings.config.mode = Mode::Vi;
+        let (_, fitted) = render(&app, "iv_plot", 0.0005, 1.026);
+        assert!(fitted.auto_bounds.x && fitted.auto_bounds.y);
+        assert!(fitted.bounds().max()[0] < 0.001);
+        assert!(fitted.bounds().max()[1] >= 1.026);
+
+        zoom(id);
+        app.run_id += 1;
+        let (_, fitted) = render(&app, "iv_plot", 0.0005, 1.026);
+        assert!(fitted.auto_bounds.x && fitted.auto_bounds.y);
+        assert!(fitted.bounds().max()[0] < 0.001);
+
+        app.settings.config.mode = Mode::Iv;
+        let (dual_id, _) = render(&app, "dual_source_plot", 0.001, 1e-6);
+        zoom(dual_id);
+        render(&app, "iv_plot", 0.001, 1e-6);
+        let (_, fitted) = render(&app, "dual_source_plot", 0.001, 1e-6);
+        assert!(fitted.auto_bounds.x && fitted.auto_bounds.y);
+        let (_, fitted) = render(&app, "dual_meter_plot", 0.0008, 1e-6);
+        assert!(fitted.auto_bounds.x && fitted.auto_bounds.y);
     }
 
     #[test]
