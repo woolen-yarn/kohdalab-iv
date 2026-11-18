@@ -28,6 +28,7 @@ def main() -> None:
         ("source-and-meter", "--gui-reference-smoke", True),
         ("independent-dc", "--gui-inventory-smoke", False),
         ("two-columns", "--gui-two-column-smoke", True),
+        ("current-source", "--gui-current-source-smoke", False),
     ]:
         screenshot = output / f"{label}.png"
         result = subprocess.run(
@@ -56,6 +57,13 @@ def main() -> None:
         bounds = record.get("plot_bounds")
         if not isinstance(bounds, list) or len(bounds) != 4:
             raise RuntimeError(f"{label}: no plot bounds")
+        if label == "current-source":
+            data_bounds = record.get("plot_data_bounds")
+            if record.get("mode") != "dc_vi" or record["points"] != 11:
+                raise RuntimeError(f"Current-source simulation did not complete: {record}")
+            if not data_bounds or not (data_bounds[0] <= -0.0005 and 0.0005 <= data_bounds[2] < 0.01
+                                       and data_bounds[1] <= -0.5 and data_bounds[3] >= 0.5):
+                raise RuntimeError(f"Current-source plot did not fit the data: {data_bounds}")
         cases.append({"case": label, "screenshot": screenshot.name, **record})
     if any(abs(a - b) > 0.1 for a, b in zip(cases[0]["plot_bounds"], cases[1]["plot_bounds"])):
         raise RuntimeError("Assigning a Meter changed the plot geometry")
