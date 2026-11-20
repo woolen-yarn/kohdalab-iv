@@ -1,15 +1,15 @@
-# KohdaLab IV 1.0.5
+# KohdaLab IV 1.0.6
 
-DC output keeps live acquisition active during normal operation. GUI simulation checks now require multiple acquisitions while output is ON. Source cards distinguish WAITING, DC LIVE and STALE.
+Reference display now offers **Overlay / Separate**, saved with the profile. Legacy profiles keep Overlay. Separate plots use one source coordinate per acquired record, with linked x zoom/pan and independent y ranges. Missing reference readings are gaps or waiting, never fabricated zeroes. Y axes, legends and tooltips follow device card labels: `Voltage Channel (mV)` and `Current Gate (µA)`, for example.
 
-If an operation error stops monitoring, ordinary sources are verified OFF first, including a lone Source 1. This also applies to refused range changes or Start during held DC. Failed OFF confirmation remains Unknown; the original error and cleanup error both remain visible. Independent inventory outputs retain their existing ownership and cleanup policies.
+Channel R/G is a primary-meter free-intercept fit; separate reference leakage is never used as its denominator. Completed gate-summary CSVs can display resistance/conductance above source-zero mean leakage, with explicit gate values, completion and a positive valid-zero count. Partial/stopped sweeps stay visible but are not counted as completed gate fits. Acquisition CSV and output protection contracts are unchanged.
 
-Numeric readouts choose units from the current value and meter resolution, while plot axes retain the history scale. A new 1 nA value can read as nA despite earlier mA samples. Scientific values and CSV precision are unchanged. Range is full-scale, not a minimum measurable signal. Meter Range follows the active DC function even when a different sweep mode is planned; Sweep limit remains the threshold for that planned run.
+Both histories and bounds reset for a new accepted run ID from GUI or API. Rejected starts retain the previous result. Narrow center panes fit Output and Start/Stop/Save, and status/point/RG information uses two rows. The Windows GUI acceptance suite includes Separate, linked x bounds and a narrow window; an API Simulation check covers consecutive runs and partial protection-stop cleanup.
 
-DC出力は正常時にライブ取得を継続し、GUI SimulationでもON中に複数回更新されることを確認します。Sourceカードはデータ待ち・DC更新中・更新停止を区別します。
+参照表示 **Overlay / Separate** をプロファイルに保存できます。旧設定はOverlayを維持します。Separateは同じ測定点のソース座標を共有して上下二段に分け、横軸のズーム・パンを同期し、縦軸範囲は独立にします。欠測・未取得を0で補いません。Y軸・凡例・ツールチップは量と機器カードのラベルに連動します。
 
-エラーで監視を止める際は、Source 1単独を含め通常のSourceのOFFを先に確認します。DC中のレンジ変更やStartの拒否も対象です。確認できない場合はUnknownを維持し、元のエラーとOFF確認エラーを表示します。独立inventory出力の所有権・終了方針は従来通りです。
+主回路のR/Gは主計器の自由切片フィットで求め、別回路のリークを分母にしません。明示的なゲート電圧・完了状態・正のゼロ電流有効件数を持つ集計CSVを読み込み、上段のR/Gと下段のリーク平均を比較できます。停止ランの点は保持し、完了ランの集計から除外します。取得CSVと出力保護の契約は変更しません。
 
-数値表示は現在値とメーターの分解能に合う単位を使い、グラフは履歴の軸範囲を維持します。以前にmA級の値があっても現在のnA値を読みやすくし、元データ・CSV精度は変更しません。レンジは測定上限で、最小測定値ではありません。予定した掃引モードが異なっていてもRangeは現在のDC動作に合わせ、Sweep limitは予定した掃引の停止しきい値として区別します。
+GUI・APIの新しい有効ランIDで両段の履歴と範囲をリセットし、拒否されたStartでは前の結果を残します。狭い中央ペインでも保存先とStart/Stop/Saveを収め、状態・点数・R/Gを二行にします。WindowsのSimulation検証は二段表示・横軸同期・狭い画面を含み、APIでは連続ランと保護停止時の終了確認を検証します。
 
-Hardware was not tested for this change. / 今回の修正の実機検証は未実施です。
+Physical-device acceptance measurements were not performed for this change. Nautilus display verification uses Simulation or read-only CSV replay, without new instrument output. / 今回の変更の実機受入測定は未実施です。Nautilusの表示確認はSimulationまたはCSVの読み取り専用再生で行い、新たな印加はしません。

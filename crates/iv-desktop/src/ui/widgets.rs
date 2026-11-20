@@ -554,7 +554,7 @@ pub(super) fn quantity(
         let mut display = *value / scale;
         if ui
             .add_sized(
-                [(width - 54.0 - ui.spacing().item_spacing.x).max(65.0), 24.0],
+                [(width - 54.0 - ui.spacing().item_spacing.x).max(56.0), 24.0],
                 egui::DragValue::new(&mut display)
                     .range(if nonnegative {
                         0.0..=f64::MAX

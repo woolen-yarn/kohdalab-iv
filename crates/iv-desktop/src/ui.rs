@@ -10,6 +10,8 @@ mod dc;
 mod digits;
 mod formatting;
 mod history;
+mod reference_analysis;
+mod reference_view;
 mod settings;
 mod widgets;
 
@@ -248,6 +250,7 @@ fn inventory_entry_name(role: &str, index: usize, entry: &settings::InstrumentEn
 use cards::{AddDevice, DeleteDevice};
 
 pub struct IvApp {
+    plot_context: egui::Context,
     client: Result<Client, String>,
     control: Option<crate::gui_control::GuiControl>,
     settings: Settings,
@@ -266,6 +269,12 @@ pub struct IvApp {
     reference_samples: Vec<(f64, f64, String, [Option<f64>; 2])>,
     reference_plot_series: [Vec<PlotPoint>; 3],
     reference_plot_extent: [f64; 2],
+    separate: reference_view::SeparateHistory,
+    gate_summaries: Vec<reference_analysis::GateSummary>,
+    gate_summary_revision: u64,
+    gate_metric: reference_view::GateMetric,
+    reference_replay: bool,
+    separate_smoke_first: Option<[usize; 2]>,
     live_samples: VecDeque<LiveSample>,
     reference_live_samples: VecDeque<[f64; 2]>,
     idle_samples: VecDeque<[f64; 2]>,
@@ -340,7 +349,10 @@ impl IvApp {
         if std::env::args().any(|arg| {
             matches!(
                 arg.as_str(),
-                "--gui-dc-smoke" | "--gui-inventory-smoke" | "--gui-current-source-smoke"
+                "--gui-dc-smoke"
+                    | "--gui-inventory-smoke"
+                    | "--gui-current-source-smoke"
+                    | "--gui-separate-smoke"
             )
         }) && (hardware.is_some() || startup_profile.is_some())
         {
@@ -402,7 +414,10 @@ impl IvApp {
                 crate::validate_open_circuit(&settings.config)?;
             }
         }
-        if smoke && std::env::args().any(|arg| arg == "--gui-current-source-smoke") {
+        if smoke
+            && std::env::args()
+                .any(|arg| arg == "--gui-current-source-smoke" || arg == "--gui-separate-smoke")
+        {
             settings.config = measurement_definition(Mode::Vi).default_config();
             settings.config.start = -0.0005;
             settings.config.stop = 0.0005;
@@ -466,7 +481,11 @@ impl IvApp {
                     "SIMULATED_SOURCE".into();
             }
         }
-        if smoke && (column_smoke || std::env::args().any(|arg| arg == "--gui-reference-smoke")) {
+        if smoke
+            && (column_smoke
+                || std::env::args()
+                    .any(|arg| arg == "--gui-reference-smoke" || arg == "--gui-separate-smoke"))
+        {
             // Give the source-quantity observer its own simulated physical
             // device.  This exercises the optional DMM data path rather than
             // merely drawing an assigned-but-empty Meter axis.
@@ -476,6 +495,22 @@ impl IvApp {
             reference.resource = "SIMULATED_REFERENCE_METER".into();
             settings.reference_meter_id = Some(reference.id);
             settings.bind_active_entries();
+        }
+        if smoke && std::env::args().any(|arg| arg == "--gui-separate-smoke") {
+            settings.reference_display = settings::ReferenceDisplay::Separate;
+            settings.reference_purpose = settings::ReferencePurpose::Gate;
+            settings
+                .meters
+                .iter_mut()
+                .find(|m| m.id == settings.meter_id)
+                .expect("primary meter")
+                .label = "Channel".into();
+            settings
+                .meters
+                .iter_mut()
+                .find(|m| Some(m.id) == settings.reference_meter_id)
+                .expect("reference meter")
+                .label = "Gate".into();
         }
         let dc_smoke = smoke && std::env::args().any(|arg| arg == "--gui-dc-smoke");
         if dc_smoke {
@@ -537,7 +572,8 @@ impl IvApp {
         } else {
             Default::default()
         };
-        Ok(Self {
+        let mut app = Self {
+            plot_context: cc.egui_ctx.clone(),
             client,
             control,
             settings,
@@ -552,6 +588,12 @@ impl IvApp {
             reference_samples: vec![],
             reference_plot_series: std::array::from_fn(|_| Vec::new()),
             reference_plot_extent: [0.0; 2],
+            separate: Default::default(),
+            gate_summaries: Vec::new(),
+            gate_summary_revision: 0,
+            gate_metric: reference_view::GateMetric::Sweep,
+            reference_replay: false,
+            separate_smoke_first: None,
             live_samples: VecDeque::new(),
             reference_live_samples: VecDeque::new(),
             idle_samples: VecDeque::new(),
@@ -608,10 +650,23 @@ impl IvApp {
             pending_dc: None,
             pending_inventory_dc: Default::default(),
             dc_smoke_stage: 0,
-        })
+        };
+        if let Some(path) = crate::argument(
+            &std::env::args().collect::<Vec<_>>(),
+            "--gui-reference-replay",
+        ) {
+            if !smoke || !std::env::args().any(|arg| arg == "--gui-separate-smoke") {
+                return Err("Read-only reference replay requires --gui-separate-smoke".into());
+            }
+            app.load_reference_replay(std::path::Path::new(&path))?;
+        }
+        Ok(app)
     }
 
     fn send(&mut self, command: Command) -> bool {
+        if self.reference_replay {
+            return false;
+        }
         let result = self
             .client
             .as_ref()
@@ -771,6 +826,8 @@ impl IvApp {
                 self.plot_series.iter_mut().for_each(Vec::clear);
                 self.plot_extent = [0.0; 2];
                 self.reference_samples.clear();
+                self.separate = Default::default();
+                self.gate_metric = reference_view::GateMetric::Sweep;
                 self.reference_plot_series.iter_mut().for_each(Vec::clear);
                 self.reference_plot_extent = [0.0; 2];
                 self.notice.clear();
@@ -786,10 +843,13 @@ impl IvApp {
                     self.plot_series.iter_mut().for_each(Vec::clear);
                     self.plot_extent = [0.0; 2];
                     self.reference_samples.clear();
+                    self.separate = Default::default();
+                    self.gate_metric = reference_view::GateMetric::Sweep;
                     self.reference_plot_series.iter_mut().for_each(Vec::clear);
                     self.reference_plot_extent = [0.0; 2];
                     self.run_id = record_run;
                 }
+                self.separate.push(&point);
                 let source = point.source_readback.unwrap_or(point.source_set);
                 let xy = (source, point.meter_value);
                 extend_plot_extent(&mut self.plot_extent, xy.0, xy.1);
@@ -1405,6 +1465,8 @@ impl IvApp {
                 {
                     self.samples.clear();
                     self.reference_samples.clear();
+                    self.separate = Default::default();
+                    self.gate_metric = reference_view::GateMetric::Sweep;
                     self.rebuild_plot_series();
                     self.rebuild_reference_plot_series();
                     self.custom_text.clear();
@@ -1890,6 +1952,8 @@ impl IvApp {
                     }
                     self.samples.clear();
                     self.reference_samples.clear();
+                self.separate = Default::default();
+                self.gate_metric = reference_view::GateMetric::Sweep;
                     self.rebuild_plot_series();
                     self.rebuild_reference_plot_series();
                     self.custom_text.clear();
@@ -2167,59 +2231,88 @@ impl IvApp {
     }
 
     fn measurement_controls(&mut self, ui: &mut egui::Ui) {
-        section(ui, "Measurement", |ui| {
-            ui.columns(2, |columns| {
-                columns[0].add_enabled_ui(
-                    !self.busy() && !self.python_locked() && !self.file_task_pending(),
-                    |ui| self.sweep(ui),
-                );
-                section(&mut columns[1], "Output", |ui| {
-                    ui.add_enabled_ui(
+        let clip = ui.clip_rect();
+        let response = ui.scope(|ui| {
+            section(ui, "Measurement", |ui| {
+                ui.columns(2, |columns| {
+                    columns[0].add_enabled_ui(
                         !self.busy() && !self.python_locked() && !self.file_task_pending(),
-                        |ui| {
-                            let width = (ui.available_width() - 62.0).max(150.0);
-                            egui::Grid::new("output_files")
-                                .num_columns(2)
-                                .spacing([6.0, 8.0])
-                                .show(ui, |ui| {
-                                    form_label(ui, "Directory", 54.0);
-                                    ui.horizontal(|ui| {
-                                        let summary = path_summary(&self.settings.output_dir);
-                                        compact_field(
-                                            ui,
-                                            "output_dir",
-                                            &mut self.settings.output_dir,
-                                            (width - 118.0).max(35.0),
-                                            summary,
-                                        );
-                                        if button(ui, "Browse", 104.0, true).clicked() {
-                                            self.choose_output_directory(ui.ctx());
-                                        }
-                                    });
-                                    ui.end_row();
-                                    form_label(ui, "File", 54.0);
-                                    ui.horizontal(|ui| {
-                                        ui.add(
-                                            egui::TextEdit::singleline(&mut self.settings.filename)
-                                                .margin(egui::Margin::symmetric(3, 3))
-                                                .desired_width((width - 118.0).max(35.0)),
-                                        );
-                                        ui.add_sized(
-                                            [104.0, 24.0],
-                                            egui::Checkbox::new(
-                                                &mut self.settings.auto_suffix,
-                                                "Auto suffix",
-                                            ),
-                                        );
-                                    });
-                                    ui.end_row();
-                                });
-                        },
+                        |ui| self.sweep(ui),
                     );
+                    section(&mut columns[1], "Output", |ui| {
+                        ui.add_enabled_ui(
+                            !self.busy() && !self.python_locked() && !self.file_task_pending(),
+                            |ui| {
+                                let compact = ui.available_width() < 230.0;
+                                let label_width = if compact { 30.0 } else { 54.0 };
+                                let action_width = if compact { 64.0 } else { 104.0 };
+                                let field_width = (ui.available_width()
+                                    - label_width
+                                    - 6.0
+                                    - action_width
+                                    - ui.spacing().item_spacing.x)
+                                    .max(24.0);
+                                egui::Grid::new("output_files")
+                                    .min_col_width(0.0)
+                                    .num_columns(2)
+                                    .spacing([6.0, 8.0])
+                                    .show(ui, |ui| {
+                                        form_label(
+                                            ui,
+                                            if compact { "Dir." } else { "Directory" },
+                                            label_width,
+                                        );
+                                        ui.horizontal(|ui| {
+                                            let summary = path_summary(&self.settings.output_dir);
+                                            compact_field(
+                                                ui,
+                                                "output_dir",
+                                                &mut self.settings.output_dir,
+                                                field_width,
+                                                summary,
+                                            );
+                                            if button(ui, "Browse", action_width, true).clicked() {
+                                                self.choose_output_directory(ui.ctx());
+                                            }
+                                        });
+                                        ui.end_row();
+                                        form_label(ui, "File", label_width);
+                                        ui.horizontal(|ui| {
+                                            ui.add_sized(
+                                                [field_width, 24.0],
+                                                egui::TextEdit::singleline(
+                                                    &mut self.settings.filename,
+                                                )
+                                                .margin(egui::Margin::symmetric(3, 3)),
+                                            ).on_hover_text(self.settings.filename.as_str());
+                                            ui.add_sized(
+                                                [action_width, 24.0],
+                                                egui::Checkbox::new(
+                                                    &mut self.settings.auto_suffix,
+                                                    if compact { "Suffix" } else { "Auto suffix" },
+                                                ),
+                                            ).on_hover_text("Append a timestamp to each new measurement filename.");
+                                        });
+                                        ui.end_row();
+                                    });
+                            },
+                        );
+                    });
+                    columns[1].add_space(8.0);
+                    section(&mut columns[1], "Run", |ui| self.run_controls(ui));
                 });
-                columns[1].add_space(8.0);
-                section(&mut columns[1], "Run", |ui| self.run_controls(ui));
-            });
+            })
+        });
+        ui.ctx().data_mut(|data| {
+            data.insert_temp(
+                egui::Id::new("measurement_controls_visible"),
+                clip.expand(0.5).contains_rect(response.response.rect),
+            );
+            let rect = response.response.rect;
+            data.insert_temp(
+                egui::Id::new("measurement_controls_bounds"),
+                [rect.min.x, rect.min.y, rect.max.x, rect.max.y],
+            );
         });
     }
 
@@ -2770,7 +2863,14 @@ impl IvApp {
                 } else {
                     BUTTON
                 });
-            if ui.add_enabled(self.active(), stop_button).clicked() && self.send(Command::Stop) {
+            let stop = ui.add_enabled(self.active(), stop_button);
+            ui.ctx().data_mut(|data| {
+                data.insert_temp(
+                    egui::Id::new("run_stop_visible"),
+                    ui.clip_rect().contains_rect(stop.rect),
+                )
+            });
+            if stop.clicked() && self.send(Command::Stop) {
                 self.report(
                     "Stop requested. Waiting for the current I/O and output cleanup.".into(),
                 );
@@ -3246,6 +3346,7 @@ impl IvApp {
     }
 
     fn main_view(&mut self, ui: &mut egui::Ui) {
+        ui.set_max_width((ui.clip_rect().right() - ui.cursor().left()).max(100.0));
         self.measurement_controls(ui);
         ui.add_space(8.0);
         let status = if self.busy() {
@@ -3267,6 +3368,10 @@ impl IvApp {
                 .filter(|r| r.is_finite() && *r != 0.0)
                 .map(|r| (r, 1.0 / r))
         };
+        let separate = self.separate_enabled();
+        let channel_fit = (separate && self.state.phase == Phase::Completed)
+            .then(|| self.separate.fit(self.settings.config.mode))
+            .flatten();
         let source = fit(self.state.resistance);
         let meter = fit(self.state.reference_resistance);
         let detail = |name: &str, values: Option<(f64, f64)>| match values {
@@ -3275,40 +3380,80 @@ impl IvApp {
             ),
             None => format!("{name} sweep fit: no valid fit available."),
         };
-        // Fixed cells keep the entire summary on one line, including while
-        // pending, unassigned, or displaying long/large numerical values.
-        ui.horizontal(|ui| {
-            ui.spacing_mut().item_spacing.x = 6.0;
-            let available = (ui.available_width() - 18.0).max(0.0);
-            for (fraction, text, hint) in [
-                (
-                    0.19,
-                    format!("Status {status}"),
-                    format!("{}\nOutput: {}", self.state.message, self.state.output),
+        // Preserve status and point counts on narrow panes instead of
+        // truncating all four summary cells into one row.
+        let cells = [
+            (
+                0.19,
+                format!("Status {status}"),
+                format!("{}\nOutput: {}", self.state.message, self.state.output),
+            ),
+            (
+                0.12,
+                format!("Point {point}"),
+                format!("Sweep point {point}"),
+            ),
+            (
+                0.345,
+                format!(
+                    "{} R/G {}",
+                    if separate { "Channel" } else { "Source" },
+                    if separate {
+                        reference_view::channel_fit_text(channel_fit.as_ref())
+                    } else {
+                        format_resistance_conductance(source)
+                    }
                 ),
-                (
-                    0.12,
-                    format!("Point {point}"),
-                    format!("Sweep point {point}"),
-                ),
-                (
-                    0.345,
-                    format!("Source R/G {}", format_resistance_conductance(source)),
-                    detail("Source", source),
-                ),
-                (
-                    0.345,
-                    format!("Meter R/G {}", format_resistance_conductance(meter)),
-                    detail("Meter", meter),
-                ),
-            ] {
-                ui.add_sized(
-                    [available * fraction, 20.0],
-                    egui::Label::new(RichText::new(text).size(11.0)).truncate(),
-                )
-                .on_hover_text(hint);
-            }
-        });
+                if separate {
+                    channel_fit
+                        .as_ref()
+                        .map(|f| {
+                            format!(
+                                "Channel free-intercept fit; {} points\nOffset: {:.12e} {}",
+                                f.points,
+                                f.offset,
+                                if self.settings.config.mode == Mode::Vi {
+                                    "V"
+                                } else {
+                                    "A"
+                                }
+                            )
+                        })
+                        .unwrap_or_else(|| "Channel fit is available after completion.".into())
+                } else {
+                    detail("Source", source)
+                },
+            ),
+            (
+                0.345,
+                if separate {
+                    self.reference_quantity()
+                } else {
+                    format!("Meter R/G {}", format_resistance_conductance(meter))
+                },
+                if separate {
+                    "Separate circuit reading; no resistance or conductance is derived from it."
+                        .into()
+                } else {
+                    detail("Meter", meter)
+                },
+            ),
+        ];
+        let narrow_summary = ui.available_width() < 520.0;
+        for row in cells.chunks(if narrow_summary { 2 } else { 4 }) {
+            ui.horizontal(|ui| {
+                ui.spacing_mut().item_spacing.x = 6.0;
+                let available = (ui.available_width() - 6.0 * (row.len() - 1) as f32).max(0.0);
+                for (fraction, text, hint) in row {
+                    let fraction = if narrow_summary { 0.5 } else { *fraction };
+                    ui.add_sized(
+                        [available * fraction, 20.0],
+                        egui::Label::new(RichText::new(text.as_str()).size(11.0)).truncate(),
+                    )
+                    .on_hover_text(hint.as_str());
+                }
+            });
+        }
         let feedback =
             if self.pending_bindings.is_some() || self.pending_inventory_selection.is_some() {
                 "Applying device selection…"
@@ -3366,14 +3511,19 @@ impl IvApp {
             );
             return;
         }
+        self.reference_header(ui);
+        if self.separate_enabled() {
+            self.separate_view(ui);
+            return;
+        }
         let available = shared_plot_height(ui.clip_rect().bottom() - ui.cursor().top() - 2.0);
         let (source_x_name, meter_x_name) = if self.settings.config.mode == Mode::Iv {
             ("V_source", "V_meter")
         } else {
             ("I_source", "I_meter")
         };
-        // `custom_x_axes` below permanently reserves the actual top Meter
-        // axis; no separate header row is needed or allowed to shift the plot.
+        // Overlay retains its real top Meter axis. The display header uses
+        // the same reserved height with and without an assigned reference.
         self.render_sweep_plot(
             ui,
             "iv_plot",
@@ -3424,14 +3574,30 @@ impl IvApp {
             extent[axis] = extent[axis].max(value);
         }
         let plot_id = ui.make_persistent_id(egui::Id::new(id));
-        let view = (plot_id, self.settings.config.mode, self.run_id);
+        let view = (
+            plot_id,
+            self.settings.config.mode,
+            self.run_id,
+            self.gate_metric,
+            self.gate_summary_revision,
+        );
         ui.ctx().data_mut(|data| {
-            let key = ui.make_persistent_id("sweep_view_context");
-            if data.get_temp::<(egui::Id, Mode, u64)>(key) != Some(view) {
+            let key = ui.make_persistent_id(("sweep_view_context", id));
+            let active_key = ui.make_persistent_id("active_sweep_chart");
+            let chart = if id.starts_with("separate_") {
+                "separate"
+            } else {
+                id
+            };
+            if data.get_temp::<&'static str>(active_key) != Some(chart)
+                || data.get_temp::<(egui::Id, Mode, u64, reference_view::GateMetric, u64)>(key)
+                    != Some(view)
+            {
                 // Plot::auto_bounds sets the default, but retained manual zoom
                 // overrides it. A new mode, chart or run starts a fresh view.
                 data.remove::<PlotMemory>(plot_id);
                 data.insert_temp(key, view);
+                data.insert_temp(active_key, chart);
             }
         });
         if let Some(memory) = PlotMemory::load(ui.ctx(), plot_id) {
@@ -3471,7 +3637,7 @@ impl IvApp {
                     .formatter(move |mark, _| top_scale.tick(mark.value, mark.step_size)),
             );
         }
-        let plotted = Plot::new(id)
+        let mut plot = Plot::new(id)
             .width((ui.clip_rect().right() - ui.cursor().left()).max(100.0))
             .id(plot_id)
             .height(height)
@@ -3493,6 +3659,9 @@ impl IvApp {
                     .find(|sample| sample.0 == point.x && sample.1 == point.y);
                 let mut text = name.to_owned();
                 if let Some(sample) = source {
+                    if id.starts_with("separate_gate_") {
+                        text.push_str(&format!("\nRun: {}", sample.2));
+                    }
                     text.push_str(&format!(
                         "\n{source_x_name}: {}",
                         display_reading(point.x, sample.3[0], x_unit)
@@ -3522,18 +3691,64 @@ impl IvApp {
             .allow_scroll(false)
             .allow_drag(true)
             .include_x(0.0)
-            .include_y(0.0)
-            .auto_bounds(true)
-            .show(ui, |plot_ui| {
-                draw_sweep_series(plot_ui, series, false);
-                // The two x quantities intentionally share raw SI bounds. Do
-                // not remap or normalize the reference curve: differences are
-                // scientific signal, not UI decoration.
-                if !reference_samples.is_empty() {
-                    draw_sweep_series(plot_ui, reference_series, true);
-                }
+            .auto_bounds(true);
+        if id != "separate_reference" && id != "separate_gate_reference" {
+            plot = plot.include_y(0.0);
+        }
+        if id.starts_with("separate_") {
+            let group = ui.make_persistent_id((
+                "separate_x",
+                self.run_id,
+                self.settings.config.mode == Mode::Vi,
+                self.gate_metric,
+                self.gate_summary_revision,
+            ));
+            plot = plot
+                .include_x(-extent[0])
+                .include_x(extent[0])
+                .link_axis(group, [true, false])
+                .link_cursor(group, [true, false]);
+        }
+        let plotted = plot.show(ui, |plot_ui| {
+            if self.smoke
+                && self.run_id >= 2
+                && id == "separate_primary"
+                && std::env::args().any(|arg| arg == "--gui-linked-axes-smoke")
+            {
+                // Exercise manual x bounds through the production link group.
+                plot_ui.set_plot_bounds_x(-2e-6..=4e-6);
+            }
+            draw_sweep_series(
+                plot_ui,
+                series,
+                false,
+                if id.starts_with("separate_") {
+                    y_name
+                } else {
+                    ""
+                },
+                !id.starts_with("separate_gate_"),
+            );
+            // The two x quantities intentionally share raw SI bounds. Do
+            // not remap or normalize the reference curve: differences are
+            // scientific signal, not UI decoration.
+            if !reference_samples.is_empty() {
+                draw_sweep_series(plot_ui, reference_series, true, "", true);
+            }
+        });
+        if self.smoke || id.starts_with("separate_") {
+            let bounds = plotted.transform.bounds();
+            ui.ctx().data_mut(|data| {
+                data.insert_temp(
+                    egui::Id::new(("plot_bounds", id)),
+                    [
+                        bounds.min()[0],
+                        bounds.min()[1],
+                        bounds.max()[0],
+                        bounds.max()[1],
+                    ],
+                )
             });
-        if self.smoke {
             let frame = plotted.transform.frame();
             ui.ctx().data_mut(|data| {
                 data.insert_temp(
@@ -3542,7 +3757,7 @@ impl IvApp {
                 )
             });
         }
-        if self.smoke {
+        if self.smoke || id.starts_with("separate_") {
             let bounds = plotted.transform.bounds();
             ui.ctx().data_mut(|data| {
                 data.insert_temp(
@@ -3619,12 +3834,21 @@ impl IvApp {
     }
 
     fn logic_tick(&mut self, ctx: &egui::Context) {
-        if self.smoke && self.settings.two_card_columns {
+        if self.reference_replay {
+            ctx.request_repaint_after(Duration::from_millis(30));
+            return;
+        }
+        if self.smoke {
             let width = ctx.content_rect().width();
-            if (0.0..1380.0).contains(&width) && width > 0.0 {
-                // Hosted Windows runners may clamp the initial native window
-                // size. Capture the wide layout at a smaller display scale.
-                ctx.set_zoom_factor(ctx.zoom_factor() * width / 1500.0);
+            let minimum = if self.settings.two_card_columns {
+                1500.0
+            } else {
+                1080.0
+            };
+            if width > 0.0 && width < minimum - 0.5 {
+                // Hosted Windows desktops can clamp native windows below the
+                // supported minimum. Preserve the tested logical layout.
+                ctx.set_zoom_factor(ctx.zoom_factor() * width / minimum);
             }
         }
         self.poll_file_task(ctx);
@@ -3710,6 +3934,10 @@ impl eframe::App for IvApp {
             self.start_error_dialog(&ctx);
         }
         self.save_dialog(&ctx);
+        if self.reference_replay {
+            self.reference_replay_capture(&ctx);
+            return;
+        }
         if self.footer_smoke_offset.is_some() {
             self.footer_smoke_capture(&ctx);
             return;
@@ -3755,6 +3983,29 @@ impl eframe::App for IvApp {
         {
             self.start_run();
         }
+        let separate_smoke =
+            self.smoke && std::env::args().any(|arg| arg == "--gui-separate-smoke");
+        if separate_smoke
+            && self.state.phase == Phase::Completed
+            && self.separate_smoke_first.is_none()
+        {
+            self.separate_smoke_first = Some([self.samples.len(), self.separate.samples.len()]);
+            // A rejected GUI Start must retain both acquired histories.
+            let step = self.settings.config.step;
+            self.settings.config.step = 0.0;
+            self.start_run();
+            assert_eq!(self.samples.len(), self.separate_smoke_first.unwrap()[0]);
+            assert_eq!(
+                self.separate.samples.len(),
+                self.separate_smoke_first.unwrap()[1]
+            );
+            assert!(!self.pending_run);
+            self.start_error = None;
+            self.settings.config.step = step / 100.0;
+            self.settings.config.start /= 100.0;
+            self.settings.config.stop /= 100.0;
+            self.start_run();
+        }
         let limit_smoke = self.smoke && std::env::args().any(|arg| arg == "--gui-limit-smoke");
         let smoke_outcome = if dc_smoke {
             self.dc_smoke_stage == 10
@@ -3784,6 +4035,7 @@ impl eframe::App for IvApp {
                     .is_some_and(|alert| alert.kind == ProtectionKind::MeasurementLimit)
         } else {
             self.state.phase == Phase::Completed
+                && (!separate_smoke || self.state.run_id >= 2)
                 && self.state.points == self.state.total
                 && (!std::env::args().any(|arg| arg == "--gui-reference-smoke")
                     || self
@@ -3839,6 +4091,13 @@ impl eframe::App for IvApp {
                         serde_json::json!({"gui_smoke":"passed","points":self.state.points,"output":self.state.output,"elapsed_s":self.started.elapsed().as_secs_f64(),"csv":self.state.path,
                     "plot_data_bounds":ctx.data(|data|data.get_temp::<[f64;4]>(egui::Id::new("sweep_data_bounds"))),
                     "mode":self.settings.config.mode,
+                    "reference_display":self.settings.reference_display,
+                    "run_id":self.run_id,"history_points":self.samples.len(),"separate_points":self.separate.samples.iter().filter(|p|p.1.is_finite()).count(),"first_run_histories":self.separate_smoke_first,
+                    "stop_visible":ctx.data(|data|data.get_temp::<bool>(egui::Id::new("run_stop_visible"))),
+                    "measurement_controls_visible":ctx.data(|data|data.get_temp::<bool>(egui::Id::new("measurement_controls_visible"))),
+                    "measurement_controls_bounds":ctx.data(|data|data.get_temp::<[f32;4]>(egui::Id::new("measurement_controls_bounds"))),
+                    "separate_primary_bounds":ctx.data(|data|data.get_temp::<[f64;4]>(egui::Id::new(("plot_bounds", "separate_primary")))),
+                    "separate_reference_bounds":ctx.data(|data|data.get_temp::<[f64;4]>(egui::Id::new(("plot_bounds", "separate_reference")))),
                     "two_card_columns":self.settings.two_card_columns && ctx.content_rect().width() >= 1380.0,"plot_bounds":ctx.data(|data|data.get_temp::<[f32;4]>(egui::Id::new("reference_plot_bounds"))),"reference_meter_assigned":self.settings.reference_meter_id.is_some(),"first_ui_update_s":self.first_frame_s,"mean_ui_cpu_ms":self.ui_cpu_s*1000.0/self.ui_frames.max(1) as f64})
                     );
                 }
@@ -3894,6 +4153,8 @@ fn draw_sweep_series<'a>(
     plot_ui: &mut PlotUi<'a>,
     series: &'a [Vec<PlotPoint>; 3],
     reference: bool,
+    quantity: &str,
+    show_direction: bool,
 ) {
     for (values, (direction, color)) in
         series
@@ -3904,7 +4165,13 @@ fn draw_sweep_series<'a>(
             .split(|point| !point.x.is_finite() || !point.y.is_finite())
             .filter(|segment| !segment.is_empty())
         {
-            let name = direction; // Shared name/id groups both measurements in the legend.
+            let name = if quantity.is_empty() {
+                direction.to_owned()
+            } else if show_direction {
+                format!("{quantity} · {direction}")
+            } else {
+                quantity.to_owned()
+            };
             let style = if reference {
                 LineStyle::dotted_dense()
             } else if direction == "backward" {
@@ -3913,7 +4180,7 @@ fn draw_sweep_series<'a>(
                 LineStyle::Solid
             };
             plot_ui.line(
-                Line::new(name, PlotPoints::Borrowed(segment))
+                Line::new(name.clone(), PlotPoints::Borrowed(segment))
                     .color(color)
                     .width(if direction == "forward" {
                         3.0_f32
@@ -4274,6 +4541,50 @@ mod tests {
     }
 
     #[test]
+    fn measurement_controls_fit_narrow_and_wide_center_panes() {
+        let context = egui::Context::default();
+        let creation = eframe::CreationContext::_new_kittest(context.clone());
+        let mut app = IvApp::new(
+            &creation,
+            true,
+            None,
+            Arc::new(AtomicBool::new(false)),
+            Instant::now(),
+            None,
+            None,
+        )
+        .unwrap();
+        app.settings.filename = "sample_4.2K_long_measurement_name".into();
+        for mode in [Mode::Iv, Mode::Vi] {
+            app.settings.config.mode = mode;
+            for width in [384.0, 400.0, 560.0, 760.0] {
+                // Two passes let Grid resolve its cached column sizes.
+                for _ in 0..2 {
+                    let _ = context.run_ui(egui::RawInput::default(), |ui| {
+                        ui.set_width(width);
+                        ui.set_clip_rect(egui::Rect::from_min_size(
+                            ui.cursor().min,
+                            Vec2::new(width, 650.0),
+                        ));
+                        app.measurement_controls(ui);
+                    });
+                }
+                assert!(
+                    context
+                        .data(|d| d.get_temp::<bool>(egui::Id::new("measurement_controls_visible")))
+                        .unwrap(),
+                    "Measurement overflow at {width} px, mode {mode:?}"
+                );
+                assert!(
+                    context
+                        .data(|d| d.get_temp::<bool>(egui::Id::new("run_stop_visible")))
+                        .unwrap()
+                );
+            }
+        }
+    }
+
+    #[test]
     fn sweep_plot_refits_on_mode_run_and_dual_chart_changes_but_keeps_current_zoom() {
         let context = egui::Context::default();
         let creation_context = eframe::CreationContext::_new_kittest(context.clone());
@@ -4352,6 +4663,18 @@ mod tests {
         assert!(fitted.auto_bounds.x && fitted.auto_bounds.y);
         let (_, fitted) = render(&app, "dual_meter_plot", 0.0008, 1e-6);
         assert!(fitted.auto_bounds.x && fitted.auto_bounds.y);
+        // Rendering the lower separate plot must not reset the upper plot's
+        // independent y zoom on every frame. Linked x gestures are covered
+        // through PlotUi in verify_reference_gui.py, not by editing memory
+        // behind the linked group's back.
+        let (upper, _) = render(&app, "separate_primary", 1e-5, 0.02);
+        render(&app, "separate_reference", 1e-5, 35e-6);
+        zoom(upper);
+        render(&app, "separate_primary", 1e-5, 0.02);
+        render(&app, "separate_reference", 1e-5, 35e-6);
+        let (_, retained) = render(&app, "separate_primary", 1e-5, 0.02);
+        assert!(!retained.auto_bounds.y);
+        assert_eq!(retained.bounds().max()[1], 0.001);
     }
 
     #[test]

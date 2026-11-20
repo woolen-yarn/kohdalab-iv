@@ -107,6 +107,22 @@ impl Default for InstrumentEntry {
     }
 }
 
+/// Presentation only; legacy profiles retain their overlay.
+#[derive(Clone, Copy, Default, PartialEq, Serialize, Deserialize)]
+pub(super) enum ReferenceDisplay {
+    #[default]
+    Overlay,
+    Separate,
+}
+
+/// The user declares a separate circuit's purpose explicitly.
+#[derive(Clone, Copy, Default, PartialEq, Serialize, Deserialize)]
+pub(super) enum ReferencePurpose {
+    #[default]
+    Reference,
+    Gate,
+}
+
 #[derive(Clone, Serialize, Deserialize)]
 #[serde(default)]
 pub(super) struct Settings {
@@ -143,6 +159,8 @@ pub(super) struct Settings {
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub(super) card_order: Vec<u64>,
     pub(super) two_card_columns: bool,
+    pub(super) reference_display: ReferenceDisplay,
+    pub(super) reference_purpose: ReferencePurpose,
     pub(super) output_dir: String,
     pub(super) filename: String,
     pub(super) simulation: bool,
@@ -186,6 +204,8 @@ impl Default for Settings {
             next_inventory_id: 3,
             card_order: Vec::new(),
             two_card_columns: false,
+            reference_display: ReferenceDisplay::Overlay,
+            reference_purpose: ReferencePurpose::Reference,
             output_dir: kohdalab_control_protocol::paths::AppPaths::from_root(user_dir(), "iv")
                 .expect("known IV application")
                 .results_dir()

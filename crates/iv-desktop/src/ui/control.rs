@@ -148,7 +148,7 @@ impl IvApp {
                 ));
             }
             "control_status" => {
-                let native = json!({"snapshot":self.state,"active_run":control.active_id().and_then(|id|control.result(id).ok()),"control":control.control()});
+                let native = json!({"snapshot":self.state,"plot_history":self.plot_history_report(),"active_run":control.active_id().and_then(|id|control.result(id).ok()),"control":control.control()});
                 let alive = self.client.as_ref().is_ok_and(|client| client.is_alive());
                 let cleanup = if alive {
                     control.common_cleanup(&self.state)
@@ -201,7 +201,7 @@ impl IvApp {
             }
             "status" => {
                 return Ok(
-                    json!({"snapshot":self.state,"active_run":control.active_id().and_then(|id|control.result(id).ok()),"control":control.control()}),
+                    json!({"snapshot":self.state,"plot_history":self.plot_history_report(),"active_run":control.active_id().and_then(|id|control.result(id).ok()),"control":control.control()}),
                 );
             }
             "configuration" => {
@@ -379,6 +379,10 @@ impl IvApp {
                 self.settings.units =
                     [measurement_definition(self.settings.config.mode).preferred_unit_index; 3];
                 self.samples.clear();
+                self.reference_samples.clear();
+                self.separate = Default::default();
+                self.gate_metric = reference_view::GateMetric::Sweep;
+                self.rebuild_reference_plot_series();
                 self.rebuild_plot_series();
                 self.live_samples.clear();
                 self.source2_samples.clear();
