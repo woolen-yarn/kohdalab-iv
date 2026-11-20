@@ -3838,12 +3838,17 @@ impl IvApp {
             ctx.request_repaint_after(Duration::from_millis(30));
             return;
         }
-        if self.smoke && self.settings.two_card_columns {
+        if self.smoke {
             let width = ctx.content_rect().width();
-            if (0.0..1380.0).contains(&width) && width > 0.0 {
-                // Hosted Windows runners may clamp the initial native window
-                // size. Capture the wide layout at a smaller display scale.
-                ctx.set_zoom_factor(ctx.zoom_factor() * width / 1500.0);
+            let minimum = if self.settings.two_card_columns {
+                1500.0
+            } else {
+                1080.0
+            };
+            if width > 0.0 && width < minimum - 0.5 {
+                // Hosted Windows desktops can clamp native windows below the
+                // supported minimum. Preserve the tested logical layout.
+                ctx.set_zoom_factor(ctx.zoom_factor() * width / minimum);
             }
         }
         self.poll_file_task(ctx);

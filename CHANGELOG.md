@@ -1,5 +1,11 @@
 # Changelog / 変更履歴
 
+## 1.0.6
+
+- Add persisted Overlay / Separate reference display. Separate pairs the reference with the source from the same record, links x zoom/pan and keeps y scales independent; axes, legends and tooltips use quantity plus editable device label. / 参照表示のOverlay / Separateを保存できるようにし、同一測定点のソース・参照値を上下二段に分けます。横軸操作を同期し、縦軸・凡例・ツールチップは量と機器ラベルに連動します。
+- Derive channel R/G from a free-intercept primary fit, never from separate-circuit leakage. Read completed gate-summary CSVs explicitly, with missing zero-current observations left missing. / 主回路のR/Gは自由切片フィットで求め、別回路のリークからは作りません。完了ゲート集計CSVを明示的に読み込み、ゼロ電流の観測がなければ欠測のままにします。
+- Reset both histories and plot bounds on accepted GUI/API run IDs; retain results after rejected Start or partial protection stops. Keep the full Measurement controls inside narrow center panes, with two-line status summaries. / GUI・APIの新ランで両段と範囲をリセットし、拒否Startや保護停止では結果を保持します。狭い中央パネルでも全測定操作を収め、状態表示を二行にします。
+
 ## 1.0.5
 
 - Show the Meter range for the active manual DC function rather than a different planned sweep, and label the independent sweep threshold explicitly. / Meterのレンジは別の予定測定ではなく現在のDC動作に合わせ、掃引停止しきい値はSweep limitと明示します。

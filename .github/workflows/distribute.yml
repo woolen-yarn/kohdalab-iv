@@ -99,6 +99,8 @@ jobs:
         if ($LASTEXITCODE -ne 0) { throw 'GUI rendering/geometry validation failed' }
         python scripts/verify_common_control.py "$runtime/kohdalab-iv.exe" --output-dir build/common-control-validation
         if ($LASTEXITCODE -ne 0) { throw 'Common GUI API simulation failed' }
+        python scripts/verify_separate_reference_api.py "$runtime/kohdalab-iv.exe" --output-dir build/separate-reference-api-validation
+        if ($LASTEXITCODE -ne 0) { throw 'Separate reference GUI API simulation failed' }
         python scripts/verify_device_footer.py "$runtime/kohdalab-iv.exe" --output dist
         if ($LASTEXITCODE -ne 0) { throw 'Fixed device footer validation failed' }
         Remove-Item Env:GALLIUM_DRIVER
@@ -108,6 +110,10 @@ jobs:
         Copy-Item build/gui-validation/source-and-meter.png dist/iv-windows-simulation.png
         Copy-Item build/gui-validation/two-columns.png dist/iv-windows-two-columns.png
         Copy-Item build/gui-validation/held-dc.png dist/iv-windows-dc-on.png
+        Copy-Item build/gui-validation/separate.png dist/iv-windows-separate.png
+        Copy-Item build/gui-validation/separate-narrow.png dist/iv-windows-separate-narrow.png
+        Copy-Item build/gui-validation/separate-linked.png dist/iv-windows-separate-linked.png
+        Copy-Item build/separate-reference-api-validation/api.json dist/separate-reference-api-validation.json
         # Preserve the exact Windows captures for visual review after CI.
         python -c "import json,os,pathlib; pathlib.Path('dist/gui-evidence.json').write_text(json.dumps({'version':'$v','source_commit':os.environ['GITHUB_SHA'],'os':'Windows x64','mode':'Simulation; no hardware','renderer':'CI-only Mesa 26.2.4 llvmpipe; not bundled'},indent=2)+'\n',encoding='utf-8')"
         Compress-Archive -Path dist/*.png,dist/gui-evidence.json -DestinationPath dist/iv-windows-gui-evidence.zip

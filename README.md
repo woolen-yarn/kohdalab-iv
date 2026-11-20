@@ -23,6 +23,10 @@ DC I-V・V-I 測定、ソース／メーターのライブ監視、USB/GPIB 計�
 
 ## Downloads / ダウンロード
 
+[Latest Windows build / 最新のWindows配布](https://github.com/woolen-yarn/kohdalab-iv/releases/latest) · [Windows portable ZIP / ポータブル版](https://github.com/woolen-yarn/kohdalab-iv/releases/latest/download/kohdalab-iv-windows.zip)
+
+The Windows build channel includes CI and package checks; physical acceptance is recorded separately. The multi-platform stable packages below remain available. / Windows配布はCI・パッケージ検証済みで、実機受入測定とは区別します。以下の複数OS向け安定版も保持しています。
+
 [Stable release / 安定版](https://github.com/woolen-yarn/kohdalab-iv/releases/tag/v1.0.2) · [v1.0.2 release notes / リリースノート](https://github.com/woolen-yarn/kohdalab-iv/releases/tag/v1.0.2)
 
 | OS / 対応環境 | Installer / インストーラー | Portable / ポータブル |

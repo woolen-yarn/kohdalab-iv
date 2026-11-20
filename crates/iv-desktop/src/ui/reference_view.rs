@@ -450,8 +450,11 @@ impl IvApp {
         Ok(())
     }
     pub(super) fn reference_replay_capture(&mut self, ctx: &egui::Context) {
+        let keep_open = std::env::args().any(|arg| arg == "--replay-keep-open");
         let Some(path) = &self.screenshot else {
-            ctx.send_viewport_cmd(egui::ViewportCommand::Close);
+            if !keep_open {
+                ctx.send_viewport_cmd(egui::ViewportCommand::Close);
+            }
             return;
         };
         if self.started.elapsed() > Duration::from_secs(1) && !self.screenshot_requested {
@@ -484,7 +487,8 @@ impl IvApp {
                 );
             }
         }
-        if self.screenshot_saved || self.started.elapsed() > Duration::from_secs(12) {
+        if !keep_open && (self.screenshot_saved || self.started.elapsed() > Duration::from_secs(12))
+        {
             ctx.send_viewport_cmd(egui::ViewportCommand::Close);
         }
     }

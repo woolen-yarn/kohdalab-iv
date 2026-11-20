@@ -1,7 +1,7 @@
 # Reference display / 参照計器の表示
 
-**Development change, not yet included in a published package.**
-**開発中の変更です。現在の公開パッケージにはまだ含まれません。**
+**Introduced in 1.0.6. Package publication is tracked in the release notes.**
+**1.0.6で追加。パッケージの公開状況はリリースノートを参照してください。**
 
 ## Sweep view / 掃引表示
 
@@ -89,7 +89,7 @@ separate reference circuit. Local experimental CSVs are not shipped as test fixt
 
 ```sh
 cargo test --workspace --locked
-python3 scripts/verify_reference_gui.py /path/to/kohdalab-iv --output /tmp/iv-gui --version 1.0.5
+python3 scripts/verify_reference_gui.py /path/to/kohdalab-iv --output /tmp/iv-gui --version 1.0.6
 python3 scripts/verify_separate_reference_api.py /path/to/kohdalab-iv --output-dir /tmp/iv-api
 ```
 
@@ -102,3 +102,11 @@ software-limit data, and verified Output OFF.
 これらはSimulationの検証で、実機受入測定ではありません。GUIでは従来表示、参照未割当、
 連続2ラン、拒否Startでの保持、狭い画面のStop、手動変更した横軸範囲の同期を確認します。
 APIでは連続2ラン、無効設定の拒否、ソフトウェア上限停止の部分データ、Output OFFを確認します。
+
+For an interactive, read-only acceptance preview, add `--replay-keep-open` to
+`--gui-separate-smoke --gui-reference-replay <CSV> --replay-status completed|stopped`.
+Replay dispatch is disabled; this preview cannot connect or apply output.
+Close the preview normally when finished.
+
+対話的な読み取り専用の表示確認では、上記のCSV再生指定に`--replay-keep-open`を付けます。
+この画面は機器への指令を無効にしており、接続・印加はできません。確認後は通常どおり閉じます。
