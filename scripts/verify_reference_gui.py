@@ -65,6 +65,8 @@ def main() -> None:
         record = records[0]
         if record.get("reference_meter_assigned") != assigned or record.get("output") != "Off" or record.get("points", 0) <= 0:
             raise RuntimeError(f"{label}: invalid completion: {record}")
+        if record.get("measurement_controls_visible") is not True:
+            raise RuntimeError(f"Measurement controls overflow in {label}: {record.get("measurement_controls_bounds")}")
         if label == "two-columns" and not record.get("two_card_columns"):
             raise RuntimeError("The two-column device layout did not activate")
         bounds = record.get("plot_bounds")

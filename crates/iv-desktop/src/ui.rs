@@ -2231,59 +2231,88 @@ impl IvApp {
     }
 
     fn measurement_controls(&mut self, ui: &mut egui::Ui) {
-        section(ui, "Measurement", |ui| {
-            ui.columns(2, |columns| {
-                columns[0].add_enabled_ui(
-                    !self.busy() && !self.python_locked() && !self.file_task_pending(),
-                    |ui| self.sweep(ui),
-                );
-                section(&mut columns[1], "Output", |ui| {
-                    ui.add_enabled_ui(
+        let clip = ui.clip_rect();
+        let response = ui.scope(|ui| {
+            section(ui, "Measurement", |ui| {
+                ui.columns(2, |columns| {
+                    columns[0].add_enabled_ui(
                         !self.busy() && !self.python_locked() && !self.file_task_pending(),
-                        |ui| {
-                            let width = (ui.available_width() - 62.0).max(150.0);
-                            egui::Grid::new("output_files")
-                                .num_columns(2)
-                                .spacing([6.0, 8.0])
-                                .show(ui, |ui| {
-                                    form_label(ui, "Directory", 54.0);
-                                    ui.horizontal(|ui| {
-                                        let summary = path_summary(&self.settings.output_dir);
-                                        compact_field(
-                                            ui,
-                                            "output_dir",
-                                            &mut self.settings.output_dir,
-                                            (width - 118.0).max(35.0),
-                                            summary,
-                                        );
-                                        if button(ui, "Browse", 104.0, true).clicked() {
-                                            self.choose_output_directory(ui.ctx());
-                                        }
-                                    });
-                                    ui.end_row();
-                                    form_label(ui, "File", 54.0);
-                                    ui.horizontal(|ui| {
-                                        ui.add(
-                                            egui::TextEdit::singleline(&mut self.settings.filename)
-                                                .margin(egui::Margin::symmetric(3, 3))
-                                                .desired_width((width - 118.0).max(35.0)),
-                                        );
-                                        ui.add_sized(
-                                            [104.0, 24.0],
-                                            egui::Checkbox::new(
-                                                &mut self.settings.auto_suffix,
-                                                "Auto suffix",
-                                            ),
-                                        );
-                                    });
-                                    ui.end_row();
-                                });
-                        },
+                        |ui| self.sweep(ui),
                     );
+                    section(&mut columns[1], "Output", |ui| {
+                        ui.add_enabled_ui(
+                            !self.busy() && !self.python_locked() && !self.file_task_pending(),
+                            |ui| {
+                                let compact = ui.available_width() < 230.0;
+                                let label_width = if compact { 30.0 } else { 54.0 };
+                                let action_width = if compact { 64.0 } else { 104.0 };
+                                let field_width = (ui.available_width()
+                                    - label_width
+                                    - 6.0
+                                    - action_width
+                                    - ui.spacing().item_spacing.x)
+                                    .max(24.0);
+                                egui::Grid::new("output_files")
+                                    .min_col_width(0.0)
+                                    .num_columns(2)
+                                    .spacing([6.0, 8.0])
+                                    .show(ui, |ui| {
+                                        form_label(
+                                            ui,
+                                            if compact { "Dir." } else { "Directory" },
+                                            label_width,
+                                        );
+                                        ui.horizontal(|ui| {
+                                            let summary = path_summary(&self.settings.output_dir);
+                                            compact_field(
+                                                ui,
+                                                "output_dir",
+                                                &mut self.settings.output_dir,
+                                                field_width,
+                                                summary,
+                                            );
+                                            if button(ui, "Browse", action_width, true).clicked() {
+                                                self.choose_output_directory(ui.ctx());
+                                            }
+                                        });
+                                        ui.end_row();
+                                        form_label(ui, "File", label_width);
+                                        ui.horizontal(|ui| {
+                                            ui.add_sized(
+                                                [field_width, 24.0],
+                                                egui::TextEdit::singleline(
+                                                    &mut self.settings.filename,
+                                                )
+                                                .margin(egui::Margin::symmetric(3, 3)),
+                                            ).on_hover_text(self.settings.filename.as_str());
+                                            ui.add_sized(
+                                                [action_width, 24.0],
+                                                egui::Checkbox::new(
+                                                    &mut self.settings.auto_suffix,
+                                                    if compact { "Suffix" } else { "Auto suffix" },
+                                                ),
+                                            ).on_hover_text("Append a timestamp to each new measurement filename.");
+                                        });
+                                        ui.end_row();
+                                    });
+                            },
+                        );
+                    });
+                    columns[1].add_space(8.0);
+                    section(&mut columns[1], "Run", |ui| self.run_controls(ui));
                 });
-                columns[1].add_space(8.0);
-                section(&mut columns[1], "Run", |ui| self.run_controls(ui));
-            });
+            })
+        });
+        ui.ctx().data_mut(|data| {
+            data.insert_temp(
+                egui::Id::new("measurement_controls_visible"),
+                clip.expand(0.5).contains_rect(response.response.rect),
+            );
+            let rect = response.response.rect;
+            data.insert_temp(
+                egui::Id::new("measurement_controls_bounds"),
+                [rect.min.x, rect.min.y, rect.max.x, rect.max.y],
+            );
         });
     }
 
@@ -3317,6 +3346,7 @@ impl IvApp {
     }
 
     fn main_view(&mut self, ui: &mut egui::Ui) {
+        ui.set_max_width((ui.clip_rect().right() - ui.cursor().left()).max(100.0));
         self.measurement_controls(ui);
         ui.add_space(8.0);
         let status = if self.busy() {
@@ -3350,75 +3380,80 @@ impl IvApp {
             ),
             None => format!("{name} sweep fit: no valid fit available."),
         };
-        // Fixed cells keep the entire summary on one line, including while
-        // pending, unassigned, or displaying long/large numerical values.
-        ui.horizontal(|ui| {
-            ui.spacing_mut().item_spacing.x = 6.0;
-            let available = (ui.available_width() - 18.0).max(0.0);
-            for (fraction, text, hint) in [
-                (
-                    0.19,
-                    format!("Status {status}"),
-                    format!("{}\nOutput: {}", self.state.message, self.state.output),
-                ),
-                (
-                    0.12,
-                    format!("Point {point}"),
-                    format!("Sweep point {point}"),
-                ),
-                (
-                    0.345,
-                    format!(
-                        "{} R/G {}",
-                        if separate { "Channel" } else { "Source" },
-                        if separate {
-                            reference_view::channel_fit_text(channel_fit.as_ref())
-                        } else {
-                            format_resistance_conductance(source)
-                        }
-                    ),
+        // Preserve status and point counts on narrow panes instead of
+        // truncating all four summary cells into one row.
+        let cells = [
+            (
+                0.19,
+                format!("Status {status}"),
+                format!("{}\nOutput: {}", self.state.message, self.state.output),
+            ),
+            (
+                0.12,
+                format!("Point {point}"),
+                format!("Sweep point {point}"),
+            ),
+            (
+                0.345,
+                format!(
+                    "{} R/G {}",
+                    if separate { "Channel" } else { "Source" },
                     if separate {
-                        channel_fit
-                            .as_ref()
-                            .map(|f| {
-                                format!(
-                                    "Channel free-intercept fit; {} points\nOffset: {:.12e} {}",
-                                    f.points,
-                                    f.offset,
-                                    if self.settings.config.mode == Mode::Vi {
-                                        "V"
-                                    } else {
-                                        "A"
-                                    }
-                                )
-                            })
-                            .unwrap_or_else(|| "Channel fit is available after completion.".into())
+                        reference_view::channel_fit_text(channel_fit.as_ref())
                     } else {
-                        detail("Source", source)
-                    },
+                        format_resistance_conductance(source)
+                    }
                 ),
-                (
-                    0.345,
-                    if separate {
-                        self.reference_quantity()
-                    } else {
-                        format!("Meter R/G {}", format_resistance_conductance(meter))
-                    },
-                    if separate {
-                        "Separate circuit reading; no resistance or conductance is derived from it."
-                            .into()
-                    } else {
-                        detail("Meter", meter)
-                    },
-                ),
-            ] {
-                ui.add_sized(
-                    [available * fraction, 20.0],
-                    egui::Label::new(RichText::new(text).size(11.0)).truncate(),
-                )
-                .on_hover_text(hint);
-            }
-        });
+                if separate {
+                    channel_fit
+                        .as_ref()
+                        .map(|f| {
+                            format!(
+                                "Channel free-intercept fit; {} points\nOffset: {:.12e} {}",
+                                f.points,
+                                f.offset,
+                                if self.settings.config.mode == Mode::Vi {
+                                    "V"
+                                } else {
+                                    "A"
+                                }
+                            )
+                        })
+                        .unwrap_or_else(|| "Channel fit is available after completion.".into())
+                } else {
+                    detail("Source", source)
+                },
+            ),
+            (
+                0.345,
+                if separate {
+                    self.reference_quantity()
+                } else {
+                    format!("Meter R/G {}", format_resistance_conductance(meter))
+                },
+                if separate {
+                    "Separate circuit reading; no resistance or conductance is derived from it."
+                        .into()
+                } else {
+                    detail("Meter", meter)
+                },
+            ),
+        ];
+        let narrow_summary = ui.available_width() < 520.0;
+        for row in cells.chunks(if narrow_summary { 2 } else { 4 }) {
+            ui.horizontal(|ui| {
+                ui.spacing_mut().item_spacing.x = 6.0;
+                let available = (ui.available_width() - 6.0 * (row.len() - 1) as f32).max(0.0);
+                for (fraction, text, hint) in row {
+                    let fraction = if narrow_summary { 0.5 } else { *fraction };
+                    ui.add_sized(
+                        [available * fraction, 20.0],
+                        egui::Label::new(RichText::new(text.as_str()).size(11.0)).truncate(),
+                    )
+                    .on_hover_text(hint.as_str());
+                }
+            });
+        }
         let feedback =
             if self.pending_bindings.is_some() || self.pending_inventory_selection.is_some() {
                 "Applying device selection…"
@@ -4054,6 +4089,8 @@ impl eframe::App for IvApp {
                     "reference_display":self.settings.reference_display,
                     "run_id":self.run_id,"history_points":self.samples.len(),"separate_points":self.separate.samples.iter().filter(|p|p.1.is_finite()).count(),"first_run_histories":self.separate_smoke_first,
                     "stop_visible":ctx.data(|data|data.get_temp::<bool>(egui::Id::new("run_stop_visible"))),
+                    "measurement_controls_visible":ctx.data(|data|data.get_temp::<bool>(egui::Id::new("measurement_controls_visible"))),
+                    "measurement_controls_bounds":ctx.data(|data|data.get_temp::<[f32;4]>(egui::Id::new("measurement_controls_bounds"))),
                     "separate_primary_bounds":ctx.data(|data|data.get_temp::<[f64;4]>(egui::Id::new(("plot_bounds", "separate_primary")))),
                     "separate_reference_bounds":ctx.data(|data|data.get_temp::<[f64;4]>(egui::Id::new(("plot_bounds", "separate_reference")))),
                     "two_card_columns":self.settings.two_card_columns && ctx.content_rect().width() >= 1380.0,"plot_bounds":ctx.data(|data|data.get_temp::<[f32;4]>(egui::Id::new("reference_plot_bounds"))),"reference_meter_assigned":self.settings.reference_meter_id.is_some(),"first_ui_update_s":self.first_frame_s,"mean_ui_cpu_ms":self.ui_cpu_s*1000.0/self.ui_frames.max(1) as f64})
@@ -4496,6 +4533,50 @@ mod tests {
         assert!(!dual_uses_meter_axis(true, true, false));
         assert!(dual_uses_meter_axis(true, true, true));
         assert!(dual_uses_meter_axis(false, true, true));
+    }
+
+    #[test]
+    fn measurement_controls_fit_narrow_and_wide_center_panes() {
+        let context = egui::Context::default();
+        let creation = eframe::CreationContext::_new_kittest(context.clone());
+        let mut app = IvApp::new(
+            &creation,
+            true,
+            None,
+            Arc::new(AtomicBool::new(false)),
+            Instant::now(),
+            None,
+            None,
+        )
+        .unwrap();
+        app.settings.filename = "sample_4.2K_long_measurement_name".into();
+        for mode in [Mode::Iv, Mode::Vi] {
+            app.settings.config.mode = mode;
+            for width in [384.0, 400.0, 560.0, 760.0] {
+                // Two passes let Grid resolve its cached column sizes.
+                for _ in 0..2 {
+                    let _ = context.run_ui(egui::RawInput::default(), |ui| {
+                        ui.set_width(width);
+                        ui.set_clip_rect(egui::Rect::from_min_size(
+                            ui.cursor().min,
+                            Vec2::new(width, 650.0),
+                        ));
+                        app.measurement_controls(ui);
+                    });
+                }
+                assert!(
+                    context
+                        .data(|d| d.get_temp::<bool>(egui::Id::new("measurement_controls_visible")))
+                        .unwrap(),
+                    "Measurement overflow at {width} px, mode {mode:?}"
+                );
+                assert!(
+                    context
+                        .data(|d| d.get_temp::<bool>(egui::Id::new("run_stop_visible")))
+                        .unwrap()
+                );
+            }
+        }
     }
 
     #[test]
