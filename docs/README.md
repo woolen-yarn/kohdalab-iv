@@ -15,6 +15,7 @@
 - [GS210 + 34411A acceptance record template / GS210 + 34411A 実機受入記録の雛形](validation/gs210-34411a-acceptance.md)
 - [Portable guide / portable版ガイド](guides/portable-guide.md)
 - [Product details / 製品詳細](guides/product-details.md)
+- [Reference display (development) / 参照計器の二段表示・開発版](guides/reference-display.md)
 - [Source and meter values / ソース設定値とメーター実測値](guides/source-and-meter-values.md)
 - [Quick start / はじめに](guides/quick-start.md)
 - [Shared instruments (development) / 複数アプリのGPIB共有・開発版](guides/shared-instruments-development.md)
