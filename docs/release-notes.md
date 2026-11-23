@@ -1,4 +1,18 @@
-# KohdaLab IV 1.0.6
+# KohdaLab IV 1.0.7
+
+## Changes / 変更点
+
+Align the external-control bar and distinguish control ownership from instrument state. Continue to require verified output OFF on release. Include the common Python SDK 1.0.4.
+
+## Validation scope / 検証範囲
+
+The previous hardware compatibility and safety guidance remains applicable. The release software checks include simulation. New physical-device operating scenarios are outside this qualification.
+
+See SHA256SUMS.txt and the release page's platform packages. / 対応OSとSHA-256は配布ページをご覧ください。
+
+## Previous release / 前の版
+
+### KohdaLab IV 1.0.6
 
 Reference display now offers **Overlay / Separate**, saved with the profile. Legacy profiles keep Overlay. Separate plots use one source coordinate per acquired record, with linked x zoom/pan and independent y ranges. Missing reference readings are gaps or waiting, never fabricated zeroes. Y axes, legends and tooltips follow device card labels: `Voltage Channel (mV)` and `Current Gate (µA)`, for example.
 
