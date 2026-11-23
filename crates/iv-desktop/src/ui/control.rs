@@ -550,18 +550,11 @@ impl IvApp {
         let control = self.control.as_ref().unwrap().control();
         let mut takeover = false;
         let mut stop = false;
+        let owner = external_control_owner(&control, retiring);
         egui::Panel::top("python_control").show_inside(root, |ui| {
             ui.horizontal_wrapped(|ui| {
-                ui.colored_label(
-                    BLUE,
-                    if retiring {
-                        "PYTHON DISCONNECTED · Verifying output OFF"
-                    } else if control["status"] == "detached" {
-                        "PYTHON DISCONNECTED · Finishing current operation"
-                    } else {
-                        "PYTHON CONTROL · GUI controls locked"
-                    },
-                );
+                ui.colored_label(BLUE, "External control");
+                ui.label(owner);
                 if let Some(kind) = control["active_run"]["kind"].as_str() {
                     ui.label(kind);
                 } else {
@@ -583,6 +576,20 @@ impl IvApp {
             }
             self.send(Command::OutputOff);
             self.report("Control returned to GUI. Waiting for verified output OFF.".into());
+        }
+    }
+}
+/// Owner line for the External control banner, from the actual lease state.
+/// Ending control never claims OFF before the engine verifies it.
+fn external_control_owner(control: &Value, retiring: bool) -> String {
+    if retiring {
+        "Python control ended · Verifying output OFF".into()
+    } else if control["status"] == "detached" {
+        "Python disconnected · Finishing current operation".into()
+    } else {
+        match control["label"].as_str() {
+            Some(label) if label != "Python" => format!("Python · {label} · GUI controls locked"),
+            _ => "Python · GUI controls locked".into(),
         }
     }
 }
@@ -714,6 +721,27 @@ fn api_optional_text<'a>(body: &'a Value, key: &str) -> Result<Option<&'a str>, 
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn external_control_owner_follows_actual_state_without_early_off_claim() {
+        let owned = json!({"status": "python", "label": "Python"});
+        assert_eq!(
+            external_control_owner(&owned, false),
+            "Python · GUI controls locked"
+        );
+        let named = json!({"status": "python", "label": "Notebook"});
+        assert_eq!(
+            external_control_owner(&named, false),
+            "Python · Notebook · GUI controls locked"
+        );
+        let detached = json!({"status": "detached", "label": null});
+        assert_eq!(
+            external_control_owner(&detached, false),
+            "Python disconnected · Finishing current operation"
+        );
+        let ending = external_control_owner(&detached, true);
+        assert_eq!(ending, "Python control ended · Verifying output OFF");
+        assert!(!ending.contains("verified") && !ending.contains("complete"));
+    }
     #[test]
     fn sweep_receipt_uses_its_own_terminal_output_evidence() {
         let mut receipt = json!({
