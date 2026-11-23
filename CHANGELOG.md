@@ -1,5 +1,9 @@
 # Changelog / 変更履歴
 
+## 1.0.7
+
+- Align the external-control bar and distinguish control ownership from instrument state. Continue to require verified output OFF on release. Include the common Python SDK 1.0.4.
+
 ## 1.0.6
 
 - Add persisted Overlay / Separate reference display. Separate pairs the reference with the source from the same record, links x zoom/pan and keeps y scales independent; axes, legends and tooltips use quantity plus editable device label. / 参照表示のOverlay / Separateを保存できるようにし、同一測定点のソース・参照値を上下二段に分けます。横軸操作を同期し、縦軸・凡例・ツールチップは量と機器ラベルに連動します。
