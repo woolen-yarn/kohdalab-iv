@@ -551,10 +551,16 @@ impl IvApp {
         let mut takeover = false;
         let mut stop = false;
         let owner = external_control_owner(&control, retiring);
+        let client_label = display_client_label(control["label"].as_str());
         egui::Panel::top("python_control").show_inside(root, |ui| {
             ui.horizontal_wrapped(|ui| {
                 ui.colored_label(BLUE, "External control");
                 ui.label(owner);
+                if let Some(text) = &client_label {
+                    // Client-supplied text, kept apart from the GUI's own status.
+                    ui.label(egui::RichText::new(text).italics().weak())
+                        .on_hover_text("Label supplied by the Python client; not a GUI status");
+                }
                 if let Some(kind) = control["active_run"]["kind"].as_str() {
                     ui.label(kind);
                 } else {
@@ -579,19 +585,69 @@ impl IvApp {
         }
     }
 }
-/// Owner line for the External control banner, from the actual lease state.
-/// Ending control never claims OFF before the engine verifies it.
+/// Owner line for the External control banner, from the actual lease state only.
+/// Client text never enters this line. Ending control never claims OFF before
+/// the engine verifies it.
 fn external_control_owner(control: &Value, retiring: bool) -> String {
     if retiring {
         "Python control ended · Verifying output OFF".into()
     } else if control["status"] == "detached" {
         "Python disconnected · Finishing current operation".into()
     } else {
-        match control["label"].as_str() {
-            Some(label) if label != "Python" => format!("Python · {label} · GUI controls locked"),
-            _ => "Python · GUI controls locked".into(),
-        }
+        "Python · GUI controls locked".into()
     }
+}
+
+const CLIENT_LABEL_DISPLAY_CHARS: usize = 32;
+
+/// Banner text for a client-supplied label, visibly marked as client text.
+/// Line breaks, control, bidi and other invisible formatting characters are
+/// replaced so the label cannot reshape or impersonate the status line.
+/// Blank or default labels fall back to showing nothing extra.
+fn display_client_label(raw: Option<&str>) -> Option<String> {
+    let cleaned = raw?
+        .chars()
+        .filter_map(|c| {
+            if c.is_control() || matches!(c, '\u{2028}' | '\u{2029}') {
+                Some(' ')
+            } else if hidden_formatting(c) {
+                None
+            } else {
+                Some(c)
+            }
+        })
+        .collect::<String>();
+    let cleaned = cleaned.split_whitespace().collect::<Vec<_>>().join(" ");
+    if cleaned.is_empty() || cleaned == "Python" {
+        return None;
+    }
+    let mut shown: String = cleaned.chars().take(CLIENT_LABEL_DISPLAY_CHARS).collect();
+    if cleaned.chars().count() > CLIENT_LABEL_DISPLAY_CHARS {
+        shown.push('…');
+    }
+    Some(format!("Client label: “{shown}”"))
+}
+
+/// Invisible, bidi and other formatting characters that are removed outright.
+fn hidden_formatting(c: char) -> bool {
+    matches!(
+        c,
+        '\u{00AD}'
+            | '\u{034F}'
+            | '\u{061C}'
+            | '\u{115F}'
+            | '\u{1160}'
+            | '\u{180E}'
+            | '\u{200B}'..='\u{200F}'
+            | '\u{2028}'..='\u{202E}'
+            | '\u{2060}'..='\u{206F}'
+            | '\u{3164}'
+            | '\u{FE00}'..='\u{FE0F}'
+            | '\u{FEFF}'
+            | '\u{FFA0}'
+            | '\u{FFF9}'..='\u{FFFB}'
+            | '\u{E0000}'..='\u{E007F}'
+    )
 }
 fn api_number(body: &Value, key: &str) -> Result<f64, String> {
     body[key]
@@ -728,10 +784,11 @@ mod tests {
             external_control_owner(&owned, false),
             "Python · GUI controls locked"
         );
-        let named = json!({"status": "python", "label": "Notebook"});
+        // Client text never enters the authoritative owner/status line.
+        let named = json!({"status": "python", "label": "Output OFF verified"});
         assert_eq!(
             external_control_owner(&named, false),
-            "Python · Notebook · GUI controls locked"
+            "Python · GUI controls locked"
         );
         let detached = json!({"status": "detached", "label": null});
         assert_eq!(
@@ -741,6 +798,32 @@ mod tests {
         let ending = external_control_owner(&detached, true);
         assert_eq!(ending, "Python control ended · Verifying output OFF");
         assert!(!ending.contains("verified") && !ending.contains("complete"));
+    }
+    #[test]
+    fn client_label_is_marked_and_stripped_of_layout_and_bidi_formatting() {
+        assert_eq!(
+            display_client_label(Some("Notebook")).as_deref(),
+            Some("Client label: “Notebook”")
+        );
+        for blank in [
+            None,
+            Some(""),
+            Some("  \n\t"),
+            Some("\u{200B}\u{202E}"),
+            Some("Python"),
+        ] {
+            assert_eq!(display_client_label(blank), None, "{blank:?}");
+        }
+        assert_eq!(
+            display_client_label(Some("Run\nOutput OFF\u{2028}verified\r\u{0007}")).as_deref(),
+            Some("Client label: “Run Output OFF verified”")
+        );
+        assert_eq!(
+            display_client_label(Some("ab\u{202E}cd\u{2066}e\u{200F}f\u{FEFF}")).as_deref(),
+            Some("Client label: “abcdef”")
+        );
+        let long = display_client_label(Some("x".repeat(48).as_str())).unwrap();
+        assert_eq!(long, format!("Client label: “{}…”", "x".repeat(32)));
     }
     #[test]
     fn sweep_receipt_uses_its_own_terminal_output_evidence() {
