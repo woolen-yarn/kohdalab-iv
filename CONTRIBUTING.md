@@ -3,6 +3,13 @@
 Use the pinned Rust toolchain in the repository root. Run Cargo format, Clippy and the
 workspace tests before proposing a change.
 
+The pinned build toolchain (`rust-toolchain.toml`, currently 1.99.0) is deliberately
+newer than the minimum supported Rust version (`rust-version = "1.92"` in
+`Cargo.toml`). Workflow `rustup toolchain install` steps use the pinned version; the
+CI `msrv` job separately runs `cargo +1.92.0 check --workspace --all-targets --locked`.
+Do not raise `rust-version` or add a dependency that requires newer Rust without
+updating both.
+
 The workspace has six crates. `iv-core` owns planning, CSV and instrument
 specifications. `iv-transport` owns device leases and helper IPC. `iv-desktop`
 owns measurement, monitoring and UI. `instrument-protocol` and `instrument-hub`

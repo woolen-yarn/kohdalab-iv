@@ -10,6 +10,21 @@ concurrency:
   group: rust-${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 jobs:
+  msrv:
+    # Builds are pinned to rust-toolchain.toml (1.99.0). This job checks the
+    # separate minimum declared by `rust-version` in Cargo.toml; keep the two
+    # versions in sync with those files.
+    name: MSRV (Rust 1.92.0)
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v7
+      - name: Linux GUI dependencies
+        run: sudo apt-get update && sudo apt-get install -y libegl1 libxkbcommon-dev libwayland-dev
+      - name: Install minimum Rust toolchain
+        run: rustup toolchain install 1.92.0 --profile minimal
+      - name: Check workspace on minimum Rust
+        run: cargo +1.92.0 check --workspace --all-targets --locked
   test:
     name: ${{ matrix.os }}
     runs-on: ${{ matrix.os }}

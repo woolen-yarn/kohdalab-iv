@@ -1,3 +1,11 @@
+# Pinned build toolchain for local development, CI, packaging and release builds.
+# Every workflow `rustup toolchain install` step must use this same version.
+#
+# This is intentionally newer than the workspace minimum supported Rust version
+# (`rust-version = "1.92"` in Cargo.toml). 1.99.0 is the toolchain that formatting,
+# Clippy, tests, the dependency audit (which builds cargo-audit) and the published
+# packages are produced with. The 1.92 minimum is a separate contract, checked by
+# the `msrv` job in .github/workflows/test.yml; change both deliberately.
 [toolchain]
 channel = "1.99.0"
 components = ["rustfmt", "clippy"]
