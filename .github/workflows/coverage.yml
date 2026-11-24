@@ -1,0 +1,63 @@
+name: Coverage
+# Informational only: this job never blocks a PR. It reruns the same device-free
+# `cargo test --workspace --locked` suite under cargo-llvm-cov on Linux, connects no
+# hardware, enables no outputs and changes no drivers. Reports are uploaded as a
+# workflow artifact only; no third-party upload service or token is used.
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: coverage-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+env:
+  # Keep in sync with rust-toolchain.toml.
+  RUST_TOOLCHAIN: 1.99.0
+  # Pinned installer version; update deliberately.
+  CARGO_LLVM_COV_VERSION: 0.6.15
+jobs:
+  coverage:
+    name: Coverage (Linux, informational)
+    runs-on: ubuntu-latest
+    continue-on-error: true
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - name: Linux GUI dependencies
+        run: sudo apt-get update && sudo apt-get install -y libegl1 libxkbcommon-dev libwayland-dev
+      - name: Install Rust toolchain with LLVM tools
+        run: rustup toolchain install "$RUST_TOOLCHAIN" --profile minimal --component llvm-tools-preview
+      - name: Install pinned cargo-llvm-cov
+        run: cargo +"$RUST_TOOLCHAIN" install cargo-llvm-cov --version "$CARGO_LLVM_COV_VERSION" --locked
+      - name: Device-free tests with coverage instrumentation
+        run: cargo llvm-cov --workspace --locked --no-report
+      - name: Coverage reports
+        if: always()
+        shell: bash
+        run: |
+          mkdir -p target/coverage
+          cargo llvm-cov report --lcov --output-path target/coverage/lcov.info
+          cargo llvm-cov report --html --output-dir target/coverage
+          cargo llvm-cov report --summary-only | tee target/coverage/summary.txt
+          {
+            echo '## Coverage (informational)'
+            echo
+            echo 'Engine safety modules:'
+            echo '```text'
+            grep -E 'engine/(safety|stop|gate|workflow)\.rs|^TOTAL' target/coverage/summary.txt || true
+            echo '```'
+            echo 'Full per-file report: `coverage-report` artifact (HTML, lcov, summary).'
+          } >> "$GITHUB_STEP_SUMMARY"
+      - name: Upload coverage report
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: coverage-report
+          path: target/coverage
+          if-no-files-found: warn
+          retention-days: 14

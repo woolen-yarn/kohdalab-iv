@@ -24,6 +24,7 @@
 
 - [Repository layout / 構成](development/repository-layout.md)
 - [Rust optimization / Rust最適化](development/rust-optimization.md)
+- [Code coverage / コードカバレッジ](development/coverage.md)
 - [Windows signing / Windows署名](development/windows-signing.md)
 - [Shared instrument service proposal / アプリ間の機器共有設計](development/shared-instrument-service.md)
 
