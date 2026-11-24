@@ -756,10 +756,15 @@ pub(super) fn execute(
     }
     let config = iv_core::prepare_config(requested)?;
     let planned = balanced_plan(&config)?;
+    // balanced_plan already requires this; check again before any output.
+    let balanced_source = config
+        .balanced_source
+        .as_ref()
+        .ok_or("Balanced Start requires a Source 2 configuration.")?;
     if !state.simulation {
         let device = pair.as_deref().ok_or("Dual-source transport missing")?;
         if device.source_model != config.source_model
-            || device.source2_model != config.balanced_source.as_ref().unwrap().source_model
+            || device.source2_model != balanced_source.source_model
             || device.meter_model != config.meter_model
         {
             return Err(
@@ -791,7 +796,7 @@ pub(super) fn execute(
     log.append("INFO", "run_started", serde_json::json!({"simulation":state.simulation,"balanced_drive":true,"status":"Preparing"}))?;
     let manifest = path.with_extension("run.json");
     let instruments = serde_json::json!({"source1":{"identity":state.source_identity,"resource":state.source_resource},"source2":{"identity":state.source2_identity,"resource":state.source2_resource},"meter":{"identity":state.meter_identity,"resource":state.meter_resource},"reference_meter":{"identity":state.reference_meter_identity,"resource":state.reference_meter_resource},"gate":{"identity":state.gate_identity,"resource":state.gate_resource,"output":state.gate_output,"setting_V":state.gate_voltage}});
-    let settings = serde_json::json!({"formula":"source1 = a/(a+b) * differential; source2 = -b/(a+b) * differential","ratio":config.balanced_source.as_ref().unwrap().ratio,"source1":planned.config1,"source2":planned.config2,
+    let settings = serde_json::json!({"formula":"source1 = a/(a+b) * differential; source2 = -b/(a+b) * differential","ratio":balanced_source.ratio,"source1":planned.config1,"source2":planned.config2,
         "ranges":[planned.plan1.source_range,planned.plan2.source_range],"hardware_compliances":[planned.plan1.hardware_compliance,planned.plan2.hardware_compliance],
         "update_policy":"sequential_commands_then_measure; no hardware simultaneity or actual channel-midpoint guarantee"});
     stop::clear_timeout_warning(state);

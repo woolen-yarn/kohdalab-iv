@@ -722,9 +722,10 @@ impl DevicePair {
         let Some(endpoint) = self.endpoint_option(role).cloned() else {
             return Ok(());
         };
+        // Keep the endpoint owned if its connection state is incomplete.
         let kind = self
             .kind_option(role)
-            .expect("connected endpoint has a kind");
+            .ok_or_else(|| format!("{} connection state is incomplete.", role_name(role)))?;
         let shared = self
             .attached_connections()
             .filter(|(_, other)| Arc::ptr_eq(&other.session, &endpoint.session))
@@ -1407,11 +1408,11 @@ impl DevicePair {
         // shutdown fails, the next bounded recovery attempt can take its lease
         // and terminate it; no lease is silently dropped between attempts.
         for role in ROLES {
-            if self
-                .endpoint_option(role)
-                .is_some_and(|endpoint| Arc::ptr_eq(&endpoint.session, source_session))
+            if let Some(endpoint) = self
+                .endpoint_mut(role)
+                .filter(|endpoint| Arc::ptr_eq(&endpoint.session, source_session))
             {
-                self.endpoint_mut(role).expect("endpoint checked").session = fresh.clone();
+                endpoint.session = fresh.clone();
                 self.recovery_pending[role as usize] = true;
             }
         }
