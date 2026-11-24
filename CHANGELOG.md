@@ -1,9 +1,15 @@
 # Changelog / 変更履歴
 
-> **Release lineages / リリース系譜:** This file records two separate release lineages. The current stable line is `1.0.x` (workspace `Cargo.toml` version `1.0.7`) and is listed first. The earlier `1.4.x` / `1.3.x` lineage, including its own older `0.x`–`1.2.0` entries, was published under separate release tags (for example `portable-v1.4.2`) and follows below; version numbers are not comparable across the two lineages, so `1.4.8` is not newer than `1.0.7`.
-> このファイルには2つの別系統のリリース履歴があります。現行の安定版は `1.0.x` 系（ワークスペース `Cargo.toml` のバージョン `1.0.7`）で、先頭に掲載します。以前の `1.4.x` / `1.3.x` 系（同系統の旧 `0.x`〜`1.2.0` を含む）は別のリリースタグ（例: `portable-v1.4.2`）で公開されたもので、その後に続きます。両系統のバージョン番号は比較できず、`1.4.8` は `1.0.7` より新しい版ではありません。
+> **Release lineages / リリース系譜:** This file records two separate release lineages. The current stable line is `1.0.x` and is listed first. The earlier `1.4.x` / `1.3.x` lineage, including its own older `0.x`–`1.2.0` entries, was published under separate release tags (for example `portable-v1.4.2`) and follows below; version numbers are not comparable across the two lineages, so `1.4.8` is not newer than `1.0.7`.
+> このファイルには2つの別系統のリリース履歴があります。現行の安定版は `1.0.x` 系で、先頭に掲載します。以前の `1.4.x` / `1.3.x` 系（同系統の旧 `0.x`〜`1.2.0` を含む）は別のリリースタグ（例: `portable-v1.4.2`）で公開されたもので、その後に続きます。両系統のバージョン番号は比較できず、`1.4.8` は `1.0.7` より新しい版ではありません。
 
 # Current stable lineage: 1.0.x / 現行の安定版系譜: 1.0.x
+
+## 1.0.8
+
+- If the worker for independent devices stops unexpectedly during a sweep, stop the sweep, restore device ownership, and reverify each independent source's output OFF. Keep unconfirmed outputs Unknown. / 独立機器の処理が異常終了したら掃引を停止し、機器の所有権を戻して出力OFFを再確認します。確認できない出力はUnknownとして扱います。
+- Preserve pending individual DC OFF requests after queue lock poisoning and return errors for invalid meter replies. Close shared-hub sessions if request tracking is unavailable. / 個別DC OFF要求を保持し、不正な計器応答はエラーとして扱います。要求追跡ができない機器ハブ接続は閉じます。
+- Split the desktop UI into smaller modules and update eframe, egui_plot, rfd, toml and sha2 while preserving the measurement and file formats. / デスクトップUIを分割し、依存ライブラリを更新しました。測定と保存形式は従来どおりです。
 
 ## 1.0.7
 
