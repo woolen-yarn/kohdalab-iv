@@ -265,7 +265,13 @@ fn serve_client(mut stream: TcpStream, endpoint: &Endpoint, events: mpsc::SyncSe
                     // before receiving it; legitimate fast SDKs never need a
                     // timing-dependent wait or a write retry.
                     reply.request_nonce = uuid::Uuid::new_v4().to_string();
-                    *writer_nonce.lock().expect("nonce lock") = Some(reply.request_nonce.clone());
+                    // Poisoned handshake state closes the session instead of
+                    // disclosing a nonce the reader can no longer track.
+                    let Ok(mut turn) = writer_nonce.lock() else {
+                        break;
+                    };
+                    *turn = Some(reply.request_nonce.clone());
+                    drop(turn);
                     if write_json(&mut writer_stream, &reply).is_err() {
                         break;
                     }
@@ -287,7 +293,10 @@ fn serve_client(mut stream: TcpStream, endpoint: &Endpoint, events: mpsc::SyncSe
         if envelope.validate().is_err() || envelope.id <= last_id {
             break;
         }
-        let mut turn = expected_nonce.lock().expect("nonce lock");
+        // Poisoned handshake state never accepts or reuses a nonce.
+        let Ok(mut turn) = expected_nonce.lock() else {
+            break;
+        };
         if turn.as_deref() != Some(envelope.request_nonce.as_str())
             || !alive.load(Ordering::Acquire)
         {
