@@ -4,7 +4,7 @@ use std::collections::BTreeSet;
 use std::io::{BufRead, BufReader, Read, Write};
 use std::process::{Child, Command as Process, Stdio};
 use std::sync::atomic::{AtomicBool, AtomicU8, AtomicU64, Ordering};
-use std::sync::{Arc, Mutex, mpsc};
+use std::sync::{Arc, Mutex, MutexGuard, PoisonError, mpsc};
 use std::time::{Duration, Instant};
 
 const SAFETY_NONE: u8 = 0;
@@ -25,8 +25,16 @@ struct SafetyIntents {
 
 impl SafetyIntents {
     fn pending(&self) -> bool {
-        self.flags.load(Ordering::Acquire) != SAFETY_NONE
-            || !self.inventory_off.lock().unwrap().is_empty()
+        self.flags.load(Ordering::Acquire) != SAFETY_NONE || !self.inventory_off().is_empty()
+    }
+
+    /// The pending individual DC OFF set. Each critical section is a single
+    /// set operation, so the set stays valid even if a holder panicked; recover
+    /// it rather than panic and lose queued OFF requests on the safety path.
+    fn inventory_off(&self) -> MutexGuard<'_, BTreeSet<u64>> {
+        self.inventory_off
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
     }
 }
 
@@ -188,7 +196,7 @@ fn submit_command(
             return Err("Measurement engine command pipe is disconnected.".into());
         }
         if let Command::InventoryDcOff { id } = command {
-            safety.inventory_off.lock().unwrap().insert(id);
+            safety.inventory_off().insert(id);
         } else if let Some(level) = level {
             safety.flags.fetch_or(level, Ordering::AcqRel);
         }
@@ -291,12 +299,12 @@ fn writer_loop<W: Write>(
             // Global shutdown already covers every inventory output. Otherwise,
             // write pending individual OFFs before a plain sweep Stop.
             if selected & !SAFETY_STOP == SAFETY_NONE {
-                let id = safety.inventory_off.lock().unwrap().first().copied();
+                let id = safety.inventory_off().first().copied();
                 if let Some(id) = id {
                     if write_command(&mut output, &Command::InventoryDcOff { id }).is_err() {
                         break;
                     }
-                    safety.inventory_off.lock().unwrap().remove(&id);
+                    safety.inventory_off().remove(&id);
                     heartbeat = Instant::now();
                     continue;
                 }
@@ -546,6 +554,52 @@ mod tests {
                     Command::Stop,
                     Command::Shutdown
                 ]
+            ),
+            "{commands:?}"
+        );
+    }
+    #[test]
+    fn poisoned_inventory_off_set_still_delivers_off_before_shutdown() {
+        let (sender, receiver) = mpsc::sync_channel(16);
+        let safety = Arc::new(SafetyIntents::default());
+        let alive = Arc::new(AtomicBool::new(true));
+        let poisoner = std::thread::spawn({
+            let safety = safety.clone();
+            move || {
+                let _guard = safety.inventory_off.lock().unwrap();
+                panic!("poison the inventory OFF set");
+            }
+        });
+        assert!(poisoner.join().is_err());
+        assert!(safety.inventory_off.is_poisoned());
+
+        submit_command(&sender, &safety, &alive, Command::InventoryDcOff { id: 5 }).unwrap();
+        assert!(safety.pending());
+
+        let writer = TestWriter::default();
+        let bytes = writer.0.clone();
+        let handle = std::thread::spawn({
+            let safety = safety.clone();
+            let alive = alive.clone();
+            move || writer_loop(writer, receiver, safety, alive)
+        });
+        let deadline = Instant::now() + Duration::from_secs(1);
+        while safety.pending() && Instant::now() < deadline {
+            std::thread::sleep(Duration::from_millis(5));
+        }
+        submit_command(&sender, &safety, &alive, Command::Shutdown).unwrap();
+        handle.join().unwrap();
+
+        let wire = bytes.lock().unwrap();
+        let commands: Vec<Command> = std::str::from_utf8(&wire)
+            .unwrap()
+            .lines()
+            .map(|line| serde_json::from_str(line).unwrap())
+            .collect();
+        assert!(
+            matches!(
+                commands.as_slice(),
+                [Command::InventoryDcOff { id: 5 }, Command::Shutdown]
             ),
             "{commands:?}"
         );

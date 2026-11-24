@@ -2762,7 +2762,7 @@ impl SweepMonitor<'_> {
                 if fixed {
                     None
                 } else {
-                    Some((None, evidence.take().unwrap()))
+                    evidence.take().map(|reading| (None, reading))
                 },
             );
             if !source_check.as_ref().is_ok_and(|stop| stop.is_none())
@@ -3572,7 +3572,9 @@ fn execute(
                         if fixed {
                             None
                         } else {
-                            Some((Some(reading_index), evidence.take().unwrap()))
+                            evidence
+                                .take()
+                                .map(|reading| (Some(reading_index), reading))
                         },
                     );
                     if (!source_check.as_ref().is_ok_and(|stop| stop.is_none())
