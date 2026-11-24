@@ -26,6 +26,7 @@
 - [Rust optimization / Rust最適化](development/rust-optimization.md)
 - [Windows signing / Windows署名](development/windows-signing.md)
 - [Shared instrument service proposal / アプリ間の機器共有設計](development/shared-instrument-service.md)
+- [Linux beyond simulation-only / Linux 実機対応の設計メモ](development/linux-visa.md)
 
 ## Reference / 仕様・対応情報
 
