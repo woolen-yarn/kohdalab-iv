@@ -37,10 +37,12 @@ impl NativeBackend {
         }
     }
     fn get(&mut self) -> Result<&mut NativeController, String> {
-        if self.controller.is_none() {
-            self.controller = Some(NativeController::open(&self.helper)?);
-        }
-        Ok(self.controller.as_mut().expect("opened controller"))
+        // Open at most once; later calls reuse the stored controller.
+        let controller = match self.controller.take() {
+            Some(controller) => controller,
+            None => NativeController::open(&self.helper)?,
+        };
+        Ok(self.controller.insert(controller))
     }
 }
 impl Controller for NativeBackend {

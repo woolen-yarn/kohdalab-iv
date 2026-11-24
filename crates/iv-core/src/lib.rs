@@ -1533,9 +1533,9 @@ pub fn prepare_config(config: &RunConfig) -> Result<RunConfig, String> {
 
 /// Build the two exact source plans for a balanced differential V-I sweep.
 pub fn balanced_plan(config: &RunConfig) -> Result<BalancedPlan, String> {
-    if config.balanced_source.is_none() {
+    let Some(balanced_source) = config.balanced_source.as_ref() else {
         return Err("balanced source configuration is not enabled.".into());
-    }
+    };
     let (differential, config1, config2, common_increment) = prepare_balanced_configs(config)?;
     let plan1 = plan_single(&config1)?;
     let plan2 = plan_single(&config2)?;
@@ -1567,7 +1567,7 @@ pub fn balanced_plan(config: &RunConfig) -> Result<BalancedPlan, String> {
         return Err("Balanced source plans do not have matching point counts.".into());
     }
     Ok(BalancedPlan {
-        ratio: config.balanced_source.as_ref().unwrap().ratio,
+        ratio: balanced_source.ratio,
         differential_resolution: decimal_to_f64(common_increment, "differential resolution")?,
         config1,
         config2,
