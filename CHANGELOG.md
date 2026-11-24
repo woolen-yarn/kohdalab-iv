@@ -1,6 +1,37 @@
 # Changelog / 変更履歴
 
-## Unreleased
+## 1.0.7
+
+- Align the external-control bar and distinguish control ownership from instrument state. Continue to require verified output OFF on release. Include the common Python SDK 1.0.4.
+
+## 1.0.6
+
+- Add persisted Overlay / Separate reference display. Separate pairs the reference with the source from the same record, links x zoom/pan and keeps y scales independent; axes, legends and tooltips use quantity plus editable device label. / 参照表示のOverlay / Separateを保存できるようにし、同一測定点のソース・参照値を上下二段に分けます。横軸操作を同期し、縦軸・凡例・ツールチップは量と機器ラベルに連動します。
+- Derive channel R/G from a free-intercept primary fit, never from separate-circuit leakage. Read completed gate-summary CSVs explicitly, with missing zero-current observations left missing. / 主回路のR/Gは自由切片フィットで求め、別回路のリークからは作りません。完了ゲート集計CSVを明示的に読み込み、ゼロ電流の観測がなければ欠測のままにします。
+- Reset both histories and plot bounds on accepted GUI/API run IDs; retain results after rejected Start or partial protection stops. Keep the full Measurement controls inside narrow center panes, with two-line status summaries. / GUI・APIの新ランで両段と範囲をリセットし、拒否Startや保護停止では結果を保持します。狭い中央パネルでも全測定操作を収め、状態表示を二行にします。
+
+## 1.0.5
+
+- Show the Meter range for the active manual DC function rather than a different planned sweep, and label the independent sweep threshold explicitly. / Meterのレンジは別の予定測定ではなく現在のDC動作に合わせ、掃引停止しきい値はSweep limitと明示します。
+- Keep DC live updates observable with explicit WAITING / DC LIVE / STALE status and continuously updating GUI-history regression checks. When a command error disables monitoring, verify ordinary sources OFF first, including a single Source; preserve failed OFF confirmation as Unknown and retain both errors. Even a refused range change or Start while DC is held now shuts these outputs down. / DCライブ表示をデータ待ち・更新中・更新停止に分け、ON中も履歴が増えることを検査します。エラーで監視を止める際はSource単独でもOFFを先に確認し、確認できない場合はUnknownと両方のエラーを保持します。DC保持中のレンジ変更やStartの拒否も、このOFF処理の対象です。
+- Scale live numeric readouts from the current value and queried resolution, independently of plot history, so a new nA reading is not buried in old mA units. Plot/CSV values retain their original precision. / ライブ数値は現在値と読み返した分解能から単位を選び、以前のmA履歴があってもnA値を読みやすく表示します。グラフ・CSVの数値精度は維持します。
+
+## 1.0.4
+
+- New configurations start with exactly one Source and one Meter, and scalar-only legacy profiles add Source 2 only when it was used or configured. Every device saved in an inventory is kept. / 新しい設定はSource 1台とMeter 1台で始まり、旧形式の設定はSource 2を使用・設定していた場合だけ追加します。保存済みの機器はすべて保持します。
+- Original and added devices share one card: drag handle, editable label and Delete, Device with a compact connection state and Connect / Disconnect / Settings, the live display, Settings rows and DC output. Adding a device no longer changes measurement roles; Delete explains why it is unavailable. / 元の機器と追加した機器は同じカードを使います（ドラッグ、ラベル編集、Delete、Device内の接続・設定、ライブ表示、設定欄、DC出力）。機器の追加で測定の割り当ては変わらず、Deleteできない場合は理由を表示します。
+
+## 1.0.3
+
+- Reset retained plot zoom on measurement-mode changes and each new run; keep manual zoom during the same run. / 測定モードの切替と新しい測定開始時にプロットを自動範囲へ戻し、同じ測定中の手動ズームは維持します。
+
+## 1.0.2
+
+- Preserve individual DC OFF requests when they overlap with Stop. / Stopと重なっても装置ごとの個別DC OFF要求を保持します。
+- Verify Save Copy against the original measurement hashes and remove incomplete copies on mismatch. / 保存コピーを測定時のハッシュと照合し、不一致時は作成途中のコピーを削除します。
+- Verify job-scoped Python Stop using the sweep's terminal outputs and include independent DC outputs in app-wide confirmation. / PythonのジョブID付きStopは掃引終了時の出力を確認し、アプリ全体の確認では独立DC出力も確認します。
+
+## 1.0.1
 
 - Device cards group connection actions and instrument settings. Opening the DC editor keeps the current live display. / Deviceカードに接続操作と機器設定をまとめました。DC欄を開いてもライブ表示を維持します。
 - Official VISA sessions can share one GPIB adapter across distinct addresses. Native GPIB retains the exclusive adapter lease. / 公式VISAは異なるGPIBアドレスでアダプターを共有できます。ネイティブGPIBはアダプターを排他します。

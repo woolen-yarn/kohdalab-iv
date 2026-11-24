@@ -119,10 +119,12 @@ fn run() -> Result<(), String> {
         || hardware_smoke
         || args.iter().any(|a| {
             a == "--gui-smoke"
+                || a == "--gui-current-source-smoke"
                 || a == "--gui-settings-smoke"
                 || a == "--gui-limit-smoke"
                 || a == "--gui-balanced-smoke"
                 || a == "--gui-reference-smoke"
+                || a == "--gui-separate-smoke"
                 || a == "--gui-two-column-smoke"
                 || a == "--gui-control-smoke"
                 || a == "--gui-dc-smoke"
@@ -136,22 +138,30 @@ fn run() -> Result<(), String> {
         vsync: false,
         viewport: eframe::egui::ViewportBuilder::default()
             .with_icon(icon)
-            .with_inner_size(
-                if footer_smoke || args.iter().any(|a| a == "--gui-two-column-smoke") {
-                    [1500.0, 820.0]
-                } else if args.iter().any(|a| a == "--gui-dc-smoke") {
-                    [1240.0, 1000.0]
-                } else {
-                    [1240.0, 760.0]
-                },
-            )
+            .with_inner_size(if args.iter().any(|a| a == "--gui-narrow-smoke") {
+                [1080.0, 650.0]
+            } else if footer_smoke || args.iter().any(|a| a == "--gui-two-column-smoke") {
+                [1500.0, 820.0]
+            } else if args.iter().any(|a| a == "--gui-dc-smoke") {
+                [1240.0, 1000.0]
+            } else {
+                [1240.0, 760.0]
+            })
             .with_min_inner_size([1080.0, 650.0]),
         ..Default::default()
     };
     let success = Arc::new(AtomicBool::new(false));
     let gui_success = success.clone();
     eframe::run_native(
-        concat!("KohdaLab IV v", env!("CARGO_PKG_VERSION")),
+        if iv_transport::SIMULATION_ONLY {
+            concat!(
+                "KohdaLab IV v",
+                env!("CARGO_PKG_VERSION"),
+                " · Simulation only"
+            )
+        } else {
+            concat!("KohdaLab IV v", env!("CARGO_PKG_VERSION"))
+        },
         options,
         Box::new(move |cc| {
             Ok(Box::new(

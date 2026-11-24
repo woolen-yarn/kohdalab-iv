@@ -103,6 +103,27 @@ Function un.onUninstFailed
   SetErrorLevel 1
 FunctionEnd
 
+!define SETUP_LOG_DIR "$LOCALAPPDATA\KohdaLab IV Installer"
+!define SETUP_LOG "${SETUP_LOG_DIR}\setup.log"
+
+; Silent installs keep no details list, so append installer-side failures to
+; the same log the PowerShell wrapper writes. Usage: Push "message"; Call ...
+Function LogSetupFailure
+  Exch $1
+  Push $2
+  DetailPrint "$1"
+  CreateDirectory "${SETUP_LOG_DIR}"
+  ClearErrors
+  FileOpen $2 "${SETUP_LOG}" a
+  ${IfNot} ${Errors}
+    FileSeek $2 0 END
+    FileWrite $2 "$\r$\nKohdaLab IV Setup.exe: $1$\r$\n"
+    FileClose $2
+  ${EndIf}
+  Pop $2
+  Pop $1
+FunctionEnd
+
 Section "KohdaLab IV" SecMain
   ; Do not present a directory page: the PowerShell wrapper owns the fixed,
   ; validated Program Files update transaction and preserves user data.
@@ -121,24 +142,32 @@ Section "KohdaLab IV" SecMain
   System::Call 'Kernel32::SetEnvironmentVariable(t "KOHDA_SETUP_WRAPPER", t "$PLUGINSDIR\Install-Installer.ps1") i.r0'
   System::Call 'Kernel32::SetEnvironmentVariable(t "KOHDA_SETUP_UNINSTALLER", t "$PLUGINSDIR\Uninstall.exe") i.r0'
   System::Call 'Kernel32::SetEnvironmentVariable(t "KOHDA_SETUP_VERSION", t "${VERSION}") i.r0'
+  CreateDirectory "${SETUP_LOG_DIR}"
+  System::Call 'Kernel32::SetEnvironmentVariable(t "KOHDA_SETUP_LOG", t "${SETUP_LOG}") i.r0'
   DetailPrint "Installing KohdaLab IV..."
   SetOutPath "$TEMP"
   ${DisableX64FSRedirection}
-  nsExec::ExecToLog '"$SYSDIR\WindowsPowerShell\v1.0\powershell.exe" -NoProfile -Command "$$s=[IO.File]::ReadAllText($$env:KOHDA_SETUP_WRAPPER); & ([ScriptBlock]::Create($$s)) -PackageDirectory $$env:KOHDA_SETUP_PACKAGE -UninstallerSource $$env:KOHDA_SETUP_UNINSTALLER -ApplicationVersion $$env:KOHDA_SETUP_VERSION"'
+  ; The outer try/catch records failures that the wrapper cannot log itself:
+  ; an unreadable or unparsable wrapper, parameter binding, or a failure before
+  ; its transcript starts. The full error record also goes to the details list.
+  nsExec::ExecToLog '"$SYSDIR\WindowsPowerShell\v1.0\powershell.exe" -NoProfile -NonInteractive -Command "try { $$s=[IO.File]::ReadAllText($$env:KOHDA_SETUP_WRAPPER); & ([ScriptBlock]::Create($$s)) -PackageDirectory $$env:KOHDA_SETUP_PACKAGE -UninstallerSource $$env:KOHDA_SETUP_UNINSTALLER -ApplicationVersion $$env:KOHDA_SETUP_VERSION; exit 0 } catch { $$m=($$_ | Out-String)+[Environment]::NewLine+$$_.ScriptStackTrace+[Environment]::NewLine; [Console]::Out.WriteLine($$m); try { [IO.File]::AppendAllText($$env:KOHDA_SETUP_LOG,[Environment]::NewLine+$$m) } catch {}; exit 1 }"'
   Pop $0
   ${EnableX64FSRedirection}
   ${If} $0 == "error"
-    DetailPrint "Could not start the installation helper."
+    Push "Could not start the installation helper (Windows PowerShell)."
+    Call LogSetupFailure
     SetErrorLevel 1
     Abort
   ${EndIf}
   ${If} $0 == "timeout"
-    DetailPrint "The installation helper timed out."
+    Push "The installation helper timed out."
+    Call LogSetupFailure
     SetErrorLevel 1
     Abort
   ${EndIf}
   ${If} $0 != 0
-    DetailPrint "Installation wrapper failed with exit code $0."
+    Push "Installation wrapper failed with exit code $0; the error is recorded above."
+    Call LogSetupFailure
     SetErrorLevel 1
     Abort
   ${EndIf}

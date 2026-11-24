@@ -43,7 +43,9 @@ The first mutating call, or entering a Python context, acquires an exclusive
 lease. Acquisition is rejected during manual operations or open dialogs. Normal
 GUI configuration, device connection, output settings, Start and Save inputs are
 locked while Python owns control. The existing plots and data remain visible.
-A `PYTHON CONTROL` banner provides **Stop** and **Take control**; GUI Stop remains
+An **External control** banner names the actual owner (`Python` or the client
+label), or shows `Verifying output OFF` after control ends until the engine
+confirms it. It provides **Stop** and **Take control**; GUI Stop remains
 available independently of the normal API queue.
 
 Take control permanently revokes that client's ownership, requests Output OFF,

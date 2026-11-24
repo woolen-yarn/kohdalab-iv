@@ -15,8 +15,7 @@ use iv_core::{
     InstrumentProfile, InstrumentRole, Mode, RunConfig, SourceLimitProfile, SourceProfile,
     fixed_manual_source_range, instrument_catalog, instrument_profile, manual_source_range,
     meter_display_queries, meter_input_resistance, meter_range_resistances, meter_ranges,
-    source_display_resolution, source_protection_profile, source_range_query,
-    validate_meter_range,
+    source_display_resolution, source_protection_profile, source_range_query, validate_meter_range,
 };
 
 const GOLDEN: &str = include_str!("../../../tests/golden/spec_7461a_gpib_dcv.txt");
@@ -209,7 +208,11 @@ fn unregistered_and_wrong_role_cases(snapshot: &mut String) {
     let meter_ids = meters.iter().map(|d| d.id);
     let source_ids = sources.iter().map(|d| d.id);
 
-    writeln!(snapshot, "\n== source functions with unregistered or meter ids ==").unwrap();
+    writeln!(
+        snapshot,
+        "\n== source functions with unregistered or meter ids =="
+    )
+    .unwrap();
     for model in UNREGISTERED_MODELS.into_iter().chain(meter_ids) {
         writeln!(
             snapshot,
@@ -231,7 +234,11 @@ fn unregistered_and_wrong_role_cases(snapshot: &mut String) {
         }
     }
 
-    writeln!(snapshot, "\n== meter functions with unregistered or source ids ==").unwrap();
+    writeln!(
+        snapshot,
+        "\n== meter functions with unregistered or source ids =="
+    )
+    .unwrap();
     for model in UNREGISTERED_MODELS.into_iter().chain(source_ids) {
         writeln!(
             snapshot,
@@ -266,7 +273,11 @@ fn snapshot() -> String {
             let profile = instrument_profile(model)
                 .unwrap_or_else(|e| panic!("{model}: {e}"))
                 .unwrap_or_else(|| panic!("{model}: registered model has no profile"));
-            writeln!(snapshot, "\n== {model} ==\n{descriptor:?}\nprofile={profile:?}").unwrap();
+            writeln!(
+                snapshot,
+                "\n== {model} ==\n{descriptor:?}\nprofile={profile:?}"
+            )
+            .unwrap();
             if role == InstrumentRole::Source {
                 let query = source_range_query(model);
                 let protection = source_protection_profile(model);

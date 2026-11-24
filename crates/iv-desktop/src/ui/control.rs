@@ -63,19 +63,6 @@ impl IvApp {
         }
         self.control = Some(control);
     }
-    fn common_receipt(&self, native: Value) -> Value {
-        let id = native["id"].as_str().unwrap_or("").to_owned();
-        let kind = native["kind"].as_str().unwrap_or("operation").to_owned();
-        let state = native["status"].as_str().unwrap_or("running").to_owned();
-        let cleanup = if state == "running" {
-            "not_required"
-        } else if native.get("error_code").and_then(Value::as_str) == Some("output_safety") {
-            "pending"
-        } else {
-            "unknown"
-        };
-        common::receipt(&id, &kind, &state, cleanup, None, native)
-    }
     fn common_api_value(&self, _control: &GuiControl, body: &Value, value: Value) -> Value {
         let Some(method) = body.get("_control_method").and_then(Value::as_str) else {
             return value;
@@ -88,7 +75,7 @@ impl IvApp {
             "describe" | "status" | "result" | "release" | "stop" | "output_off"
             | "gate_output_off" => value,
             _ if value.get("id").is_some() && value.get("status").is_some() => {
-                self.common_receipt(value)
+                common_receipt(value)
             }
             _ => value,
         }
@@ -161,7 +148,7 @@ impl IvApp {
                 ));
             }
             "control_status" => {
-                let native = json!({"snapshot":self.state,"active_run":control.active_id().and_then(|id|control.result(id).ok()),"control":control.control()});
+                let native = json!({"snapshot":self.state,"plot_history":self.plot_history_report(),"active_run":control.active_id().and_then(|id|control.result(id).ok()),"control":control.control()});
                 let alive = self.client.as_ref().is_ok_and(|client| client.is_alive());
                 let cleanup = if alive {
                     control.common_cleanup(&self.state)
@@ -205,7 +192,7 @@ impl IvApp {
                     .and_then(Value::as_str)
                     .ok_or("Missing job_id")?;
                 let native = control.result(id)?;
-                return Ok(self.common_receipt(native));
+                return Ok(common_receipt(native));
             }
             "capabilities" => {
                 return Ok(
@@ -214,7 +201,7 @@ impl IvApp {
             }
             "status" => {
                 return Ok(
-                    json!({"snapshot":self.state,"active_run":control.active_id().and_then(|id|control.result(id).ok()),"control":control.control()}),
+                    json!({"snapshot":self.state,"plot_history":self.plot_history_report(),"active_run":control.active_id().and_then(|id|control.result(id).ok()),"control":control.control()}),
                 );
             }
             "configuration" => {
@@ -392,6 +379,10 @@ impl IvApp {
                 self.settings.units =
                     [measurement_definition(self.settings.config.mode).preferred_unit_index; 3];
                 self.samples.clear();
+                self.reference_samples.clear();
+                self.separate = Default::default();
+                self.gate_metric = reference_view::GateMetric::Sweep;
+                self.rebuild_reference_plot_series();
                 self.rebuild_plot_series();
                 self.live_samples.clear();
                 self.source2_samples.clear();
@@ -559,18 +550,17 @@ impl IvApp {
         let control = self.control.as_ref().unwrap().control();
         let mut takeover = false;
         let mut stop = false;
+        let owner = external_control_owner(&control, retiring);
+        let client_label = display_client_label(control["label"].as_str());
         egui::Panel::top("python_control").show_inside(root, |ui| {
             ui.horizontal_wrapped(|ui| {
-                ui.colored_label(
-                    BLUE,
-                    if retiring {
-                        "PYTHON DISCONNECTED · Verifying output OFF"
-                    } else if control["status"] == "detached" {
-                        "PYTHON DISCONNECTED · Finishing current operation"
-                    } else {
-                        "PYTHON CONTROL · GUI controls locked"
-                    },
-                );
+                ui.colored_label(BLUE, "External control");
+                ui.label(owner);
+                if let Some(text) = &client_label {
+                    // Client-supplied text, kept apart from the GUI's own status.
+                    ui.label(egui::RichText::new(text).italics().weak())
+                        .on_hover_text("Label supplied by the Python client; not a GUI status");
+                }
                 if let Some(kind) = control["active_run"]["kind"].as_str() {
                     ui.label(kind);
                 } else {
@@ -594,6 +584,70 @@ impl IvApp {
             self.report("Control returned to GUI. Waiting for verified output OFF.".into());
         }
     }
+}
+/// Owner line for the External control banner, from the actual lease state only.
+/// Client text never enters this line. Ending control never claims OFF before
+/// the engine verifies it.
+fn external_control_owner(control: &Value, retiring: bool) -> String {
+    if retiring {
+        "Python control ended · Verifying output OFF".into()
+    } else if control["status"] == "detached" {
+        "Python disconnected · Finishing current operation".into()
+    } else {
+        "Python · GUI controls locked".into()
+    }
+}
+
+const CLIENT_LABEL_DISPLAY_CHARS: usize = 32;
+
+/// Banner text for a client-supplied label, visibly marked as client text.
+/// Line breaks, control, bidi and other invisible formatting characters are
+/// replaced so the label cannot reshape or impersonate the status line.
+/// Blank or default labels fall back to showing nothing extra.
+fn display_client_label(raw: Option<&str>) -> Option<String> {
+    let cleaned = raw?
+        .chars()
+        .filter_map(|c| {
+            if c.is_control() || matches!(c, '\u{2028}' | '\u{2029}') {
+                Some(' ')
+            } else if hidden_formatting(c) {
+                None
+            } else {
+                Some(c)
+            }
+        })
+        .collect::<String>();
+    let cleaned = cleaned.split_whitespace().collect::<Vec<_>>().join(" ");
+    if cleaned.is_empty() || cleaned == "Python" {
+        return None;
+    }
+    let mut shown: String = cleaned.chars().take(CLIENT_LABEL_DISPLAY_CHARS).collect();
+    if cleaned.chars().count() > CLIENT_LABEL_DISPLAY_CHARS {
+        shown.push('…');
+    }
+    Some(format!("Client label: “{shown}”"))
+}
+
+/// Invisible, bidi and other formatting characters that are removed outright.
+fn hidden_formatting(c: char) -> bool {
+    matches!(
+        c,
+        '\u{00AD}'
+            | '\u{034F}'
+            | '\u{061C}'
+            | '\u{115F}'
+            | '\u{1160}'
+            | '\u{180E}'
+            | '\u{200B}'..='\u{200F}'
+            | '\u{2028}'..='\u{202E}'
+            | '\u{2060}'..='\u{206F}'
+            | '\u{3164}'
+            | '\u{FE00}'..='\u{FE0F}'
+            | '\u{FEFF}'
+            | '\u{FFA0}'
+            | '\u{FFF9}'..='\u{FFFB}'
+            | '\u{E0000}'..='\u{E007F}'
+    )
 }
 fn api_number(body: &Value, key: &str) -> Result<f64, String> {
     body[key]
@@ -673,6 +727,45 @@ fn api_devices(body: &Value, dual: bool, disconnect: bool) -> Result<Vec<String>
     Ok(devices)
 }
 
+fn common_receipt(native: Value) -> Value {
+    let id = native["id"].as_str().unwrap_or("").to_owned();
+    let kind = native["kind"].as_str().unwrap_or("operation").to_owned();
+    let state = native["status"].as_str().unwrap_or("running").to_owned();
+    let cleanup = if state == "running" {
+        "not_required"
+    } else if kind == "start" && matches!(state.as_str(), "completed" | "stopped") {
+        // Job-scoped Stop owns only the sweep sources. Use the job's
+        // terminal snapshot, never a later app-wide status.
+        let snapshot = &native["snapshot"];
+        let outputs = [
+            (&snapshot["source_connected"], &snapshot["output"]),
+            (&snapshot["source2_connected"], &snapshot["source2_output"]),
+        ];
+        if snapshot["error"].as_str() == Some("")
+            && outputs.iter().all(|(connected, output)| {
+                connected.as_bool() == Some(false)
+                    || (connected.as_bool() == Some(true) && output.as_str() == Some("Off"))
+            })
+        {
+            if outputs
+                .iter()
+                .any(|(connected, _)| connected.as_bool() == Some(true))
+            {
+                "verified"
+            } else {
+                "not_required"
+            }
+        } else {
+            "unknown"
+        }
+    } else if native.get("error_code").and_then(Value::as_str) == Some("output_safety") {
+        "pending"
+    } else {
+        "unknown"
+    };
+    common::receipt(&id, &kind, &state, cleanup, None, native)
+}
+
 fn api_optional_text<'a>(body: &'a Value, key: &str) -> Result<Option<&'a str>, String> {
     match body.get(key) {
         None | Some(Value::Null) => Ok(None),
@@ -684,6 +777,74 @@ fn api_optional_text<'a>(body: &'a Value, key: &str) -> Result<Option<&'a str>, 
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn external_control_owner_follows_actual_state_without_early_off_claim() {
+        let owned = json!({"status": "python", "label": "Python"});
+        assert_eq!(
+            external_control_owner(&owned, false),
+            "Python · GUI controls locked"
+        );
+        // Client text never enters the authoritative owner/status line.
+        let named = json!({"status": "python", "label": "Output OFF verified"});
+        assert_eq!(
+            external_control_owner(&named, false),
+            "Python · GUI controls locked"
+        );
+        let detached = json!({"status": "detached", "label": null});
+        assert_eq!(
+            external_control_owner(&detached, false),
+            "Python disconnected · Finishing current operation"
+        );
+        let ending = external_control_owner(&detached, true);
+        assert_eq!(ending, "Python control ended · Verifying output OFF");
+        assert!(!ending.contains("verified") && !ending.contains("complete"));
+    }
+    #[test]
+    fn client_label_is_marked_and_stripped_of_layout_and_bidi_formatting() {
+        assert_eq!(
+            display_client_label(Some("Notebook")).as_deref(),
+            Some("Client label: “Notebook”")
+        );
+        for blank in [
+            None,
+            Some(""),
+            Some("  \n\t"),
+            Some("\u{200B}\u{202E}"),
+            Some("Python"),
+        ] {
+            assert_eq!(display_client_label(blank), None, "{blank:?}");
+        }
+        assert_eq!(
+            display_client_label(Some("Run\nOutput OFF\u{2028}verified\r\u{0007}")).as_deref(),
+            Some("Client label: “Run Output OFF verified”")
+        );
+        assert_eq!(
+            display_client_label(Some("ab\u{202E}cd\u{2066}e\u{200F}f\u{FEFF}")).as_deref(),
+            Some("Client label: “abcdef”")
+        );
+        let long = display_client_label(Some("x".repeat(48).as_str())).unwrap();
+        assert_eq!(long, format!("Client label: “{}…”", "x".repeat(32)));
+    }
+    #[test]
+    fn sweep_receipt_uses_its_own_terminal_output_evidence() {
+        let mut receipt = json!({
+            "id": "run", "kind": "start", "status": "stopped",
+            "snapshot": {
+                "source_connected": true, "output": "Off",
+                "source2_connected": true, "source2_output": "Off",
+                "gate_output": "On", "error": ""
+            }
+        });
+        assert_eq!(common_receipt(receipt.clone())["cleanup"], "verified");
+        receipt["snapshot"]["source2_output"] = json!("Unknown");
+        assert_eq!(common_receipt(receipt.clone())["cleanup"], "unknown");
+        receipt["snapshot"]["source2_output"] = json!("Off");
+        receipt["snapshot"]["error"] = json!("Could not verify OFF");
+        assert_eq!(common_receipt(receipt.clone())["cleanup"], "unknown");
+        receipt["snapshot"] = Value::Null;
+        assert_eq!(common_receipt(receipt)["cleanup"], "unknown");
+    }
+
     #[test]
     fn output_names_and_device_lists_are_validated_before_mutation() {
         assert_eq!(api_filename("  sample.CSV ").unwrap(), "sample");

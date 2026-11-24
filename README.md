@@ -3,13 +3,13 @@
 # KohdaLab IV
 
 [![CI](https://github.com/woolen-yarn/kohdalab-iv/actions/workflows/test.yml/badge.svg)](https://github.com/woolen-yarn/kohdalab-iv/actions/workflows/test.yml)
-[![Release](https://img.shields.io/github/v/release/woolen-yarn/kohdalab-iv)](https://github.com/woolen-yarn/kohdalab-iv/releases/latest)
+[![Release](https://img.shields.io/github/v/release/woolen-yarn/kohdalab-iv)](https://github.com/woolen-yarn/kohdalab-iv/releases/tag/v1.0.7)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 
 Rust desktop application for DC I-V and V-I measurements, live source/meter monitoring, and USB/GPIB instrument control.
 DC I-V・V-I 測定、ソース／メーターのライブ監視、USB/GPIB 計測器制御のための Rust デスクトップアプリケーションです。
 
-[Download / ダウンロード](https://github.com/woolen-yarn/kohdalab-iv/releases) · [Documentation / ドキュメント](docs/README.md) · [Report an issue / 問題を報告](https://github.com/woolen-yarn/kohdalab-iv/issues)
+[Documentation / ドキュメント](docs/README.md) · [Report an issue / 問題を報告](https://github.com/woolen-yarn/kohdalab-iv/issues)
 
 - Voltage-source/current-measure and current-source/voltage-measure sweeps.
 - Live monitoring, source protection, and a four-file measurement bundle (analysis CSV, raw CSV, lifecycle log, conditions manifest).
@@ -18,6 +18,43 @@ DC I-V・V-I 測定、ソース／メーターのライブ監視、USB/GPIB 計�
 - 電圧源・電流測定、および電流源・電圧測定のスイープ。
 - ライブ監視、ソース保護、解析CSV・raw CSV・ライフサイクルlog・条件manifestの4ファイル測定bundle。
 - デスクトップ GUI と任意の Python/Jupyter クライアントで共通の Rust エンジン。
+
+[Downloads / ダウンロード](#downloads--ダウンロード) · [Hardware and verification / 対応機器と実機検証](#hardware--対応機器) · [Try without hardware / 機器なしで試す](docs/guides/quick-start.md) · [Python and API / PythonとAPI](docs/reference/common-control-api.md)
+
+## Downloads / ダウンロード
+
+[Latest Windows build / 最新のWindows配布](https://github.com/woolen-yarn/kohdalab-iv/releases/latest) · [Windows portable ZIP / ポータブル版](https://github.com/woolen-yarn/kohdalab-iv/releases/latest/download/kohdalab-iv-windows.zip)
+
+The Windows build channel includes CI and package checks; physical acceptance is recorded separately. The multi-platform stable packages below remain available. / Windows配布はCI・パッケージ検証済みで、実機受入測定とは区別します。以下の複数OS向け安定版も保持しています。
+
+[Stable release / 安定版](https://github.com/woolen-yarn/kohdalab-iv/releases/tag/v1.0.7) · [v1.0.7 release notes / リリースノート](https://github.com/woolen-yarn/kohdalab-iv/releases/tag/v1.0.7)
+
+| OS / 対応環境 | Installer / インストーラー | Portable / ポータブル |
+| --- | --- | --- |
+| Windows x64 | [Setup (.exe)](https://github.com/woolen-yarn/kohdalab-iv/releases/download/v1.0.7/kohdalab-iv-1.0.7-windows-x64-Setup.exe) | [ZIP](https://github.com/woolen-yarn/kohdalab-iv/releases/download/v1.0.7/kohdalab-iv-1.0.7-windows-x64-portable.zip) |
+| macOS Apple Silicon | [DMG](https://github.com/woolen-yarn/kohdalab-iv/releases/download/v1.0.7/kohdalab-iv-1.0.7-macos-arm64.dmg) | [ZIP](https://github.com/woolen-yarn/kohdalab-iv/releases/download/v1.0.7/kohdalab-iv-1.0.7-macos-arm64-portable.zip) |
+| Ubuntu 24.04 x64 · Simulation only / シミュレーション専用 | [DEB](https://github.com/woolen-yarn/kohdalab-iv/releases/download/v1.0.7/kohdalab-iv-1.0.7-linux-x64-simulation.deb) | [tar.gz](https://github.com/woolen-yarn/kohdalab-iv/releases/download/v1.0.7/kohdalab-iv-1.0.7-linux-x64-simulation.tar.gz) |
+
+[SHA-256](https://github.com/woolen-yarn/kohdalab-iv/releases/download/v1.0.7/SHA256SUMS.txt) · [Build kit / ビルドキット](https://github.com/woolen-yarn/kohdalab-iv/releases/download/v1.0.7/kohdalab-iv-1.0.7-build-kit.zip)
+
+Windows Setup is unsigned. macOS uses ad hoc signing and is not notarized. / Windows Setupは未署名です。macOS版はアドホック署名で、Appleの公証を受けていません。
+
+## Hardware / 対応機器
+
+| Model / 機器 | Role · model ID / 役割・モデルID | Connection and physical test scope / 接続方法・実機検証の範囲 |
+| --- | --- | --- |
+| Yokogawa GS210 | Source / ソース · `YOKOGAWA_GS210` | GPIB / VISA, USBTMC / VISA · Sweep with 34401A / 34401Aとの掃引 |
+| Yokogawa 7651 | Source / ソース · `YOKOGAWA_7651` | GPIB / VISA · 4-wire I source / V meter sweep / 4端子掃引 |
+| Agilent 34401A | Meter / メーター · `AGILENT_34401A` | GPIB / VISA · Voltage with GS210 / GS210との電圧測定 |
+| ADCMT 7461A | Meter / メーター · `ADCMT_7461A` | GPIB / VISA · Fixed and Auto range with 7651 / 7651との固定・自動レンジ試験。USB未確認 |
+| Keysight 34465A | Meter / メーター · `KEYSIGHT_34465A` | USBTMC / VISA · Seven-point fixed-range sweep and output OFF / 固定レンジ7点掃引、出力OFF |
+| Agilent / Keysight 34411A | Meter / メーター · `AGILENT_34411A`, `KEYSIGHT_34411A` | GPIB / VISA, USBTMC / VISA · Earlier tests passed; USB not detected in the latest trial / 過去試験は合格。直近はUSB未検出 |
+| Simulated source / シミュレーション | Source · `SIMULATED_SOURCE` | Simulation only / シミュレーション専用 |
+| Simulated meter / シミュレーション | Meter · `SIMULATED_METER` | Simulation only / シミュレーション専用 |
+
+The table records earlier Windows tests. Use the manufacturer’s 64-bit VISA and select the resource under **Device → Refresh**. / 表は過去のWindows実機試験です。メーカーの64-bit VISAを使い、**Device → Refresh** でリソースを選びます。
+
+[Connection guide / 接続手順](docs/reference/hardware.md) · [Verification record / 検証記録](docs/validation-v1-candidate.md)
 
 ## Interface / 画面
 
@@ -66,33 +103,6 @@ A stopped simulation: the popup shows the threshold, trigger reading and verifie
 On first normal GUI launch, IV atomically creates its missing default configuration without connecting instruments or enabling output. Existing files are preserved; invalid/unsupported profiles produce an error instead of being replaced. Explicit profiles and smoke tests do not initialize the production default. IV settings use `~/.kohdalab/iv/config/config.json` (`%USERPROFILE%\.kohdalab\iv\config\config.json` on Windows). TRKR uses its own `trkr/config/config.json`. Old shared/preview settings are not automatically discovered or migrated; app identity checks prevent loading or overwriting another app's configuration. See [settings storage](docs/reference/settings-storage.md).
 
 初回の通常GUI起動時に、標準設定ファイルが存在しなければ自動作成します。既存ファイルは保持し、不正・未対応の設定は置き換えずエラーを表示します。設定の作成・読込による装置接続や出力ONは行いません。明示的なプロファイル指定・スモークテスト時は通常用設定を作成しません。IV設定は `~/.kohdalab/iv/config/config.json`、TRKR設定は独立した `trkr/config/config.json` に保存します。旧共有設定や `next.json` は自動探索・移行せず、既存ファイルを残します。別アプリの設定を読み込み・上書きする操作は拒否します。[設定の保存先](docs/reference/settings-storage.md)を参照してください。
-
-## Downloads / ダウンロード
-
-| OS | Installer / インストーラー | Portable / ポータブル |
-| --- | --- | --- |
-| Windows x64 | Setup EXE | ZIP |
-| macOS Apple silicon | DMG（Applicationsへコピー） | App ZIP |
-| Linux | 配布準備中 / Pending | 配布準備中 / Pending |
-
-Download the four packages and SHA-256 checksums from [v1.0.0 Releases](https://github.com/woolen-yarn/kohdalab-iv/releases/tag/v1.0.0). Windows Setup is unsigned. macOS uses ad hoc signing and is not notarized.
-
-[v1.0.0 Releases](https://github.com/woolen-yarn/kohdalab-iv/releases/tag/v1.0.0) から配布物とSHA-256を取得できます。Windows Setupは未署名、macOSはad hoc署名・未公証です。
-
-## Hardware / 対応機器
-
-| Model / 機器 | Role / 役割 | Physical connection verified on Windows / Windowsで実機確認した接続 |
-| --- | --- | --- |
-| Yokogawa GS210 | Source | GPIB / VISA, USBTMC / VISA |
-| Yokogawa 7651 | Source | GPIB / VISA |
-| Agilent 34401A | Meter | GPIB / VISA |
-| ADCMT 7461A | Meter | GPIB / VISA |
-| Keysight 34465A | Meter | USBTMC / VISA |
-| Agilent 34411A | Meter | GPIB / VISA, USBTMC / VISA |
-
-These routes were exercised during Windows commissioning. Select the detected resource in **Device → Refresh** with the manufacturer's 64-bit VISA installed. See [test scope and package qualification](docs/validation-v1-candidate.md) and [hardware setup](docs/reference/hardware.md).
-
-上表はWindowsで実機確認した接続経路です。メーカーの64-bit VISAを使用し、**Device → Refresh** で対象を選びます。試験範囲は[検証表](docs/validation-v1-candidate.md)、接続手順は[ハードウェア設定](docs/reference/hardware.md)を参照してください。
 
 ## Quick start / はじめに
 
@@ -240,3 +250,5 @@ dependencies retain their own licenses; keep the accompanying notices and source
 See [redistribution terms](REDISTRIBUTION.md), [code signing](CODE_SIGNING_POLICY.md), and [privacy](PRIVACY.md).
 
 プロジェクトコードは [MIT ライセンス](LICENSE)です。ネイティブヘルパーと再配布する依存関係にはそれぞれのライセンスが適用されるため、付属の通知とソースを保持してください。[再配布条件](REDISTRIBUTION.md)、[コード署名](CODE_SIGNING_POLICY.md)、[プライバシー](PRIVACY.md)も参照してください。
+
+[One-click distribution / ワンクリック配布](DISTRIBUTION.md)
