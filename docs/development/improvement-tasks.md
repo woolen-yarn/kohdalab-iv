@@ -221,6 +221,7 @@ drivers to handle "timeout, disconnect and malformed responses".
 ## Task 6 — Scope out Linux beyond simulation-only / Linux対応の検討
 
 Priority: Low. Risk: Low (investigation + docs; no behavior change yet).
+Status: design note in [`linux-visa.md`](linux-visa.md) (#27); ROADMAP item added.
 
 ### Problem
 The download matrix marks Linux "Simulation only". Research users often want
