@@ -240,16 +240,25 @@ pub fn save_run_copy(source: &Path, destination: &Path) -> Result<(), String> {
             })?;
         }
 
-        if metadata.get("file_hashes").is_some() {
-            metadata["file_hashes"] = serde_json::json!({
-                "csv_sha256": crate::raw_csv::file_sha256(destination)?,
-                "raw_csv_sha256": if audit_key == "raw_csv" {
-                    Some(crate::raw_csv::file_sha256(&destination_audit)?)
-                } else { None },
-                "log_sha256": if let Some(destination_log) = &destination_log {
-                    Some(crate::raw_csv::file_sha256(destination_log)?)
-                } else { None },
-            });
+        // Verify the exact bytes copied, so a source change during copying
+        // cannot be hidden by a new manifest. Keep the acquisition hashes.
+        for (key, path) in [
+            ("csv_sha256", Some(destination)),
+            (
+                "raw_csv_sha256",
+                (audit_key == "raw_csv" && audit_required).then_some(destination_audit.as_path()),
+            ),
+            ("log_sha256", destination_log.as_deref()),
+        ] {
+            let Some(expected) = metadata["file_hashes"].get(key).filter(|v| !v.is_null()) else {
+                continue;
+            };
+            let actual = path.map(crate::raw_csv::file_sha256).transpose()?;
+            if expected.as_str().is_none() || expected.as_str() != actual.as_deref() {
+                return Err(format!(
+                    "Cannot save a copy: {key} does not match the original measurement manifest."
+                ));
+            }
         }
 
         let mut metadata_file = OpenOptions::new()
@@ -559,7 +568,7 @@ mod tests {
     }
 
     #[test]
-    fn raw_csv_export_recomputes_destination_hashes() {
+    fn export_checks_acquisition_hashes_and_removes_mismatched_copies() {
         let directory = temp_dir("hashes");
         let source = directory.join("source.csv");
         fs::write(&source, b"run_id,point_index\nrun,1\n").unwrap();
@@ -581,7 +590,11 @@ mod tests {
             "raw_csv": {"path": source.with_extension("raw.csv").display().to_string(), "schema": "raw_csv_v1"},
             "log": {"path": source.with_extension("log").display().to_string(), "schema":"run_log_v1"},
             "run_bundle": {"schema":"kohdalab_run_bundle_v1", "filenames":{"analysis_csv":"source.csv","raw_csv":"source.raw.csv","log":"source.log","conditions_json":"source.run.json"}},
-            "file_hashes": {"csv_sha256": "old", "raw_csv_sha256": "old", "log_sha256":"old"}
+            "file_hashes": {
+                "csv_sha256": crate::raw_csv::file_sha256(&source).unwrap(),
+                "raw_csv_sha256": crate::raw_csv::file_sha256(&source.with_extension("raw.csv")).unwrap(),
+                "log_sha256": crate::raw_csv::file_sha256(&source.with_extension("log")).unwrap(),
+            }
         });
         fs::write(
             source.with_extension("run.json"),
@@ -589,6 +602,21 @@ mod tests {
         )
         .unwrap();
         let destination = directory.join("copy.csv");
+        for (extension, key) in [
+            ("csv", "csv_sha256"),
+            ("raw.csv", "raw_csv_sha256"),
+            ("log", "log_sha256"),
+        ] {
+            let changed = source.with_extension(extension);
+            let original = fs::read(&changed).unwrap();
+            fs::write(&changed, b"changed after acquisition").unwrap();
+            let error = save_run_copy(&source, &destination).unwrap_err();
+            assert!(error.contains(key), "{error}");
+            for extension in ["csv", "raw.csv", "log", "run.json"] {
+                assert!(!destination.with_extension(extension).exists());
+            }
+            fs::write(changed, original).unwrap();
+        }
         save_run_copy(&source, &destination).unwrap();
         let copied: serde_json::Value =
             serde_json::from_slice(&fs::read(destination.with_extension("run.json")).unwrap())

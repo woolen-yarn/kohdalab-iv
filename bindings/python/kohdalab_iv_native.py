@@ -1125,7 +1125,9 @@ class GuiIV:
             state = self.snapshot
             off = (not state.get("source_connected") or state.get("output") == "Off") and \
                   (not state.get("source2_connected") or state.get("source2_output") == "Off") and \
-                  (not state.get("gate_connected") or state.get("gate_output") == "Off")
+                  (not state.get("gate_connected") or state.get("gate_output") == "Off") and \
+                  all(not device.get("source") or device.get("assigned") or device.get("output") == "Off"
+                      for device in state.get("inventory_devices", ()))
             if off and state.get("phase") not in ("Preparing", "Running", "Cleaning up"):
                 return state
             if deadline is not None and time.monotonic() >= deadline:

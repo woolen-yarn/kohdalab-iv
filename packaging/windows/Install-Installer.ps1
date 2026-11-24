@@ -6,41 +6,79 @@ param(
  [Parameter(Mandatory=$true)][ValidatePattern('^\d+\.\d+\.\d+(?:-[A-Za-z0-9.-]+)?$')][string]$ApplicationVersion
 )
 $ErrorActionPreference='Stop'
+
+function Get-Sha256([string]$Path) {
+    # Windows PowerShell 5.1 defines Get-FileHash in a script module that an
+    # inherited PowerShell 7 PSModulePath can hide, so hash with .NET directly.
+    $stream = [IO.File]::Open($Path, [IO.FileMode]::Open, [IO.FileAccess]::Read, [IO.FileShare]::Read)
+    try {
+        $sha = [Security.Cryptography.SHA256]::Create()
+        try {
+            return ([BitConverter]::ToString($sha.ComputeHash($stream))).Replace('-', '').ToLowerInvariant()
+        } finally { $sha.Dispose() }
+    } finally { $stream.Dispose() }
+}
+
 $ProgressPreference='SilentlyContinue'
 $logDirectory=Join-Path $env:LOCALAPPDATA 'KohdaLab IV Installer'
+$logPath=Join-Path $logDirectory 'setup.log'
 New-Item -ItemType Directory -Path $logDirectory -Force | Out-Null
-Start-Transcript -Path (Join-Path $logDirectory 'setup.log') -Append -Force | Out-Null
-$package=[IO.Path]::GetFullPath($PackageDirectory)
-$parent=Split-Path -Parent $package
-$prepared=Join-Path $parent ('prepared-'+[Guid]::NewGuid().ToString('N'))
-$identity=[Security.Principal.WindowsIdentity]::GetCurrent()
-if(!([Security.Principal.WindowsPrincipal]$identity).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)){throw 'Administrator approval is required for installation.'}
-$installed=Join-Path ([Environment]::GetFolderPath('ProgramFiles')) 'Kohdalab\KohdaLab IV'
-$key='HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\KohdaLabIV'
-$desktop=[Environment]::GetFolderPath('CommonDesktopDirectory')
-$menu=Join-Path ([Environment]::GetFolderPath('CommonPrograms')) 'KohdaLab IV'
-function Assert-SafeAncestry([string]$Path) {
- $cursor=[IO.Path]::GetFullPath($Path)
- while($cursor){
-  if((Test-Path -LiteralPath $cursor) -and ((Get-Item -LiteralPath $cursor -Force).Attributes -band [IO.FileAttributes]::ReparsePoint)){throw "Refusing reparse-point ancestor: $cursor"}
-  $parentPath=[IO.Directory]::GetParent($cursor)
-  $cursor=if($parentPath){$parentPath.FullName}else{$null}
- }
+$transcribing=$false
+try { Start-Transcript -Path $logPath -Append -Force | Out-Null; $transcribing=$true } catch { [IO.File]::AppendAllText($logPath,"Transcript could not start: $_`r`n") }
+function Write-InstallerFailure($Record) {
+ # NSIS /S keeps no details list, and an error that escapes this script is only
+ # printed after Stop-Transcript. Record the cause while it is still logged.
+ $inner=if($Record.Exception.InnerException){$Record.Exception.InnerException.ToString()}else{'(none)'}
+ $text=@(
+  "KohdaLab IV Setup failed: $($Record.Exception.Message)",
+  "Exception: $($Record.Exception.GetType().FullName)",
+  "Position: $($Record.InvocationInfo.PositionMessage)",
+  "Script stack:`r`n$($Record.ScriptStackTrace)",
+  "Inner exception: $inner"
+ ) -join "`r`n"
+ if($transcribing){Write-Host $text}else{try{[IO.File]::AppendAllText($logPath,$text+"`r`n")}catch{}}
+ [Console]::Error.WriteLine($text)
 }
-Assert-SafeAncestry $installed
-Assert-SafeAncestry $menu
-$oldRegistry=$null
-if(Test-Path -LiteralPath $key){
- $reg=Get-Item -LiteralPath $key
- $oldRegistry=@{};foreach($name in $reg.GetValueNames()){$oldRegistry[$name]=@($reg.GetValue($name,$null,[Microsoft.Win32.RegistryValueOptions]::DoNotExpandEnvironmentNames),$reg.GetValueKind($name).ToString())}
-}
-$menuLink=Join-Path $menu 'KohdaLab IV.lnk'
-$menuExisted=Test-Path -LiteralPath $menu
-Assert-SafeAncestry $menuLink
-$oldMenu=if(Test-Path -LiteralPath $menuLink){[IO.File]::ReadAllBytes($menuLink)}else{$null}
+# Everything that can fail runs inside the try below, so every failure is
+# recorded before the transcript stops.
+$prepared=$null
 $activationStarted=$false
+$oldRegistry=$null
+$oldMenu=$null
+$menuExisted=$true
+$menuLink=$null
+$menu=$null
+$key='HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\KohdaLabIV'
 $manifest=[ordered]@{}
 try {
+ Write-Host "KohdaLab IV Setup $ApplicationVersion starting; package $PackageDirectory; PowerShell $($PSVersionTable.PSVersion); 64-bit process $([Environment]::Is64BitProcess)"
+ $package=[IO.Path]::GetFullPath($PackageDirectory)
+ $parent=Split-Path -Parent $package
+ $prepared=Join-Path $parent ('prepared-'+[Guid]::NewGuid().ToString('N'))
+ $identity=[Security.Principal.WindowsIdentity]::GetCurrent()
+ if(!([Security.Principal.WindowsPrincipal]$identity).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)){throw 'Administrator approval is required for installation.'}
+ $installed=Join-Path ([Environment]::GetFolderPath('ProgramFiles')) 'Kohdalab\KohdaLab IV'
+ $desktop=[Environment]::GetFolderPath('CommonDesktopDirectory')
+ $menu=Join-Path ([Environment]::GetFolderPath('CommonPrograms')) 'KohdaLab IV'
+ function Assert-SafeAncestry([string]$Path) {
+  $cursor=[IO.Path]::GetFullPath($Path)
+  while($cursor){
+   if((Test-Path -LiteralPath $cursor) -and ((Get-Item -LiteralPath $cursor -Force).Attributes -band [IO.FileAttributes]::ReparsePoint)){throw "Refusing reparse-point ancestor: $cursor"}
+   $parentPath=[IO.Directory]::GetParent($cursor)
+   $cursor=if($parentPath){$parentPath.FullName}else{$null}
+  }
+ }
+ Assert-SafeAncestry $installed
+ Assert-SafeAncestry $menu
+ if(Test-Path -LiteralPath $key){
+  $reg=Get-Item -LiteralPath $key
+  $oldRegistry=@{};foreach($name in $reg.GetValueNames()){$oldRegistry[$name]=@($reg.GetValue($name,$null,[Microsoft.Win32.RegistryValueOptions]::DoNotExpandEnvironmentNames),$reg.GetValueKind($name).ToString())}
+ }
+ $menuLink=Join-Path $menu 'KohdaLab IV.lnk'
+ $menuExisted=Test-Path -LiteralPath $menu
+ Assert-SafeAncestry $menuLink
+ $oldMenu=if(Test-Path -LiteralPath $menuLink){[IO.File]::ReadAllBytes($menuLink)}else{$null}
+ Write-Host "Verifying the package and installing to $installed"
  foreach($item in @(Get-Item -LiteralPath $package -Force)+@(Get-ChildItem -LiteralPath $package -Recurse -Force)){
   if($item.Attributes -band [IO.FileAttributes]::ReparsePoint){throw 'Refusing a reparse-point installation package.'}
  }
@@ -50,7 +88,7 @@ try {
   if([IO.Path]::IsPathRooted($name) -or $name.Contains(':') -or @($name.Replace('\','/').Split('/') | Where-Object {$_ -in @('','..','.')}).Count){throw 'Unsafe package manifest path.'}
   if($entry.Value -notmatch '^[0-9a-fA-F]{64}$'){throw 'Invalid package checksum.'}
   $source=Join-Path $package $name
-  if((Get-FileHash -LiteralPath $source -Algorithm SHA256).Hash -ne $entry.Value){throw "Package checksum mismatch: $name"}
+  if((Get-Sha256 $source) -ne $entry.Value){throw "Package checksum mismatch: $name"}
   $manifest[$name]=$entry.Value
  }
  $actual=@(Get-ChildItem -LiteralPath $package -Recurse -File | Where-Object Name -ne 'FILES.json')
@@ -59,15 +97,18 @@ try {
  New-Item -ItemType Directory -Path $prepared | Out-Null
  foreach($item in Get-ChildItem -LiteralPath $package -Force){Copy-Item -LiteralPath $item.FullName -Destination $prepared -Recurse -Force}
  Copy-Item -LiteralPath $UninstallerSource -Destination (Join-Path $prepared 'Uninstall.exe')
- $manifest['Uninstall.exe']=(Get-FileHash -LiteralPath (Join-Path $prepared 'Uninstall.exe') -Algorithm SHA256).Hash.ToLowerInvariant()
+ $manifest['Uninstall.exe']=(Get-Sha256 (Join-Path $prepared 'Uninstall.exe'))
  $state=[ordered]@{application='org.kohdalab.iv';version=$ApplicationVersion;installation=$installed;desktop=(Join-Path $desktop 'KohdaLab IV.lnk');menu=$menu}
  $state | ConvertTo-Json | Set-Content -LiteralPath (Join-Path $prepared 'installer-state.json') -Encoding UTF8
- $manifest['installer-state.json']=(Get-FileHash -LiteralPath (Join-Path $prepared 'installer-state.json') -Algorithm SHA256).Hash.ToLowerInvariant()
+ $manifest['installer-state.json']=(Get-Sha256 (Join-Path $prepared 'installer-state.json'))
  $manifest | ConvertTo-Json -Depth 4 | Set-Content -LiteralPath (Join-Path $prepared 'FILES.json') -Encoding UTF8
+ # GetNewClosure() binds the scriptblock to a new dynamic module that cannot
+ # see this script's functions, so capture Get-Sha256 as a variable first.
+ $getSha256=${function:Get-Sha256}
  $register = {
   param($InstallPath)
  # Verify activation before creating Windows application registration.
- if((Get-FileHash -LiteralPath (Join-Path $installed 'Uninstall.exe')).Hash -ne $manifest['Uninstall.exe']){throw 'Installed uninstaller verification failed.'}
+ if((& $getSha256 (Join-Path $installed 'Uninstall.exe')) -ne $manifest['Uninstall.exe']){throw 'Installed uninstaller verification failed.'}
  New-Item -ItemType Directory -Path $menu -Force | Out-Null
  $shell=New-Object -ComObject WScript.Shell
  foreach($path in @((Join-Path $menu 'KohdaLab IV.lnk'),(Join-Path $desktop 'KohdaLab IV.lnk'))){
@@ -99,6 +140,7 @@ try {
  Write-Output "Installed KohdaLab IV $ApplicationVersion; registered Windows uninstall and shortcuts."
 } catch {
  $failure=$_
+ Write-InstallerFailure $failure
  if($activationStarted){
   try {
    if(Test-Path -LiteralPath $key){Remove-Item -LiteralPath $key -Recurse}
@@ -112,6 +154,6 @@ try {
  }
  throw $failure
 } finally {
- if(Test-Path -LiteralPath $prepared){Remove-Item -LiteralPath $prepared -Recurse -Force -ErrorAction SilentlyContinue}
- Stop-Transcript | Out-Null
+ if($prepared -and (Test-Path -LiteralPath $prepared)){Remove-Item -LiteralPath $prepared -Recurse -Force -ErrorAction SilentlyContinue}
+ if($transcribing){Stop-Transcript | Out-Null}
 }

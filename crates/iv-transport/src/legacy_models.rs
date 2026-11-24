@@ -162,8 +162,12 @@ done
     // The ADC-command USB route keeps Auto as a no-op and has no validated
     // range control/readback; nothing range-related reaches the instrument.
     assert!(!pair.scpi_range_route(Role::Meter));
-    pair.write(Role::Meter, "SENS:VOLT:DC:RANG:AUTO ON").unwrap();
-    assert!(pair.write(Role::Meter, "SENS:VOLT:DC:RANG 1.000000000000e-1").is_err());
+    pair.write(Role::Meter, "SENS:VOLT:DC:RANG:AUTO ON")
+        .unwrap();
+    assert!(
+        pair.write(Role::Meter, "SENS:VOLT:DC:RANG 1.000000000000e-1")
+            .is_err()
+    );
     assert!(pair.query(Role::Meter, "SENS:VOLT:DC:RANG?").is_err());
     assert!(pair.query(Role::Meter, "SENS:VOLT:DC:RANG:AUTO?").is_err());
     pair.disconnect(Role::Meter).unwrap();

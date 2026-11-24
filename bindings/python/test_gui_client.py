@@ -315,6 +315,19 @@ class StopPolicyTests(unittest.TestCase):
             self.assertEqual(stop.call_count, int(enabled))
             self.assertEqual(off.call_count, int(enabled))
 
+    def test_wait_outputs_off_checks_independent_sources(self):
+        from kohdalab_iv_native import GuiIV, GuiTimeoutError
+        from unittest.mock import PropertyMock
+        client = self.client()
+        state = {"inventory_devices": [{"source": True, "assigned": False, "output": "On"}]}
+        with patch.object(GuiIV, "snapshot", new_callable=PropertyMock, return_value=state):
+            for output in ("On", "Unknown"):
+                state["inventory_devices"][0]["output"] = output
+                with self.assertRaises(GuiTimeoutError):
+                    client._wait_outputs_off(0)
+            state["inventory_devices"][0]["output"] = "Off"
+            self.assertEqual(client._wait_outputs_off(0), state)
+
     def test_stop_and_wait_verifies_output_off_and_does_not_repeat_terminal_stop(self):
         from kohdalab_iv_native import GuiRunStopped, GuiTimeoutError
         client = self.client()

@@ -39,6 +39,17 @@ where stop is advertised. `release()` waits for the application to confirm relea
 a failure is reported, not silently treated as success. Complete or explicitly
 stop active work before closing when that application's policy requires it.
 
+In IV, `stop_and_wait(job_id)` verifies the sweep outputs recorded in that
+job's terminal receipt. The argument-free form also checks the gate and
+independent DC sources. A held output can keep that confirmation pending
+after the sweep stops. Use the explicit Output OFF operation when you intend
+to turn off all sources.
+
+IVの `stop_and_wait(job_id)` は、そのジョブの終了時に記録された掃引出力の
+OFFを確認します。引数なしの呼び出しはゲートと独立DC出力も確認するため、
+掃引停止後に保持中の出力があると確認待ちになります。全出力を止める場合は
+Output OFFを明示的に実行してください。
+
 Mutations use caller UUIDs and are never automatically retried on a transport
 failure. `ControlError.request_id` and `outcome_unknown` preserve ambiguity for
 manual status/result inspection. Job wait timeout does not secretly stop or replay

@@ -4,11 +4,14 @@
 
 use crate::state::{OutputState, Phase};
 
+mod cards;
 mod control;
 mod dc;
 mod digits;
 mod formatting;
 mod history;
+mod reference_analysis;
+mod reference_view;
 mod settings;
 mod widgets;
 
@@ -17,7 +20,7 @@ use history::{LiveSample, append_live_sample, append_plot_point, extend_plot_ext
 use settings::{Settings, save_settings, settings_path};
 use widgets::{
     BG, BLUE, BORDER, BUTTON, INPUT, MUTED, ORANGE, PURPLE, RED, TEAL, button, compact_field,
-    form_label, number, path_summary, quantity, resource_summary, section, state_badge, style,
+    form_label, number, path_summary, quantity, resource_summary, section, style,
 };
 
 use crate::client::Client;
@@ -244,12 +247,10 @@ fn inventory_entry_name(role: &str, index: usize, entry: &settings::InstrumentEn
     format!("{role} {} · {summary}", index + 1)
 }
 
-struct AddDevice {
-    role: InstrumentRole,
-    label: String,
-}
+use cards::{AddDevice, DeleteDevice};
 
 pub struct IvApp {
+    plot_context: egui::Context,
     client: Result<Client, String>,
     control: Option<crate::gui_control::GuiControl>,
     settings: Settings,
@@ -268,6 +269,12 @@ pub struct IvApp {
     reference_samples: Vec<(f64, f64, String, [Option<f64>; 2])>,
     reference_plot_series: [Vec<PlotPoint>; 3],
     reference_plot_extent: [f64; 2],
+    separate: reference_view::SeparateHistory,
+    gate_summaries: Vec<reference_analysis::GateSummary>,
+    gate_summary_revision: u64,
+    gate_metric: reference_view::GateMetric,
+    reference_replay: bool,
+    separate_smoke_first: Option<[usize; 2]>,
     live_samples: VecDeque<LiveSample>,
     reference_live_samples: VecDeque<[f64; 2]>,
     idle_samples: VecDeque<[f64; 2]>,
@@ -285,6 +292,13 @@ pub struct IvApp {
     left_visible: bool,
     table_visible: bool,
     add_device: Option<AddDevice>,
+    delete_device: Option<DeleteDevice>,
+    /// Newly added card to bring into view once it has been laid out.
+    scroll_to_card: Option<u64>,
+    /// Card and control rectangles from the latest frame (smoke geometry).
+    card_geometry: std::collections::BTreeMap<String, egui::Rect>,
+    /// Smoke only: keep Device and Settings open on every card.
+    open_all_cards: bool,
     timing_open: bool,
     timing_before: Option<(Settings, String)>,
     config_path: String,
@@ -332,9 +346,15 @@ impl IvApp {
         hardware: Option<(String, String)>,
         startup_profile: Option<PathBuf>,
     ) -> Result<Self, String> {
-        if std::env::args()
-            .any(|arg| matches!(arg.as_str(), "--gui-dc-smoke" | "--gui-inventory-smoke"))
-            && (hardware.is_some() || startup_profile.is_some())
+        if std::env::args().any(|arg| {
+            matches!(
+                arg.as_str(),
+                "--gui-dc-smoke"
+                    | "--gui-inventory-smoke"
+                    | "--gui-current-source-smoke"
+                    | "--gui-separate-smoke"
+            )
+        }) && (hardware.is_some() || startup_profile.is_some())
         {
             return Err("GUI output-control smoke requires its isolated simulation profile; hardware/config overrides are not allowed.".into());
         }
@@ -372,6 +392,11 @@ impl IvApp {
                 settings.config.balanced_source = Some(iv_core::BalancedSourceConfig::default());
                 settings.config.source_compliance = Some(0.001);
                 settings.source2_model = "SIMULATED_SOURCE".into();
+                // Dual V-I needs a second device; fresh profiles have one.
+                let id = settings.add_source("");
+                settings.source2_id = id;
+                settings.sources.last_mut().expect("Source 2 added").model =
+                    "SIMULATED_SOURCE".into();
             }
             if std::env::args().any(|arg| arg == "--gui-limit-smoke") {
                 settings.config.compliance = 0.5e-6;
@@ -388,6 +413,21 @@ impl IvApp {
                 settings.config = crate::open_circuit_config();
                 crate::validate_open_circuit(&settings.config)?;
             }
+        }
+        if smoke
+            && std::env::args()
+                .any(|arg| arg == "--gui-current-source-smoke" || arg == "--gui-separate-smoke")
+        {
+            settings.config = measurement_definition(Mode::Vi).default_config();
+            settings.config.start = -0.0005;
+            settings.config.stop = 0.0005;
+            settings.config.step = 0.0001;
+            settings.config.source_limit = 0.001;
+            settings.config.compliance = 3.0;
+            settings.config.ramp_step = 0.0001;
+            settings.config.start_settle_s = 0.03;
+            settings.config.settle_s = 0.02;
+            settings.config.pattern = Pattern::Linear;
         }
         settings.migrate_inventory();
         if settings.simulation {
@@ -412,12 +452,17 @@ impl IvApp {
                     0.0
                 }
             });
+        // `--footer-cards`: the default Source and Meter plus one added Source
+        // and Meter, all with Device and Settings open.
+        let open_all_cards =
+            footer_smoke_offset.is_some() && std::env::args().any(|arg| arg == "--footer-cards");
         if footer_smoke_offset.is_some() {
             settings.two_card_columns = std::env::args().any(|arg| arg == "--footer-two-columns");
-            for index in 3..=7 {
+            let added = if open_all_cards { 2..=2 } else { 2..=7 };
+            for index in added.clone() {
                 settings.add_source(&format!("Demo source {index}"));
             }
-            for index in 2..=7 {
+            for index in added {
                 settings.add_meter(&format!("Demo meter {index}"));
             }
             for source in &mut settings.sources {
@@ -430,17 +475,17 @@ impl IvApp {
         let column_smoke = smoke && std::env::args().any(|arg| arg == "--gui-two-column-smoke");
         if column_smoke {
             settings.two_card_columns = true;
-            settings.sources[1].label = "Bias 2".into();
-            settings.sources[1].model = "SIMULATED_SOURCE".into();
-            let id = settings.add_source("Gate");
-            settings
-                .sources
-                .iter_mut()
-                .find(|entry| entry.id == id)
-                .unwrap()
-                .model = "SIMULATED_SOURCE".into();
+            for label in ["Bias 2", "Gate"] {
+                settings.add_source(label);
+                settings.sources.last_mut().expect("source added").model =
+                    "SIMULATED_SOURCE".into();
+            }
         }
-        if smoke && (column_smoke || std::env::args().any(|arg| arg == "--gui-reference-smoke")) {
+        if smoke
+            && (column_smoke
+                || std::env::args()
+                    .any(|arg| arg == "--gui-reference-smoke" || arg == "--gui-separate-smoke"))
+        {
             // Give the source-quantity observer its own simulated physical
             // device.  This exercises the optional DMM data path rather than
             // merely drawing an assigned-but-empty Meter axis.
@@ -451,13 +496,31 @@ impl IvApp {
             settings.reference_meter_id = Some(reference.id);
             settings.bind_active_entries();
         }
+        if smoke && std::env::args().any(|arg| arg == "--gui-separate-smoke") {
+            settings.reference_display = settings::ReferenceDisplay::Separate;
+            settings.reference_purpose = settings::ReferencePurpose::Gate;
+            settings
+                .meters
+                .iter_mut()
+                .find(|m| m.id == settings.meter_id)
+                .expect("primary meter")
+                .label = "Channel".into();
+            settings
+                .meters
+                .iter_mut()
+                .find(|m| Some(m.id) == settings.reference_meter_id)
+                .expect("reference meter")
+                .label = "Gate".into();
+        }
         let dc_smoke = smoke && std::env::args().any(|arg| arg == "--gui-dc-smoke");
         if dc_smoke {
-            settings.dc_gate_id = settings.sources[1].id;
+            // The fixed bias is an explicitly added second source.
+            settings.dc_gate_id = settings.add_source("Gate");
             settings.sources[0].dc.value = 0.001;
-            settings.sources[1].model = "SIMULATED_SOURCE".into();
-            settings.sources[1].resource = "SIM_GATE".into();
-            settings.sources[1].dc.value = 0.01;
+            let gate = settings.sources.last_mut().expect("gate source added");
+            gate.model = "SIMULATED_SOURCE".into();
+            gate.resource = "SIM_GATE".into();
+            gate.dc.value = 0.01;
         }
         if smoke && std::env::args().any(|arg| arg == "--gui-inventory-smoke") {
             settings.config.start_settle_s = 3.0;
@@ -509,7 +572,8 @@ impl IvApp {
         } else {
             Default::default()
         };
-        Ok(Self {
+        let mut app = Self {
+            plot_context: cc.egui_ctx.clone(),
             client,
             control,
             settings,
@@ -524,6 +588,12 @@ impl IvApp {
             reference_samples: vec![],
             reference_plot_series: std::array::from_fn(|_| Vec::new()),
             reference_plot_extent: [0.0; 2],
+            separate: Default::default(),
+            gate_summaries: Vec::new(),
+            gate_summary_revision: 0,
+            gate_metric: reference_view::GateMetric::Sweep,
+            reference_replay: false,
+            separate_smoke_first: None,
             live_samples: VecDeque::new(),
             reference_live_samples: VecDeque::new(),
             idle_samples: VecDeque::new(),
@@ -541,6 +611,10 @@ impl IvApp {
             left_visible: true,
             table_visible: true,
             add_device: None,
+            delete_device: None,
+            scroll_to_card: None,
+            card_geometry: Default::default(),
+            open_all_cards,
             timing_open: false,
             timing_before: None,
             config_path,
@@ -576,10 +650,23 @@ impl IvApp {
             pending_dc: None,
             pending_inventory_dc: Default::default(),
             dc_smoke_stage: 0,
-        })
+        };
+        if let Some(path) = crate::argument(
+            &std::env::args().collect::<Vec<_>>(),
+            "--gui-reference-replay",
+        ) {
+            if !smoke || !std::env::args().any(|arg| arg == "--gui-separate-smoke") {
+                return Err("Read-only reference replay requires --gui-separate-smoke".into());
+            }
+            app.load_reference_replay(std::path::Path::new(&path))?;
+        }
+        Ok(app)
     }
 
     fn send(&mut self, command: Command) -> bool {
+        if self.reference_replay {
+            return false;
+        }
         let result = self
             .client
             .as_ref()
@@ -739,6 +826,8 @@ impl IvApp {
                 self.plot_series.iter_mut().for_each(Vec::clear);
                 self.plot_extent = [0.0; 2];
                 self.reference_samples.clear();
+                self.separate = Default::default();
+                self.gate_metric = reference_view::GateMetric::Sweep;
                 self.reference_plot_series.iter_mut().for_each(Vec::clear);
                 self.reference_plot_extent = [0.0; 2];
                 self.notice.clear();
@@ -754,10 +843,13 @@ impl IvApp {
                     self.plot_series.iter_mut().for_each(Vec::clear);
                     self.plot_extent = [0.0; 2];
                     self.reference_samples.clear();
+                    self.separate = Default::default();
+                    self.gate_metric = reference_view::GateMetric::Sweep;
                     self.reference_plot_series.iter_mut().for_each(Vec::clear);
                     self.reference_plot_extent = [0.0; 2];
                     self.run_id = record_run;
                 }
+                self.separate.push(&point);
                 let source = point.source_readback.unwrap_or(point.source_set);
                 let xy = (source, point.meter_value);
                 extend_plot_extent(&mut self.plot_extent, xy.0, xy.1);
@@ -1330,303 +1422,6 @@ impl IvApp {
         });
     }
 
-    fn live_monitor(&self, ui: &mut egui::Ui, source: bool) {
-        let idle_reading = self
-            .state
-            .idle_reading
-            .as_ref()
-            .filter(|reading| reading.source == source);
-        let mode = if source {
-            self.card_control_mode()
-        } else {
-            self.meter_live_mode()
-        };
-        let idle_reading = idle_reading.filter(|reading| reading.mode == mode);
-        let paired_reading = self
-            .live_reading
-            .as_ref()
-            .filter(|reading| reading.mode == mode);
-        let source_channel = if mode == Mode::Iv { 1 } else { 0 };
-        let channel = if source {
-            source_channel
-        } else {
-            1 - source_channel
-        };
-        let (unit, color) = if channel == 0 {
-            ("A", TEAL)
-        } else {
-            ("V", ORANGE)
-        };
-        let (connected, simulation) = if source {
-            (self.state.source_connected, self.state.source_simulation)
-        } else {
-            (self.state.meter_connected, self.state.meter_simulation)
-        };
-        let running = connected && self.state.error.is_empty();
-        let last_sample = if idle_reading.is_some() {
-            self.idle_samples.back().map(|sample| sample[0])
-        } else {
-            paired_reading.and_then(|_| self.live_samples.back().map(|sample| sample.time))
-        };
-        let stale = last_sample.is_some_and(|time| self.boot.elapsed().as_secs_f64() - time > 3.0);
-        ui.add_space(4.0);
-        ui.separator();
-        let alert = self.state.protection_alert.as_ref().filter(|alert| {
-            protection_role(alert) == source && (!source || alert.source_index != Some(2))
-        });
-        ui.horizontal_wrapped(|ui| {
-            ui.label(
-                RichText::new(if channel == 0 { "I" } else { "V" })
-                    .color(color)
-                    .strong(),
-            );
-            ui.label(
-                RichText::new(if simulation {
-                    "SIM"
-                } else if source {
-                    "SOURCE LEVEL"
-                } else {
-                    "MEASURED"
-                })
-                .size(9.0)
-                .color(MUTED),
-            )
-            .on_hover_text(if source {
-                "Programmed source level; not an independent output measurement."
-            } else {
-                "Measured by the meter."
-            });
-            ui.label(
-                RichText::new(if source && self.state.source_dc.is_some() {
-                    "DC SET"
-                } else if running && stale {
-                    "STALE"
-                } else if last_sample.is_none() {
-                    "WAITING"
-                } else if running {
-                    "LIVE"
-                } else {
-                    "HELD"
-                })
-                .size(9.0)
-                .color(if running { BLUE } else { MUTED }),
-            );
-            // Reserve the same small slot in both states: no extra row,
-            // and neither plot height nor the output badge moves on a trip.
-            let bright = (self.boot.elapsed().as_millis() / 500).is_multiple_of(2);
-            let limit_label = if alert.is_some_and(|alert| alert.indicator.contains("EMR")) {
-                "FAULT"
-            } else if alert.is_some() {
-                "LIMIT"
-            } else {
-                ""
-            };
-            let (badge_rect, response) =
-                ui.allocate_exact_size(egui::vec2(34.0, 14.0), egui::Sense::hover());
-            if alert.is_some() {
-                ui.painter().rect_filled(
-                    badge_rect,
-                    3.0,
-                    if bright {
-                        Color32::from_rgb(220, 49, 66)
-                    } else {
-                        Color32::from_rgb(142, 39, 48)
-                    },
-                );
-                ui.painter().text(
-                    badge_rect.center(),
-                    egui::Align2::CENTER_CENTER,
-                    limit_label,
-                    egui::FontId::proportional(9.0),
-                    Color32::WHITE,
-                );
-            }
-            if let Some(alert) = alert {
-                ui.ctx().request_repaint_after(Duration::from_millis(100));
-                let mut detail = format!(
-                    "{}\nLimit: {}",
-                    protection_summary(alert).0,
-                    fmt_quantity(alert.limit, &alert.unit)
-                );
-                if let Some(value) = alert.observed {
-                    detail.push_str(&format!("\nMeasured: {}", fmt_quantity(value, &alert.unit)));
-                }
-                if !alert.indicator.is_empty() {
-                    detail.push_str(&format!("\nInstrument: {}", alert.indicator));
-                }
-                response.on_hover_text(detail);
-            }
-            if source {
-                state_badge(
-                    ui,
-                    &format!("Output {}", self.state.output.to_lowercase()),
-                    if self.state.output == OutputState::Off {
-                        MUTED
-                    } else {
-                        ORANGE
-                    },
-                );
-            }
-        });
-        let newest = if connected {
-            self.boot.elapsed().as_secs_f64()
-        } else {
-            last_sample.unwrap_or(0.0)
-        };
-        let window = newest.clamp(2.0, 30.0);
-        let source1_factor = if self.state.balanced_active {
-            self.settings
-                .config
-                .balanced_source
-                .as_ref()
-                .map_or(0.5, |dual| dual.source1_fraction())
-        } else {
-            1.0
-        };
-        let paired_value = |sample: &LiveSample| {
-            if channel == 0 {
-                sample.current
-            } else {
-                sample.voltage * if source { source1_factor } else { 1.0 }
-            }
-        };
-        let extent = if idle_reading.is_some() {
-            self.idle_samples
-                .iter()
-                .fold(0.0_f64, |max, sample| max.max(sample[1].abs()))
-        } else if paired_reading.is_some() {
-            self.live_samples
-                .iter()
-                .fold(0.0_f64, |max, sample| max.max(paired_value(sample).abs()))
-        } else {
-            0.0
-        };
-        let scale = AxisScale::for_magnitude(extent);
-        let dc_text = if source {
-            self.state.source_dc.as_ref().map(|dc| {
-                display_reading_at_scale(
-                    dc.value,
-                    self.state
-                        .source_dc_limits
-                        .as_ref()
-                        .map(|limits| limits.resolution),
-                    unit,
-                    AxisScale::for_magnitude(dc.value.abs()),
-                )
-            })
-        } else {
-            None
-        };
-        let text = dc_text.unwrap_or_else(|| {
-            if let Some(reading) = idle_reading {
-                return display_reading_at_scale(reading.value, reading.resolution, unit, scale);
-            }
-            paired_reading
-                .map(|record| {
-                    let source =
-                        record.source_readback.unwrap_or(record.source_set) * source1_factor;
-                    let source_channel = if record.mode == Mode::Iv { 1 } else { 0 };
-                    let (value, resolution) = if channel == source_channel {
-                        (
-                            source,
-                            record
-                                .source_resolution
-                                .map(|resolution| resolution * source1_factor),
-                        )
-                    } else {
-                        (record.meter_value, record.meter_resolution)
-                    };
-                    display_reading_at_scale(value, resolution, unit, scale)
-                })
-                .unwrap_or_else(|| format!("— {unit}"))
-        });
-        let unknown = text.ends_with(" (resolution unknown)");
-        ui.label(
-            RichText::new(text.trim_end_matches(" (resolution unknown)"))
-                .monospace()
-                .size(22.0)
-                .color(color),
-        );
-        if unknown {
-            ui.label(RichText::new("Resolution unknown").size(9.0).color(MUTED));
-        }
-        let values: Vec<[f64; 2]> = if idle_reading.is_some() {
-            self.idle_samples
-                .iter()
-                .filter(|sample| newest - sample[0] <= window)
-                .map(|sample| [sample[0] - newest, sample[1]])
-                .collect()
-        } else if paired_reading.is_some() {
-            self.live_samples
-                .iter()
-                .filter(|sample| newest - sample.time <= window)
-                .map(|sample| [sample.time - newest, paired_value(sample)])
-                .collect()
-        } else {
-            Vec::new()
-        };
-        let current = values.last().map_or(0.0, |p| p[1]);
-        let fraction = if extent > 0.0 {
-            (current / extent).clamp(-1.0, 1.0) as f32
-        } else {
-            0.0
-        };
-        let (rect, _) =
-            ui.allocate_exact_size(egui::vec2(ui.available_width(), 6.0), egui::Sense::hover());
-        let painter = ui.painter();
-        painter.rect_filled(rect, 2.0, BORDER);
-        let center = rect.center().x;
-        let end = center + fraction * rect.width() * 0.5;
-        painter.rect_filled(
-            egui::Rect::from_min_max(
-                egui::pos2(center.min(end), rect.top()),
-                egui::pos2(center.max(end), rect.bottom()),
-            ),
-            0.0,
-            color,
-        );
-        painter.line_segment(
-            [
-                egui::pos2(center, rect.top()),
-                egui::pos2(center, rect.bottom()),
-            ],
-            Stroke::new(1.0_f32, Color32::WHITE),
-        );
-        Plot::new(("live_channel", source, channel))
-            .height(55.0)
-            .show_background(false)
-            .show_axes([true, true])
-            .show_grid([true, true])
-            .allow_drag(false)
-            .allow_zoom(false)
-            .allow_scroll(false)
-            .include_x(-window)
-            .include_x(0.0)
-            .include_y(0.0)
-            .y_axis_formatter(move |mark, _| scale.tick(mark.value, mark.step_size))
-            .label_formatter(|_, _| String::new())
-            .show(ui, |plot_ui| {
-                plot_ui.line(
-                    Line::new("trend", values)
-                        .color(color)
-                        .width(1.5_f32)
-                        .fill(0.0_f32)
-                        .fill_alpha(0.75_f32),
-                );
-            });
-        ui.label(
-            RichText::new(format!(
-                "Time · s ago · {}{} · updated {:.1} s ago",
-                scale.prefix,
-                unit,
-                last_sample.map_or(0.0, |time| (self.boot.elapsed().as_secs_f64() - time)
-                    .max(0.0))
-            ))
-            .size(9.0)
-            .color(MUTED),
-        );
-    }
-
     fn sync_inventory(&mut self, next: &Snapshot) {
         if let Some((job, _)) = &self.pending_bindings
             && let Some(completion) = next
@@ -1670,6 +1465,8 @@ impl IvApp {
                 {
                     self.samples.clear();
                     self.reference_samples.clear();
+                    self.separate = Default::default();
+                    self.gate_metric = reference_view::GateMetric::Sweep;
                     self.rebuild_plot_series();
                     self.rebuild_reference_plot_series();
                     self.custom_text.clear();
@@ -1745,77 +1542,21 @@ impl IvApp {
             .any(|entry| entry.id == id)
     }
 
-    fn inventory_connection_controls(&mut self, ui: &mut egui::Ui, source: bool, id: u64) {
-        let entries = if source {
-            &self.settings.sources
-        } else {
-            &self.settings.meters
-        };
-        let Some(entry) = entries.iter().find(|entry| entry.id == id) else {
-            return;
-        };
-        let connected = self.inventory_connected(id);
-        let command = if connected {
-            Some(Command::DisconnectInventory { id })
-        } else {
-            inventory_connect_command(source, entry, self.settings.config.mode)
-        };
-        if button(
-            ui,
-            if connected { "Disconnect" } else { "Connect" },
-            92.0,
-            self.inventory_editable() && command.is_some(),
-        )
-        .clicked()
-            && let Some(command) = command
-        {
-            self.send(command);
-        }
-    }
-
     fn device_cards(&mut self, ui: &mut egui::Ui, two_columns: bool) {
-        let mut cards = vec![(true, self.settings.source1_id)];
-        let dual = self.settings.config.balanced_source.is_some();
-        if dual {
-            cards.push((true, self.settings.source2_id));
-        }
-        cards.push((false, self.settings.meter_id));
-        if let Some(id) = self.settings.reference_meter_id {
-            cards.push((false, id));
-        }
-        for (source, entries) in [
-            (true, &self.settings.sources),
-            (false, &self.settings.meters),
-        ] {
-            for entry in entries {
-                if !cards.contains(&(source, entry.id)) {
-                    cards.push((source, entry.id));
-                }
-            }
-        }
-        cards.sort_by_key(|&(_, id)| {
-            self.settings
-                .card_order
-                .iter()
-                .position(|&saved| saved == id)
-                .unwrap_or(usize::MAX)
-        });
-
+        let cards = self.settings.ordered_cards();
+        self.card_geometry.clear();
         let mut drop = None;
         let mut render_card = |ui: &mut egui::Ui, (source, id): (bool, u64)| {
             let card = ui
-                .push_id(("device_card", id), |ui| match (source, id) {
-                    (true, id) if id == self.settings.source1_id => self.instrument(ui, true),
-                    (true, id) if dual && id == self.settings.source2_id => {
-                        self.secondary_source(ui)
-                    }
-                    (false, id) if id == self.settings.meter_id => self.instrument(ui, false),
-                    (false, id) if Some(id) == self.settings.reference_meter_id => {
-                        self.reference_meter_instrument(ui)
-                    }
-                    _ => self.inactive_instrument(ui, source, id),
+                .push_id(("device_card", id), |ui| {
+                    self.unified_device_card(ui, source, id)
                 })
                 .response;
+            self.card_geometry.insert(format!("{id}.card"), card.rect);
+            if self.scroll_to_card == Some(id) {
+                card.scroll_to_me(Some(egui::Align::Max));
+                self.scroll_to_card = None;
+            }
             if self.inventory_editable()
                 && let Some(dragged) = card.dnd_hover_payload::<u64>()
                 && *dragged != id
@@ -1824,17 +1565,20 @@ impl IvApp {
             {
                 let after = pointer.y >= card.rect.center().y;
                 let y = if after {
-                    card.rect.bottom()
+                    card.rect.bottom() + 4.0
                 } else {
-                    card.rect.top()
+                    card.rect.top() - 4.0
                 };
-                ui.painter()
-                    .hline(card.rect.x_range(), y, egui::Stroke::new(2.0_f32, BLUE));
+                ui.painter().hline(
+                    card.rect.x_range(),
+                    y,
+                    egui::Stroke::new(2.0_f32, widgets::DROP_LINE),
+                );
                 if card.dnd_release_payload::<u64>().is_some() {
                     drop = Some((*dragged, id, after));
                 }
             }
-            ui.add_space(3.0);
+            ui.add_space(8.0);
         };
         if two_columns {
             let column_area_width = ui.available_width();
@@ -1862,143 +1606,59 @@ impl IvApp {
                 render_card(ui, card);
             }
         }
-        if self.inventory_editable()
-            && egui::DragAndDrop::has_payload_of_type::<u64>(ui.ctx())
+        if let Some(&dragged) = egui::DragAndDrop::payload::<u64>(ui.ctx()).as_deref()
             && let Some(pointer) = ui.ctx().pointer_interact_pos()
         {
-            let clip = ui.clip_rect();
-            if clip.contains(pointer) {
-                let delta = if pointer.y < clip.top() + 24.0 {
-                    8.0
-                } else if pointer.y > clip.bottom() - 24.0 {
-                    -8.0
-                } else {
-                    0.0
-                };
-                if delta != 0.0 {
-                    ui.scroll_with_delta(egui::vec2(0.0, delta));
-                    ui.ctx().request_repaint();
-                }
-            }
-        }
-        if let Some((dragged, target, after)) = drop {
-            let mut order: Vec<_> = cards.iter().map(|&(_, id)| id).collect();
-            order.retain(|&id| id != dragged);
-            if let Some(index) = order.iter().position(|&id| id == target) {
-                order.insert(index + usize::from(after), dragged);
-                self.settings.card_order = order;
-                if let Some((source, _)) = cards.iter().find(|&&(_, id)| id == dragged) {
-                    self.device_change_notice =
-                        format!("Moved {}.", self.inventory_name(*source, dragged));
-                    self.report(self.device_change_notice.clone());
-                }
-            }
-        }
-    }
-
-    fn inventory_live_monitor(&self, ui: &mut egui::Ui, id: u64) {
-        let Some(device) = self
-            .state
-            .inventory_devices
-            .iter()
-            .find(|entry| entry.id == id)
-        else {
-            self.empty_inventory_plot(ui, id);
-            return;
-        };
-        if !device.error.is_empty() {
-            ui.colored_label(ORANGE, &device.error);
-        }
-        let output_badge = |ui: &mut egui::Ui| {
-            if device.source {
-                state_badge(
-                    ui,
-                    &format!("Output {}", device.output.to_lowercase()),
-                    if device.output == OutputState::Off {
-                        MUTED
+            if self.inventory_editable() {
+                let clip = ui.clip_rect();
+                if clip.contains(pointer) {
+                    let delta = if pointer.y < clip.top() + 28.0 {
+                        10.0
+                    } else if pointer.y > clip.bottom() - 28.0 {
+                        -10.0
                     } else {
-                        ORANGE
-                    },
-                );
+                        0.0
+                    };
+                    if delta != 0.0 {
+                        ui.scroll_with_delta(egui::vec2(0.0, delta));
+                        ui.ctx().request_repaint();
+                    }
+                }
             }
-        };
-        let Some(reading) = &device.reading else {
-            output_badge(ui);
-            self.empty_inventory_plot(ui, id);
-            return;
-        };
-        let unit = if reading.source == (reading.mode == Mode::Iv) {
-            "V"
-        } else {
-            "A"
-        };
-        let color = if unit == "V" { ORANGE } else { TEAL };
-        let now = self.boot.elapsed().as_secs_f64();
-        let samples = self.inventory_samples.get(&id);
-        let stale = samples
-            .and_then(|points| points.back())
-            .is_some_and(|point| now - point[0] > 3.0);
-        let scale = AxisScale::for_magnitude(
-            samples
-                .into_iter()
-                .flatten()
-                .fold(reading.value.abs(), |extent, point| {
-                    extent.max(point[1].abs())
-                }),
-        );
-        ui.separator();
-        ui.horizontal(|ui| {
-            ui.label(RichText::new(unit).color(color).strong());
-            ui.label(
-                RichText::new(if stale { "STALE" } else { "LIVE" })
-                    .size(9.0)
-                    .color(if stale { MUTED } else { BLUE }),
-            );
-            output_badge(ui);
-        });
-        let display = if reading.resolution.is_some() {
-            display_reading_at_scale(reading.value, reading.resolution, unit, scale)
-        } else {
-            fmt_quantity(reading.value, unit)
-        };
-        let value = ui.add(
-            egui::Label::new(RichText::new(display).monospace().size(20.0).color(color)).truncate(),
-        );
-        if reading.resolution.is_none() {
-            value.on_hover_text("Instrument resolution unavailable");
+            // TRKR drag preview: "Kind: name" beside the pointer.
+            if let Some(&(source, _)) = cards.iter().find(|&&(_, id)| id == dragged) {
+                let title = format!(
+                    "{}: {}",
+                    self.device_card_kind(source, dragged),
+                    self.card_display_name(source, dragged)
+                );
+                let painter = ui.ctx().layer_painter(egui::LayerId::new(
+                    egui::Order::Tooltip,
+                    egui::Id::new("device-drag-preview"),
+                ));
+                let galley =
+                    painter.layout_no_wrap(title, egui::FontId::proportional(12.0), widgets::TEXT);
+                let preview = egui::Rect::from_min_size(
+                    pointer + Vec2::new(14.0, 14.0),
+                    galley.size() + Vec2::new(16.0, 10.0),
+                );
+                painter.rect(
+                    preview,
+                    6.0,
+                    widgets::PANEL,
+                    Stroke::new(1.0_f32, BORDER),
+                    egui::StrokeKind::Inside,
+                );
+                painter.galley(preview.min + Vec2::new(8.0, 5.0), galley, widgets::TEXT);
+            }
         }
-        let points: Vec<[f64; 2]> = samples
-            .into_iter()
-            .flatten()
-            .filter(|point| now - point[0] <= 30.0)
-            .map(|point| [point[0] - now, point[1]])
-            .collect();
-        Plot::new(("inventory_live", id))
-            .height(55.0)
-            .show_background(false)
-            .allow_drag(false)
-            .allow_zoom(false)
-            .allow_scroll(false)
-            .include_x(-now.clamp(2.0, 30.0))
-            .include_x(0.0)
-            .include_y(0.0)
-            .y_axis_formatter(move |mark, _| scale.tick(mark.value, mark.step_size))
-            .show(ui, |plot| {
-                plot.line(Line::new("trend", points).color(color));
-            });
-    }
-
-    fn empty_inventory_plot(&self, ui: &mut egui::Ui, id: u64) {
-        Plot::new(("inventory_live", id))
-            .height(55.0)
-            .show_background(false)
-            .allow_drag(false)
-            .allow_zoom(false)
-            .allow_scroll(false)
-            .include_x(-2.0)
-            .include_x(0.0)
-            .include_y(0.0)
-            .show(ui, |_| {});
+        if let Some((dragged, target, after)) = drop
+            && self.settings.move_card(dragged, target, after)
+            && let Some(&(source, _)) = cards.iter().find(|&&(_, id)| id == dragged)
+        {
+            self.device_change_notice = format!("Moved {}.", self.inventory_name(source, dragged));
+            self.report(self.device_change_notice.clone());
+        }
     }
 
     fn connect_all(&mut self) {
@@ -2129,243 +1789,6 @@ impl IvApp {
         self.request_bindings(settings, connections);
     }
 
-    fn secondary_source(&mut self, ui: &mut egui::Ui) {
-        let index = self
-            .settings
-            .sources
-            .iter()
-            .position(|entry| entry.id == self.settings.source2_id)
-            .unwrap_or(1)
-            + 1;
-        let title = if index == 2 {
-            "Source 2".into()
-        } else {
-            format!("Source {index} · S2")
-        };
-        let id = self.settings.source2_id;
-        let assigned = self.state.source2_connected;
-        let connected = assigned || self.inventory_connected(id);
-        self.device_card(ui, true, id, &title, connected, |app, ui| {
-            let summary = device_summary(&app.settings.source2_model).to_owned();
-            let id = app.settings.source2_id;
-            let settings_key = ui.make_persistent_id(("instrument_settings", id));
-            if app.source_card_header(ui, id, &summary)
-                && app.instrument_connection_controls(ui, true, true, connected, settings_key)
-            {
-                ui.add_enabled_ui(app.inventory_editable(), |ui| {
-                    if let Some(dual) = &mut app.settings.config.balanced_source {
-                        ui.horizontal(|ui| {
-                            form_label(ui, "Compliance", 85.0);
-                            let width = ui.available_width();
-                            quantity(
-                                ui,
-                                "source2_compliance",
-                                &mut dual.source_compliance,
-                                &mut app.settings.source2_compliance_unit,
-                                "A",
-                                width,
-                                true,
-                            );
-                        });
-                    }
-                });
-                app.dc_compliance_control(ui, id);
-            }
-            if connected && !assigned {
-                app.inventory_live_monitor(ui, id);
-                app.dc_controls(ui, id);
-                return;
-            }
-            ui.add_space(4.0);
-            ui.separator();
-            ui.horizontal(|ui| {
-                ui.label(RichText::new("V").color(ORANGE).strong());
-                ui.label(
-                    RichText::new(if app.state.source2_simulation {
-                        "SIM"
-                    } else {
-                        "SOURCE LEVEL"
-                    })
-                    .size(9.0)
-                    .color(MUTED),
-                );
-                ui.label(
-                    RichText::new(if connected { "LIVE" } else { "WAITING" })
-                        .size(9.0)
-                        .color(if connected { BLUE } else { MUTED }),
-                );
-                let alert = app.state.protection_alert.as_ref().filter(|a| {
-                    a.kind == ProtectionKind::SourceCompliance && a.source_index == Some(2)
-                });
-                let (rect, response) =
-                    ui.allocate_exact_size(egui::vec2(34.0, 14.0), egui::Sense::hover());
-                if let Some(alert) = alert {
-                    let bright = (app.boot.elapsed().as_millis() / 500).is_multiple_of(2);
-                    ui.ctx().request_repaint_after(Duration::from_millis(100));
-                    ui.painter().rect_filled(
-                        rect,
-                        3.0,
-                        if bright {
-                            RED
-                        } else {
-                            Color32::from_rgb(142, 39, 48)
-                        },
-                    );
-                    ui.painter().text(
-                        rect.center(),
-                        egui::Align2::CENTER_CENTER,
-                        "LIMIT",
-                        egui::FontId::proportional(9.0),
-                        Color32::WHITE,
-                    );
-                    response.on_hover_text(format!(
-                        "Source 2 compliance: {}",
-                        fmt_quantity(alert.limit, &alert.unit)
-                    ));
-                }
-                state_badge(
-                    ui,
-                    &format!("Output {}", app.state.source2_output.to_lowercase()),
-                    MUTED,
-                );
-            });
-            let value = app.state.source2_level;
-            let resolution = app
-                .state
-                .source2_resolution
-                .or(if app.state.source2_simulation {
-                    Some(1e-9)
-                } else {
-                    None
-                });
-            let text = value
-                .map(|v| display_reading(v, resolution, "V"))
-                .unwrap_or_else(|| "— V".into());
-            let reading = ui.add(
-                egui::Label::new(
-                    RichText::new(text.trim_end_matches(" (resolution unknown)"))
-                        .monospace()
-                        .size(22.0)
-                        .color(ORANGE),
-                )
-                .truncate(),
-            );
-            if value.is_some() && resolution.is_none() {
-                reading.on_hover_text("Instrument resolution unavailable");
-            }
-            let now = app.boot.elapsed().as_secs_f64();
-            let scale = AxisScale::for_magnitude(
-                app.source2_samples
-                    .iter()
-                    .fold(0.0_f64, |m, s| m.max(s.voltage.abs())),
-            );
-            let points: Vec<[f64; 2]> = app
-                .source2_samples
-                .iter()
-                .filter(|s| now - s.time <= 30.0)
-                .map(|s| [s.time - now, s.voltage])
-                .collect();
-            Plot::new("source2_live")
-                .height(55.0)
-                .show_background(false)
-                .allow_drag(false)
-                .allow_zoom(false)
-                .allow_scroll(false)
-                .include_x(-now.clamp(2.0, 30.0))
-                .include_x(0.0)
-                .include_y(0.0)
-                .y_axis_formatter(move |mark, _| scale.tick(mark.value, mark.step_size))
-                .show(ui, |plot| {
-                    plot.line(Line::new("source2", points).color(ORANGE).fill(0.0_f32));
-                });
-            ui.label(
-                RichText::new("Time · s ago · programmed source level")
-                    .size(9.0)
-                    .color(MUTED),
-            );
-            app.dc_controls(ui, id);
-        });
-    }
-
-    /// Inventory cards keep their connections independently of the sweep roles.
-    fn inactive_instrument(&mut self, ui: &mut egui::Ui, source: bool, id: u64) {
-        if source {
-            self.dc_stored_source_card(ui, id);
-            return;
-        }
-        let Some(position) = self.settings.meters.iter().position(|entry| entry.id == id) else {
-            return;
-        };
-        let title = format!("Meter {}", position + 1);
-        let model = self.settings.meters[position].model.clone();
-        let connected = self.inventory_connected(id);
-        let idle = self.inventory_editable() && !connected;
-        self.device_card(ui, false, id, &title, connected, |app, ui| {
-            let key = ui.make_persistent_id(("inactive_device_disclosure", source, id));
-            let mut open = ui
-                .ctx()
-                .data_mut(|data| data.get_persisted::<bool>(key))
-                .unwrap_or(false);
-            let width = widgets::device_width(ui);
-            ui.horizontal(|ui| {
-                widgets::device_disclosure(ui, device_summary(&model), width, &mut open);
-            });
-            ui.ctx().data_mut(|data| data.insert_persisted(key, open));
-            if open {
-                app.use_inventory_entry_button(ui, false, id);
-                app.inventory_connection_controls(ui, false, id);
-                let Some(entry) = app.settings.meters.iter_mut().find(|entry| entry.id == id)
-                else {
-                    return;
-                };
-                ui.add_enabled_ui(idle, |ui| {
-                    egui::ComboBox::from_id_salt(("inactive_model", source, id))
-                        .width(ui.available_width())
-                        .selected_text(&entry.model)
-                        .show_ui(ui, |ui| {
-                            for descriptor in instrument_catalog(InstrumentRole::Meter) {
-                                ui.add_enabled_ui(model_supported(descriptor.id), |ui| {
-                                    ui.selectable_value(
-                                        &mut entry.model,
-                                        descriptor.id.to_owned(),
-                                        descriptor.id,
-                                    );
-                                });
-                            }
-                        });
-                    ui.horizontal(|ui| {
-                        let width = (ui.available_width() - 28.0).max(55.0);
-                        let summary = resource_summary(&entry.resource);
-                        compact_field(
-                            ui,
-                            ("inactive_resource", source, id),
-                            &mut entry.resource,
-                            width,
-                            summary,
-                        );
-                        egui::ComboBox::from_id_salt(("inactive_resources", source, id))
-                            .width(20.0)
-                            .selected_text("")
-                            .show_ui(ui, |ui| {
-                                ui.set_min_width(470.0);
-                                for item in &app.state.resources {
-                                    ui.selectable_value(
-                                        &mut entry.resource,
-                                        item.resource.clone(),
-                                        &item.label,
-                                    );
-                                }
-                            });
-                    });
-                });
-                if button(ui, "Remove", 62.0, idle && app.settings.meters.len() > 1).clicked() {
-                    app.settings.remove_meter(id);
-                }
-            }
-            app.inventory_live_monitor(ui, id);
-        });
-    }
-
     fn device_card_kind(&self, source: bool, id: u64) -> &'static str {
         let mode = self.settings.config.mode;
         let unassigned_mode = self
@@ -2409,588 +1832,6 @@ impl IvApp {
                 "Meter(I)"
             }
         }
-    }
-
-    fn device_card(
-        &mut self,
-        ui: &mut egui::Ui,
-        source: bool,
-        id: u64,
-        fallback: &str,
-        connected: bool,
-        body: impl FnOnce(&mut Self, &mut egui::Ui),
-    ) {
-        let editable = self.inventory_editable();
-        let kind = self.device_card_kind(source, id);
-        let mut label = if source {
-            &self.settings.sources
-        } else {
-            &self.settings.meters
-        }
-        .iter()
-        .find(|entry| entry.id == id)
-        .map_or_else(String::new, |entry| entry.label.clone());
-        let mut changed = false;
-        widgets::device_card(
-            ui,
-            id,
-            connected,
-            editable,
-            |ui| {
-                let response = widgets::device_name(ui, kind, id, fallback, &mut label, editable);
-                changed = response.changed() || response.lost_focus();
-                if response.lost_focus() {
-                    label = label.trim().to_owned();
-                }
-            },
-            |ui| body(self, ui),
-        );
-        if changed {
-            let entries = if source {
-                &mut self.settings.sources
-            } else {
-                &mut self.settings.meters
-            };
-            if let Some(entry) = entries.iter_mut().find(|entry| entry.id == id) {
-                entry.label = label;
-            }
-        }
-    }
-
-    fn instrument(&mut self, ui: &mut egui::Ui, source: bool) {
-        let index = if source {
-            self.settings
-                .sources
-                .iter()
-                .position(|entry| entry.id == self.settings.source1_id)
-        } else {
-            self.settings
-                .meters
-                .iter()
-                .position(|entry| entry.id == self.settings.meter_id)
-        }
-        .unwrap_or(0)
-            + 1;
-        let title = if source {
-            if self.settings.config.balanced_source.is_some() && index != 1 {
-                format!("Source {index} · S1")
-            } else {
-                format!("Source {index}")
-            }
-        } else {
-            if self.settings.config.mode == Mode::Iv {
-                format!("Meter (I) · {index}")
-            } else {
-                format!("Meter (V) · {index}")
-            }
-        };
-        let id = if source {
-            self.settings.source1_id
-        } else {
-            self.settings.meter_id
-        };
-        let assigned = if source {
-            self.state.source_connected
-        } else {
-            self.state.meter_connected
-        };
-        let connected = assigned || self.inventory_connected(id);
-        self.device_card(ui, source, id, &title, connected, |app, ui| {
-            let model = if source {
-                &app.settings.source_model
-            } else {
-                &app.settings.meter_model
-            };
-            let summary = if model.starts_with("SIMULATED_") {
-                "Simulation"
-            } else {
-                model
-                    .split_once('_')
-                    .map_or(model.as_str(), |(_, name)| name)
-            };
-            let resource = if source {
-                &app.settings.source
-            } else {
-                &app.settings.meter
-            };
-            let hint = format!(
-                "{model}\n{}",
-                if resource.is_empty() {
-                    "No resource selected"
-                } else {
-                    resource
-                }
-            );
-            if source {
-                let id = app.settings.source1_id;
-                let summary = summary.to_owned();
-                let settings_key = ui.make_persistent_id(("instrument_settings", id));
-                let device_open = app.source_card_header(ui, id, &summary);
-                let settings_open = device_open
-                    && app.instrument_connection_controls(ui, true, false, connected, settings_key);
-                if assigned || !connected {
-                    app.live_monitor(ui, true);
-                } else {
-                    app.inventory_live_monitor(ui, id);
-                }
-                app.source_protection_summary(ui);
-                if settings_open {
-                    app.source_compliance_control(ui);
-                    app.dc_compliance_control(ui, id);
-                    app.source_target_limit_control(ui);
-                }
-                app.dc_controls(ui, id);
-            } else {
-                let key = ui.make_persistent_id(("meter_device_disclosure", app.settings.meter_id));
-                let mut open = ui
-                    .ctx()
-                    .data_mut(|data| data.get_persisted::<bool>(key))
-                    .unwrap_or(false);
-                let width = widgets::device_width(ui);
-                ui.horizontal(|ui| {
-                    widgets::device_disclosure(ui, summary, width, &mut open).on_hover_text(&hint);
-                });
-                ui.ctx().data_mut(|data| data.insert_persisted(key, open));
-                let settings_key = ui.make_persistent_id(("instrument_settings", id));
-                let settings_open = open
-                    && app.instrument_connection_controls(
-                        ui,
-                        false,
-                        false,
-                        connected,
-                        settings_key,
-                    );
-                if assigned || !connected {
-                    app.live_monitor(ui, false);
-                } else {
-                    app.inventory_live_monitor(ui, id);
-                }
-                let (limit, unit) = if app.settings.config.mode == Mode::Iv {
-                    (app.settings.current_compliance, "A")
-                } else {
-                    (app.settings.voltage_compliance, "V")
-                };
-                ui.label(
-                    RichText::new(format!("Sweep limit {}", fmt_quantity(limit, unit)))
-                        .small()
-                        .color(MUTED),
-                );
-                if settings_open {
-                    app.meter_measurement_controls(ui);
-                }
-            }
-        });
-    }
-
-    /// The optional reference DMM measures the same quantity generated by the
-    /// source.  It is intentionally a separate card: the primary Meter stays
-    /// the mandatory opposite-quantity measurement used by legacy runs.
-    fn reference_meter_instrument(&mut self, ui: &mut egui::Ui) {
-        let Some(id) = self.settings.reference_meter_id else {
-            return;
-        };
-        let Some(entry) = self.settings.meters.iter().find(|entry| entry.id == id) else {
-            return;
-        };
-        let (model, resource) = (entry.model.clone(), entry.resource.clone());
-        let title = if self.settings.config.mode == Mode::Iv {
-            "Meter (V)"
-        } else {
-            "Meter (I)"
-        };
-        let assigned = self.state.reference_meter_connected;
-        let connected = assigned || self.inventory_connected(id);
-        self.device_card(ui, false, id, title, connected, |app, ui| {
-            let summary = device_summary(&model);
-            let key = ui.make_persistent_id(("reference_meter_device_disclosure", id));
-            let mut open = ui
-                .ctx()
-                .data_mut(|data| data.get_persisted::<bool>(key))
-                .unwrap_or(false);
-            ui.horizontal(|ui| {
-                widgets::device_disclosure(ui, summary, widgets::device_width(ui), &mut open)
-                    .on_hover_text(format!("{model}\n{}", resource_summary(&resource)));
-            });
-            ui.ctx().data_mut(|data| data.insert_persisted(key, open));
-            if open {
-                app.reference_meter_connection_controls(ui, id, connected);
-            }
-            if assigned || !connected {
-                app.reference_meter_live_reading(ui, assigned);
-            } else {
-                app.inventory_live_monitor(ui, id);
-            }
-        });
-    }
-
-    fn reference_meter_connection_controls(&mut self, ui: &mut egui::Ui, id: u64, connected: bool) {
-        let idle = !self.busy();
-        let width = (ui.available_width() - 91.0).max(0.0);
-        let Some(selected) = self.settings.meters.iter().find(|entry| entry.id == id) else {
-            return;
-        };
-        // Edit local fields first so button actions below do not borrow the
-        // inventory and the command queue at the same time.
-        let mut model = selected.model.clone();
-        let mut resource = selected.resource.clone();
-        let resources = &self.state.resources;
-        let mut refresh = false;
-        let mut connect = false;
-        let mut disconnect = false;
-        egui::Grid::new(("reference_meter_instrument", id))
-            .num_columns(2)
-            .spacing([6.0, 6.0])
-            .show(ui, |ui| {
-                widgets::device_field_label(ui, "Model");
-                ui.add_enabled_ui(idle && !connected, |ui| {
-                    egui::ComboBox::from_id_salt(("reference_meter_device", id))
-                        .width(width)
-                        .truncate()
-                        .selected_text(model.as_str())
-                        .show_ui(ui, |ui| {
-                            for descriptor in instrument_catalog(InstrumentRole::Meter) {
-                                ui.add_enabled_ui(model_supported(descriptor.id), |ui| {
-                                    ui.selectable_value(
-                                        &mut model,
-                                        descriptor.id.to_owned(),
-                                        descriptor.id,
-                                    );
-                                });
-                            }
-                        });
-                });
-                ui.end_row();
-                widgets::device_field_label(ui, "Resource");
-                ui.horizontal(|ui| {
-                    let resource_width = (width - 76.0).max(65.0);
-                    ui.add_enabled_ui(idle && !connected, |ui| {
-                        let summary = resource_summary(&resource);
-                        compact_field(
-                            ui,
-                            ("reference_meter_resource", id),
-                            &mut resource,
-                            resource_width - 28.0,
-                            summary,
-                        );
-                        egui::ComboBox::from_id_salt(("reference_meter_resources", id))
-                            .width(20.0)
-                            .selected_text("")
-                            .show_ui(ui, |ui| {
-                                ui.set_min_width(470.0);
-                                for discovered in resources {
-                                    ui.selectable_value(
-                                        &mut resource,
-                                        discovered.resource.clone(),
-                                        &discovered.resource,
-                                    )
-                                    .on_hover_text(&discovered.label);
-                                }
-                            });
-                    });
-                    if button(ui, "Refresh", 68.0, idle).clicked() {
-                        refresh = true;
-                    }
-                });
-                ui.end_row();
-                form_label(ui, "", 57.0);
-                ui.horizontal(|ui| {
-                    let valid = instrument_descriptor(&model)
-                        .is_some_and(|device| device.supports_mode(self.settings.config.mode))
-                        && (model.starts_with("SIMULATED_") || !resource.is_empty());
-                    if button(
-                        ui,
-                        "Connect",
-                        (width - 8.0) / 2.0,
-                        idle && !connected && valid,
-                    )
-                    .clicked()
-                    {
-                        connect = true;
-                    }
-                    if button(ui, "Disconnect", (width - 8.0) / 2.0, idle && connected).clicked() {
-                        disconnect = true;
-                    }
-                });
-                ui.end_row();
-            });
-        // The reference observes the source quantity, i.e. voltage in V-I
-        // and current in I-V.  Reuse the normal meter range widget with the
-        // flipped measurement function so its range and input-resistance
-        // wording remains device-specific.
-        let reference_mode = if self.settings.config.mode == Mode::Iv {
-            Mode::Vi
-        } else {
-            Mode::Iv
-        };
-        let range_locked_by_operation = self.busy() || self.python_locked();
-        let range_edit = ui.add_enabled_ui(
-            !range_locked_by_operation && crate::gui_control::outputs_off(&self.state),
-            |ui| {
-                ui.horizontal(|ui| {
-                    form_label(ui, "Range", 57.0);
-                    let field_width = (ui.available_width() - 6.0).max(0.0);
-                    ui.scope(|ui| {
-                        ui.set_width(field_width);
-                        match reference_mode {
-                            Mode::Iv => widgets::meter_range_choice(
-                                ui,
-                                "reference_meter_current_range",
-                                &model,
-                                reference_mode,
-                                &mut self.settings.config.meter_current_range,
-                            ),
-                            Mode::Vi => widgets::meter_range_choice(
-                                ui,
-                                "reference_meter_voltage_range",
-                                &model,
-                                reference_mode,
-                                &mut self.settings.config.meter_voltage_range,
-                            ),
-                        }
-                    })
-                    .inner
-                })
-                .inner
-            },
-        );
-        range_edit
-            .response
-            .on_disabled_hover_text(if range_locked_by_operation {
-                "Wait for the current operation or external control to finish."
-            } else {
-                "Turn all source outputs OFF before changing the meter range."
-            });
-        if let Some(entry) = self.settings.meters.iter_mut().find(|entry| entry.id == id) {
-            entry.model = model;
-            entry.resource = resource;
-        }
-        self.settings.bind_active_entries();
-        if refresh {
-            self.send(Command::Discover);
-        }
-        if connect {
-            self.connect_reference_meter();
-        }
-        if disconnect {
-            self.send(if self.inventory_connected(id) {
-                Command::DisconnectInventory { id }
-            } else {
-                Command::DisconnectReferenceMeter
-            });
-        }
-        if range_edit.inner {
-            self.send_meter_ranges();
-        }
-    }
-
-    fn reference_meter_live_reading(&self, ui: &mut egui::Ui, connected: bool) {
-        let unit = if self.settings.config.mode == Mode::Iv {
-            "V"
-        } else {
-            "A"
-        };
-        let live = connected.then_some(self.live_reading.as_ref()).flatten();
-        let value = live.and_then(|record| record.reference_meter_value);
-        ui.separator();
-        ui.horizontal(|ui| {
-            ui.label(RichText::new(unit).color(TEAL).strong());
-            ui.label(RichText::new("MEASURED").size(9.0).color(MUTED));
-            ui.label(
-                RichText::new(if value.is_some() { "LIVE" } else { "WAITING" })
-                    .size(9.0)
-                    .color(if value.is_some() { BLUE } else { MUTED }),
-            );
-        });
-        ui.label(
-            RichText::new(
-                value.map_or_else(|| format!("— {unit}"), |value| fmt_quantity(value, unit)),
-            )
-            .monospace()
-            .size(20.0)
-            .color(TEAL),
-        );
-        let now = self.boot.elapsed().as_secs_f64();
-        let points: Vec<_> = self
-            .reference_live_samples
-            .iter()
-            .filter(|point| connected && now - point[0] <= 30.0)
-            .map(|point| [point[0] - now, point[1]])
-            .collect();
-        let scale = AxisScale::for_magnitude(
-            points
-                .iter()
-                .fold(0.0_f64, |max, point| max.max(point[1].abs())),
-        );
-        Plot::new("reference_live_trend")
-            .height(55.0)
-            .show_background(false)
-            .allow_drag(false)
-            .allow_zoom(false)
-            .allow_scroll(false)
-            .include_x(-now.clamp(2.0, 30.0))
-            .include_x(0.0)
-            .include_y(0.0)
-            .y_axis_formatter(move |mark, _| scale.tick(mark.value, mark.step_size))
-            .show(ui, |plot| plot.line(Line::new("trend", points).color(TEAL)));
-    }
-
-    fn instrument_connection_controls(
-        &mut self,
-        ui: &mut egui::Ui,
-        source: bool,
-        secondary: bool,
-        connected: bool,
-        settings_key: egui::Id,
-    ) -> bool {
-        let mut settings_open = ui
-            .ctx()
-            .data(|data| data.get_temp::<bool>(settings_key))
-            .unwrap_or(false);
-        let idle = !self.busy();
-        let width = (ui.available_width() - 91.0).max(0.0);
-        egui::Grid::new(("instrument", source, secondary))
-            .num_columns(2)
-            .spacing([6.0, 6.0])
-            .show(ui, |ui| {
-                widgets::device_field_label(ui, "Model");
-                let model = if secondary {
-                    &mut self.settings.source2_model
-                } else if source {
-                    &mut self.settings.source_model
-                } else {
-                    &mut self.settings.meter_model
-                };
-                ui.add_enabled_ui(idle && !connected, |ui| {
-                    egui::ComboBox::from_id_salt(("device", source, secondary))
-                        .width(width)
-                        .wrap_mode(egui::TextWrapMode::Truncate)
-                        .selected_text(model.as_str())
-                        .show_ui(ui, |ui| {
-                            ui.set_min_width(230.0);
-                            for descriptor in instrument_catalog(if source {
-                                InstrumentRole::Source
-                            } else {
-                                InstrumentRole::Meter
-                            }) {
-                                let candidate = descriptor.id;
-                                ui.add_enabled_ui(model_supported(candidate), |ui| {
-                                    ui.selectable_value(model, candidate.to_string(), candidate);
-                                })
-                                .response
-                                .on_disabled_hover_text("Not yet supported in the Rust preview");
-                            }
-                        });
-                });
-                ui.end_row();
-                widgets::device_field_label(ui, "Resource");
-                ui.horizontal(|ui| {
-                    let resource_width = (width - 76.0).max(65.0);
-                    self.resource(ui, source, secondary, resource_width, idle && !connected);
-                    if button(ui, "Refresh", 68.0, idle).clicked() {
-                        self.send(Command::Discover);
-                    }
-                });
-                ui.end_row();
-            });
-        ui.horizontal(|ui| {
-            let button_width = (ui.available_width() - 2.0 * ui.spacing().item_spacing.x) / 3.0;
-            let model = if secondary {
-                &self.settings.source2_model
-            } else if source {
-                &self.settings.source_model
-            } else {
-                &self.settings.meter_model
-            };
-            let resource = if secondary {
-                &self.settings.source2
-            } else if source {
-                &self.settings.source
-            } else {
-                &self.settings.meter
-            };
-            let valid = instrument_descriptor(model)
-                .is_some_and(|d| d.supports_mode(self.settings.config.mode))
-                && (model.starts_with("SIMULATED_") || !resource.is_empty());
-            if button(ui, "Connect", button_width, idle && !connected && valid).clicked() {
-                if secondary {
-                    self.connect_secondary();
-                } else {
-                    self.connect_instrument(source);
-                }
-            }
-            if button(ui, "Disconnect", button_width, idle && connected).clicked() {
-                let id = if secondary {
-                    self.settings.source2_id
-                } else if source {
-                    self.settings.source1_id
-                } else {
-                    self.settings.meter_id
-                };
-                self.send(if self.inventory_connected(id) {
-                    Command::DisconnectInventory { id }
-                } else if secondary {
-                    Command::DisconnectSource2
-                } else if source {
-                    Command::DisconnectSource
-                } else {
-                    Command::DisconnectMeter
-                });
-            }
-            if button(ui, "Settings", button_width, true).clicked() {
-                settings_open = !settings_open;
-            }
-        });
-        ui.ctx()
-            .data_mut(|data| data.insert_temp(settings_key, settings_open));
-        settings_open
-    }
-
-    fn resource(
-        &mut self,
-        ui: &mut egui::Ui,
-        source: bool,
-        secondary: bool,
-        width: f32,
-        enabled: bool,
-    ) {
-        let selection = if secondary {
-            &mut self.settings.source2
-        } else if source {
-            &mut self.settings.source
-        } else {
-            &mut self.settings.meter
-        };
-        ui.add_enabled_ui(enabled, |ui| {
-            ui.spacing_mut().item_spacing.x = 0.0;
-            ui.spacing_mut().button_padding.x = 3.0;
-            ui.spacing_mut().icon_width = 14.0;
-            ui.spacing_mut().icon_spacing = 0.0;
-            let summary = resource_summary(selection);
-            compact_field(
-                ui,
-                ("resource_edit", source, secondary),
-                selection,
-                (width - 28.0).max(30.0),
-                summary,
-            );
-            egui::ComboBox::from_id_salt(("resources", source, secondary))
-                .width(20.0)
-                .selected_text("")
-                .show_ui(ui, |ui| {
-                    ui.set_min_width(470.0);
-                    for resource in &self.state.resources {
-                        ui.selectable_value(
-                            selection,
-                            resource.resource.clone(),
-                            &resource.resource,
-                        )
-                        .on_hover_text(&resource.label);
-                    }
-                    if self.state.resources.is_empty() {
-                        ui.label("Click Refresh to find connected instruments.");
-                    }
-                });
-        });
     }
 
     fn sweep(&mut self, ui: &mut egui::Ui) {
@@ -3082,6 +1923,14 @@ impl IvApp {
                     self.dc_preview_mode = None;
                     candidate.config.balanced_source =
                         (choice == 2).then(iv_core::BalancedSourceConfig::default);
+                    // Source 2 is chosen from existing devices; never invent one.
+                    if choice == 2 && candidate.source2_id == settings::NO_DEVICE {
+                        candidate.source2_id = candidate
+                            .sources
+                            .iter()
+                            .find(|entry| entry.id != candidate.source1_id)
+                            .map_or(settings::NO_DEVICE, |entry| entry.id);
+                    }
                     // `default_config` above intentionally rebuilds the run
                     // settings, so reapply both active DMM bindings here.
                     candidate.bind_active_entries();
@@ -3103,6 +1952,8 @@ impl IvApp {
                     }
                     self.samples.clear();
                     self.reference_samples.clear();
+                self.separate = Default::default();
+                self.gate_metric = reference_view::GateMetric::Sweep;
                     self.rebuild_plot_series();
                     self.rebuild_reference_plot_series();
                     self.custom_text.clear();
@@ -3270,6 +2121,9 @@ impl IvApp {
     /// stops a run while the latter selects the meter input path.
     fn meter_measurement_controls(&mut self, ui: &mut egui::Ui) {
         let mode = self.settings.config.mode;
+        // Sweep protection belongs to the planned run. Range describes the
+        // live meter function, which may instead follow a held manual DC.
+        let range_mode = self.meter_live_mode();
         let protection_unit = if mode == Mode::Iv { "A" } else { "V" };
         let effective_source = self
             .preview
@@ -3283,7 +2137,7 @@ impl IvApp {
         };
         ui.add_space(4.0);
         ui.horizontal(|ui| {
-            form_label(ui, "Limit", 85.0);
+            form_label(ui, "Sweep limit", 85.0);
             let width = ui.available_width();
             ui.add_enabled_ui(!self.busy() && !self.python_locked(), |ui| {
                 let (meter_value, meter_unit) = match mode {
@@ -3319,19 +2173,19 @@ impl IvApp {
             |ui| {
                 ui.horizontal(|ui| {
                     form_label(ui, "Range", 85.0);
-                    match mode {
+                    match range_mode {
                         Mode::Iv => widgets::meter_range_choice(
                             ui,
                             "active_meter_current_range",
                             &meter_model,
-                            mode,
+                            range_mode,
                             &mut self.settings.config.meter_current_range,
                         ),
                         Mode::Vi => widgets::meter_range_choice(
                             ui,
                             "active_meter_voltage_range",
                             &meter_model,
-                            mode,
+                            range_mode,
                             &mut self.settings.config.meter_voltage_range,
                         ),
                     }
@@ -3350,7 +2204,7 @@ impl IvApp {
         if range_changed {
             self.send_meter_ranges();
         }
-        let fixed_range = match mode {
+        let fixed_range = match range_mode {
             Mode::Iv => self.settings.config.meter_current_range,
             Mode::Vi => self.settings.config.meter_voltage_range,
         };
@@ -3358,7 +2212,7 @@ impl IvApp {
             Mode::Iv => self.settings.current_compliance,
             Mode::Vi => self.settings.voltage_compliance,
         };
-        if fixed_range.is_some_and(|range| meter_limit > range) {
+        if mode == range_mode && fixed_range.is_some_and(|range| meter_limit > range) {
             ui.response().on_hover_text("Limit exceeds the fixed range. Instrument overload may stop first; changing Limit does not change Range.");
         }
         ui.horizontal(|ui| {
@@ -3377,70 +2231,100 @@ impl IvApp {
     }
 
     fn measurement_controls(&mut self, ui: &mut egui::Ui) {
-        section(ui, "Measurement", |ui| {
-            ui.columns(2, |columns| {
-                columns[0].add_enabled_ui(
-                    !self.busy() && !self.python_locked() && !self.file_task_pending(),
-                    |ui| self.sweep(ui),
-                );
-                section(&mut columns[1], "Output", |ui| {
-                    ui.add_enabled_ui(
+        let clip = ui.clip_rect();
+        let response = ui.scope(|ui| {
+            section(ui, "Measurement", |ui| {
+                ui.columns(2, |columns| {
+                    columns[0].add_enabled_ui(
                         !self.busy() && !self.python_locked() && !self.file_task_pending(),
-                        |ui| {
-                            let width = (ui.available_width() - 62.0).max(150.0);
-                            egui::Grid::new("output_files")
-                                .num_columns(2)
-                                .spacing([6.0, 8.0])
-                                .show(ui, |ui| {
-                                    form_label(ui, "Directory", 54.0);
-                                    ui.horizontal(|ui| {
-                                        let summary = path_summary(&self.settings.output_dir);
-                                        compact_field(
-                                            ui,
-                                            "output_dir",
-                                            &mut self.settings.output_dir,
-                                            (width - 118.0).max(35.0),
-                                            summary,
-                                        );
-                                        if button(ui, "Browse", 104.0, true).clicked() {
-                                            self.choose_output_directory(ui.ctx());
-                                        }
-                                    });
-                                    ui.end_row();
-                                    form_label(ui, "File", 54.0);
-                                    ui.horizontal(|ui| {
-                                        ui.add(
-                                            egui::TextEdit::singleline(&mut self.settings.filename)
-                                                .margin(egui::Margin::symmetric(3, 3))
-                                                .desired_width((width - 118.0).max(35.0)),
-                                        );
-                                        ui.add_sized(
-                                            [104.0, 24.0],
-                                            egui::Checkbox::new(
-                                                &mut self.settings.auto_suffix,
-                                                "Auto suffix",
-                                            ),
-                                        );
-                                    });
-                                    ui.end_row();
-                                });
-                        },
+                        |ui| self.sweep(ui),
                     );
+                    section(&mut columns[1], "Output", |ui| {
+                        ui.add_enabled_ui(
+                            !self.busy() && !self.python_locked() && !self.file_task_pending(),
+                            |ui| {
+                                let compact = ui.available_width() < 230.0;
+                                let label_width = if compact { 30.0 } else { 54.0 };
+                                let action_width = if compact { 64.0 } else { 104.0 };
+                                let field_width = (ui.available_width()
+                                    - label_width
+                                    - 6.0
+                                    - action_width
+                                    - ui.spacing().item_spacing.x)
+                                    .max(24.0);
+                                egui::Grid::new("output_files")
+                                    .min_col_width(0.0)
+                                    .num_columns(2)
+                                    .spacing([6.0, 8.0])
+                                    .show(ui, |ui| {
+                                        form_label(
+                                            ui,
+                                            if compact { "Dir." } else { "Directory" },
+                                            label_width,
+                                        );
+                                        ui.horizontal(|ui| {
+                                            let summary = path_summary(&self.settings.output_dir);
+                                            compact_field(
+                                                ui,
+                                                "output_dir",
+                                                &mut self.settings.output_dir,
+                                                field_width,
+                                                summary,
+                                            );
+                                            if button(ui, "Browse", action_width, true).clicked() {
+                                                self.choose_output_directory(ui.ctx());
+                                            }
+                                        });
+                                        ui.end_row();
+                                        form_label(ui, "File", label_width);
+                                        ui.horizontal(|ui| {
+                                            ui.add_sized(
+                                                [field_width, 24.0],
+                                                egui::TextEdit::singleline(
+                                                    &mut self.settings.filename,
+                                                )
+                                                .margin(egui::Margin::symmetric(3, 3)),
+                                            ).on_hover_text(self.settings.filename.as_str());
+                                            ui.add_sized(
+                                                [action_width, 24.0],
+                                                egui::Checkbox::new(
+                                                    &mut self.settings.auto_suffix,
+                                                    if compact { "Suffix" } else { "Auto suffix" },
+                                                ),
+                                            ).on_hover_text("Append a timestamp to each new measurement filename.");
+                                        });
+                                        ui.end_row();
+                                    });
+                            },
+                        );
+                    });
+                    columns[1].add_space(8.0);
+                    section(&mut columns[1], "Run", |ui| self.run_controls(ui));
                 });
-                columns[1].add_space(8.0);
-                section(&mut columns[1], "Run", |ui| self.run_controls(ui));
-            });
+            })
+        });
+        ui.ctx().data_mut(|data| {
+            data.insert_temp(
+                egui::Id::new("measurement_controls_visible"),
+                clip.expand(0.5).contains_rect(response.response.rect),
+            );
+            let rect = response.response.rect;
+            data.insert_temp(
+                egui::Id::new("measurement_controls_bounds"),
+                [rect.min.x, rect.min.y, rect.max.x, rect.max.y],
+            );
         });
     }
 
     /// Inventory management stays beside the device cards; Settings only
     /// assigns their measurement roles and the dual-source ratio.
     fn device_add_footer(&mut self, ui: &mut egui::Ui) -> egui::Rect {
-        let response = button(
-            ui,
-            "+ Add device",
-            ui.available_width(),
+        let response = ui.add_enabled(
             self.inventory_editable(),
+            egui::Button::new("+ Add device")
+                .fill(BUTTON)
+                .corner_radius(6)
+                .min_size(Vec2::new(ui.available_width(), 24.0)),
         );
         if response.clicked() {
             self.add_device = Some(AddDevice {
@@ -3453,61 +2337,6 @@ impl IvApp {
 
     fn inventory_editable(&self) -> bool {
         !self.busy() && !self.pending_run && !self.python_locked()
-    }
-
-    fn add_device_dialog(&mut self, ctx: &egui::Context) {
-        let Some(mut device) = self.add_device.take() else {
-            return;
-        };
-        let editable = self.inventory_editable();
-        let mut add = false;
-        let mut cancel = false;
-        let response = egui::Modal::new(egui::Id::new("add_device")).show(ctx, |ui| {
-            ui.set_width(320.0);
-            ui.heading("Add Device");
-            ui.add_space(8.0);
-            ui.add_enabled_ui(editable, |ui| {
-                ui.horizontal(|ui| {
-                    ui.selectable_value(&mut device.role, InstrumentRole::Source, "Source");
-                    ui.selectable_value(&mut device.role, InstrumentRole::Meter, "Meter");
-                });
-                ui.label("Label");
-                ui.add(
-                    egui::TextEdit::singleline(&mut device.label)
-                        .hint_text("Optional")
-                        .char_limit(64)
-                        .desired_width(f32::INFINITY),
-                );
-            });
-            ui.add_space(10.0);
-            ui.horizontal(|ui| {
-                cancel = button(ui, "Cancel", 80.0, true).clicked();
-                add = button(ui, "Add", 80.0, editable).clicked();
-            });
-        });
-        if add {
-            let source = device.role == InstrumentRole::Source;
-            let id = if source {
-                self.settings.add_source(&device.label)
-            } else {
-                self.settings.add_meter(&device.label)
-            };
-            if self.can_select_inventory_entry(source) {
-                self.select_inventory_entry(source, id);
-            }
-        } else if !cancel && !response.should_close() {
-            self.add_device = Some(device);
-        }
-    }
-
-    fn can_select_inventory_entry(&self, source: bool) -> bool {
-        self.inventory_editable()
-            && self.pending_inventory_selection.is_none()
-            && if source {
-                !self.state.source_connected
-            } else {
-                !self.state.meter_connected
-            }
     }
 
     fn request_inventory_selection(&mut self, source: bool, id: u64) {
@@ -3531,48 +2360,6 @@ impl IvApp {
             self.settings.meter_id = id;
         }
         self.settings.bind_active_entries();
-    }
-
-    fn inventory_selection_allowed(&self, source: bool, id: u64) -> bool {
-        let assigned_elsewhere = if source {
-            self.dc_gate_matches(id)
-                || (self.settings.config.balanced_source.is_some()
-                    && self.settings.source2_id == id)
-        } else {
-            self.settings.reference_meter_id == Some(id)
-        };
-        let registered_switch = self.inventory_connected(id)
-            && self.inventory_editable()
-            && self.pending_inventory_selection.is_none()
-            && self
-                .state
-                .inventory_devices
-                .iter()
-                .any(|entry| entry.source == source && entry.assigned)
-            && (!source || self.state.output == OutputState::Off);
-        !assigned_elsewhere && (registered_switch || self.can_select_inventory_entry(source))
-    }
-
-    fn use_inventory_entry_button(&mut self, ui: &mut egui::Ui, source: bool, id: u64) {
-        if button(
-            ui,
-            if source {
-                "Use as Source 1"
-            } else {
-                "Use as Meter"
-            },
-            115.0,
-            self.inventory_selection_allowed(source, id),
-        )
-        .on_disabled_hover_text("Disconnect or unassign the relevant instrument before switching.")
-        .clicked()
-        {
-            if self.inventory_connected(id) {
-                self.request_inventory_selection(source, id);
-            } else {
-                self.select_inventory_entry(source, id);
-            }
-        }
     }
 
     fn report_device_bindings(&mut self, previous: &Settings, action: &str) {
@@ -3600,8 +2387,8 @@ impl IvApp {
             ),
             (
                 "Source 2",
-                Some(previous.source2_id),
-                Some(settings.source2_id),
+                (previous.source2_id != settings::NO_DEVICE).then_some(previous.source2_id),
+                (settings.source2_id != settings::NO_DEVICE).then_some(settings.source2_id),
                 true,
             ),
             (
@@ -3675,7 +2462,7 @@ impl IvApp {
                 let mut candidate = self.settings.clone();
                 let current = [
                     Some(candidate.source1_id),
-                    Some(candidate.source2_id),
+                    (candidate.source2_id != settings::NO_DEVICE).then_some(candidate.source2_id),
                     Some(candidate.meter_id),
                     candidate.reference_meter_id,
                 ];
@@ -3713,7 +2500,14 @@ impl IvApp {
                                     .selected_text(
                                         current[index]
                                             .map(|id| self.inventory_name(source, id))
-                                            .unwrap_or_else(|| "Source value only".into()),
+                                            .unwrap_or_else(|| {
+                                                if index == 1 {
+                                                    "Unassigned"
+                                                } else {
+                                                    "Source value only"
+                                                }
+                                                .into()
+                                            }),
                                     )
                                     .show_ui(ui, |ui| {
                                         if index == 3 {
@@ -3805,7 +2599,11 @@ impl IvApp {
                             egui::ComboBox::from_id_salt("source2_binding")
                                 .truncate()
                                 .width(ui.available_width())
-                                .selected_text(self.inventory_name(true, before))
+                                .selected_text(if before == settings::NO_DEVICE {
+                                    "Unassigned · add a second Source".to_owned()
+                                } else {
+                                    self.inventory_name(true, before)
+                                })
                                 .show_ui(ui, |ui| {
                                     for (id, label) in &source_choices {
                                         ui.add_enabled_ui(*id != self.settings.source1_id, |ui| {
@@ -3923,7 +2721,7 @@ impl IvApp {
                         .sources
                         .iter()
                         .find(|entry| entry.id != self.settings.source1_id)
-                        .map_or(self.settings.source1_id, |entry| entry.id);
+                        .map_or(settings::NO_DEVICE, |entry| entry.id);
                 }
                 if self.settings.reference_meter_id == Some(self.settings.meter_id) {
                     self.settings.reference_meter_id = None;
@@ -4065,7 +2863,14 @@ impl IvApp {
                 } else {
                     BUTTON
                 });
-            if ui.add_enabled(self.active(), stop_button).clicked() && self.send(Command::Stop) {
+            let stop = ui.add_enabled(self.active(), stop_button);
+            ui.ctx().data_mut(|data| {
+                data.insert_temp(
+                    egui::Id::new("run_stop_visible"),
+                    ui.clip_rect().contains_rect(stop.rect),
+                )
+            });
+            if stop.clicked() && self.send(Command::Stop) {
                 self.report(
                     "Stop requested. Waiting for the current I/O and output cleanup.".into(),
                 );
@@ -4333,27 +3138,6 @@ impl IvApp {
         }
     }
 
-    fn source_protection_summary(&self, ui: &mut egui::Ui) {
-        let config = &self.settings.config;
-        let (target_unit, limit_unit) = if config.mode == Mode::Iv {
-            ("V", "A")
-        } else {
-            ("A", "V")
-        };
-        let limit = self
-            .preview
-            .as_ref()
-            .ok()
-            .map(|preview| fmt_quantity(preview.hardware_compliance, limit_unit))
-            .unwrap_or_else(|| "—".into());
-        let max = fmt_quantity(config.source_limit, target_unit);
-        ui.label(
-            RichText::new(format!("Sweep compliance {limit}  ·  Max {max}"))
-                .small()
-                .color(MUTED),
-        );
-    }
-
     fn source_target_limit_control(&mut self, ui: &mut egui::Ui) {
         let unit = if self.settings.config.mode == Mode::Iv {
             "mV"
@@ -4562,6 +3346,7 @@ impl IvApp {
     }
 
     fn main_view(&mut self, ui: &mut egui::Ui) {
+        ui.set_max_width((ui.clip_rect().right() - ui.cursor().left()).max(100.0));
         self.measurement_controls(ui);
         ui.add_space(8.0);
         let status = if self.busy() {
@@ -4583,6 +3368,10 @@ impl IvApp {
                 .filter(|r| r.is_finite() && *r != 0.0)
                 .map(|r| (r, 1.0 / r))
         };
+        let separate = self.separate_enabled();
+        let channel_fit = (separate && self.state.phase == Phase::Completed)
+            .then(|| self.separate.fit(self.settings.config.mode))
+            .flatten();
         let source = fit(self.state.resistance);
         let meter = fit(self.state.reference_resistance);
         let detail = |name: &str, values: Option<(f64, f64)>| match values {
@@ -4591,40 +3380,80 @@ impl IvApp {
             ),
             None => format!("{name} sweep fit: no valid fit available."),
         };
-        // Fixed cells keep the entire summary on one line, including while
-        // pending, unassigned, or displaying long/large numerical values.
-        ui.horizontal(|ui| {
-            ui.spacing_mut().item_spacing.x = 6.0;
-            let available = (ui.available_width() - 18.0).max(0.0);
-            for (fraction, text, hint) in [
-                (
-                    0.19,
-                    format!("Status {status}"),
-                    format!("{}\nOutput: {}", self.state.message, self.state.output),
+        // Preserve status and point counts on narrow panes instead of
+        // truncating all four summary cells into one row.
+        let cells = [
+            (
+                0.19,
+                format!("Status {status}"),
+                format!("{}\nOutput: {}", self.state.message, self.state.output),
+            ),
+            (
+                0.12,
+                format!("Point {point}"),
+                format!("Sweep point {point}"),
+            ),
+            (
+                0.345,
+                format!(
+                    "{} R/G {}",
+                    if separate { "Channel" } else { "Source" },
+                    if separate {
+                        reference_view::channel_fit_text(channel_fit.as_ref())
+                    } else {
+                        format_resistance_conductance(source)
+                    }
                 ),
-                (
-                    0.12,
-                    format!("Point {point}"),
-                    format!("Sweep point {point}"),
-                ),
-                (
-                    0.345,
-                    format!("Source R/G {}", format_resistance_conductance(source)),
-                    detail("Source", source),
-                ),
-                (
-                    0.345,
-                    format!("Meter R/G {}", format_resistance_conductance(meter)),
-                    detail("Meter", meter),
-                ),
-            ] {
-                ui.add_sized(
-                    [available * fraction, 20.0],
-                    egui::Label::new(RichText::new(text).size(11.0)).truncate(),
-                )
-                .on_hover_text(hint);
-            }
-        });
+                if separate {
+                    channel_fit
+                        .as_ref()
+                        .map(|f| {
+                            format!(
+                                "Channel free-intercept fit; {} points\nOffset: {:.12e} {}",
+                                f.points,
+                                f.offset,
+                                if self.settings.config.mode == Mode::Vi {
+                                    "V"
+                                } else {
+                                    "A"
+                                }
+                            )
+                        })
+                        .unwrap_or_else(|| "Channel fit is available after completion.".into())
+                } else {
+                    detail("Source", source)
+                },
+            ),
+            (
+                0.345,
+                if separate {
+                    self.reference_quantity()
+                } else {
+                    format!("Meter R/G {}", format_resistance_conductance(meter))
+                },
+                if separate {
+                    "Separate circuit reading; no resistance or conductance is derived from it."
+                        .into()
+                } else {
+                    detail("Meter", meter)
+                },
+            ),
+        ];
+        let narrow_summary = ui.available_width() < 520.0;
+        for row in cells.chunks(if narrow_summary { 2 } else { 4 }) {
+            ui.horizontal(|ui| {
+                ui.spacing_mut().item_spacing.x = 6.0;
+                let available = (ui.available_width() - 6.0 * (row.len() - 1) as f32).max(0.0);
+                for (fraction, text, hint) in row {
+                    let fraction = if narrow_summary { 0.5 } else { *fraction };
+                    ui.add_sized(
+                        [available * fraction, 20.0],
+                        egui::Label::new(RichText::new(text.as_str()).size(11.0)).truncate(),
+                    )
+                    .on_hover_text(hint.as_str());
+                }
+            });
+        }
         let feedback =
             if self.pending_bindings.is_some() || self.pending_inventory_selection.is_some() {
                 "Applying device selection…"
@@ -4682,14 +3511,19 @@ impl IvApp {
             );
             return;
         }
+        self.reference_header(ui);
+        if self.separate_enabled() {
+            self.separate_view(ui);
+            return;
+        }
         let available = shared_plot_height(ui.clip_rect().bottom() - ui.cursor().top() - 2.0);
         let (source_x_name, meter_x_name) = if self.settings.config.mode == Mode::Iv {
             ("V_source", "V_meter")
         } else {
             ("I_source", "I_meter")
         };
-        // `custom_x_axes` below permanently reserves the actual top Meter
-        // axis; no separate header row is needed or allowed to shift the plot.
+        // Overlay retains its real top Meter axis. The display header uses
+        // the same reserved height with and without an assigned reference.
         self.render_sweep_plot(
             ui,
             "iv_plot",
@@ -4740,6 +3574,32 @@ impl IvApp {
             extent[axis] = extent[axis].max(value);
         }
         let plot_id = ui.make_persistent_id(egui::Id::new(id));
+        let view = (
+            plot_id,
+            self.settings.config.mode,
+            self.run_id,
+            self.gate_metric,
+            self.gate_summary_revision,
+        );
+        ui.ctx().data_mut(|data| {
+            let key = ui.make_persistent_id(("sweep_view_context", id));
+            let active_key = ui.make_persistent_id("active_sweep_chart");
+            let chart = if id.starts_with("separate_") {
+                "separate"
+            } else {
+                id
+            };
+            if data.get_temp::<&'static str>(active_key) != Some(chart)
+                || data.get_temp::<(egui::Id, Mode, u64, reference_view::GateMetric, u64)>(key)
+                    != Some(view)
+            {
+                // Plot::auto_bounds sets the default, but retained manual zoom
+                // overrides it. A new mode, chart or run starts a fresh view.
+                data.remove::<PlotMemory>(plot_id);
+                data.insert_temp(key, view);
+                data.insert_temp(active_key, chart);
+            }
+        });
         if let Some(memory) = PlotMemory::load(ui.ctx(), plot_id) {
             for (axis, maximum) in extent.iter_mut().enumerate() {
                 if !memory.auto_bounds[axis] {
@@ -4777,7 +3637,7 @@ impl IvApp {
                     .formatter(move |mark, _| top_scale.tick(mark.value, mark.step_size)),
             );
         }
-        let plotted = Plot::new(id)
+        let mut plot = Plot::new(id)
             .width((ui.clip_rect().right() - ui.cursor().left()).max(100.0))
             .id(plot_id)
             .height(height)
@@ -4799,6 +3659,9 @@ impl IvApp {
                     .find(|sample| sample.0 == point.x && sample.1 == point.y);
                 let mut text = name.to_owned();
                 if let Some(sample) = source {
+                    if id.starts_with("separate_gate_") {
+                        text.push_str(&format!("\nRun: {}", sample.2));
+                    }
                     text.push_str(&format!(
                         "\n{source_x_name}: {}",
                         display_reading(point.x, sample.3[0], x_unit)
@@ -4828,24 +3691,84 @@ impl IvApp {
             .allow_scroll(false)
             .allow_drag(true)
             .include_x(0.0)
-            .include_y(0.0)
-            .auto_bounds(true)
-            .show(ui, |plot_ui| {
-                draw_sweep_series(plot_ui, series, false);
-                // The two x quantities intentionally share raw SI bounds. Do
-                // not remap or normalize the reference curve: differences are
-                // scientific signal, not UI decoration.
-                if !reference_samples.is_empty() {
-                    draw_sweep_series(plot_ui, reference_series, true);
-                }
+            .auto_bounds(true);
+        if id != "separate_reference" && id != "separate_gate_reference" {
+            plot = plot.include_y(0.0);
+        }
+        if id.starts_with("separate_") {
+            let group = ui.make_persistent_id((
+                "separate_x",
+                self.run_id,
+                self.settings.config.mode == Mode::Vi,
+                self.gate_metric,
+                self.gate_summary_revision,
+            ));
+            plot = plot
+                .include_x(-extent[0])
+                .include_x(extent[0])
+                .link_axis(group, [true, false])
+                .link_cursor(group, [true, false]);
+        }
+        let plotted = plot.show(ui, |plot_ui| {
+            if self.smoke
+                && self.run_id >= 2
+                && id == "separate_primary"
+                && std::env::args().any(|arg| arg == "--gui-linked-axes-smoke")
+            {
+                // Exercise manual x bounds through the production link group.
+                plot_ui.set_plot_bounds_x(-2e-6..=4e-6);
+            }
+            draw_sweep_series(
+                plot_ui,
+                series,
+                false,
+                if id.starts_with("separate_") {
+                    y_name
+                } else {
+                    ""
+                },
+                !id.starts_with("separate_gate_"),
+            );
+            // The two x quantities intentionally share raw SI bounds. Do
+            // not remap or normalize the reference curve: differences are
+            // scientific signal, not UI decoration.
+            if !reference_samples.is_empty() {
+                draw_sweep_series(plot_ui, reference_series, true, "", true);
+            }
+        });
+        if self.smoke || id.starts_with("separate_") {
+            let bounds = plotted.transform.bounds();
+            ui.ctx().data_mut(|data| {
+                data.insert_temp(
+                    egui::Id::new(("plot_bounds", id)),
+                    [
+                        bounds.min()[0],
+                        bounds.min()[1],
+                        bounds.max()[0],
+                        bounds.max()[1],
+                    ],
+                )
             });
-        if self.smoke {
             let frame = plotted.transform.frame();
             ui.ctx().data_mut(|data| {
                 data.insert_temp(
                     egui::Id::new("reference_plot_bounds"),
                     [frame.min.x, frame.min.y, frame.max.x, frame.max.y],
                 )
+            });
+        }
+        if self.smoke || id.starts_with("separate_") {
+            let bounds = plotted.transform.bounds();
+            ui.ctx().data_mut(|data| {
+                data.insert_temp(
+                    egui::Id::new("sweep_data_bounds"),
+                    [
+                        bounds.min()[0],
+                        bounds.min()[1],
+                        bounds.max()[0],
+                        bounds.max()[1],
+                    ],
+                );
             });
         }
         if let Some(memory) = PlotMemory::load(ui.ctx(), plot_id) {
@@ -4895,6 +3818,7 @@ impl IvApp {
                     "{}",
                     serde_json::json!({
                         "footer_geometry": self.footer_geometry,
+                        "cards": self.card_geometry_report(),
                         "two_columns": self.settings.two_card_columns && ctx.content_rect().width() >= 1380.0,
                         "window_bottom": ctx.content_rect().bottom(),
                         "points": self.state.points,
@@ -4910,12 +3834,21 @@ impl IvApp {
     }
 
     fn logic_tick(&mut self, ctx: &egui::Context) {
-        if self.smoke && self.settings.two_card_columns {
+        if self.reference_replay {
+            ctx.request_repaint_after(Duration::from_millis(30));
+            return;
+        }
+        if self.smoke {
             let width = ctx.content_rect().width();
-            if (0.0..1380.0).contains(&width) && width > 0.0 {
-                // Hosted Windows runners may clamp the initial native window
-                // size. Capture the wide layout at a smaller display scale.
-                ctx.set_zoom_factor(ctx.zoom_factor() * width / 1500.0);
+            let minimum = if self.settings.two_card_columns {
+                1500.0
+            } else {
+                1080.0
+            };
+            if width > 0.0 && width < minimum - 0.5 {
+                // Hosted Windows desktops can clamp native windows below the
+                // supported minimum. Preserve the tested logical layout.
+                ctx.set_zoom_factor(ctx.zoom_factor() * width / minimum);
             }
         }
         self.poll_file_task(ctx);
@@ -4994,12 +3927,17 @@ impl eframe::App for IvApp {
         }
         self.timing_dialog(&ctx);
         self.add_device_dialog(&ctx);
+        self.delete_device_dialog(&ctx);
         if self.protection_dialog.is_some() {
             self.protection_dialog(&ctx);
         } else {
             self.start_error_dialog(&ctx);
         }
         self.save_dialog(&ctx);
+        if self.reference_replay {
+            self.reference_replay_capture(&ctx);
+            return;
+        }
         if self.footer_smoke_offset.is_some() {
             self.footer_smoke_capture(&ctx);
             return;
@@ -5045,6 +3983,29 @@ impl eframe::App for IvApp {
         {
             self.start_run();
         }
+        let separate_smoke =
+            self.smoke && std::env::args().any(|arg| arg == "--gui-separate-smoke");
+        if separate_smoke
+            && self.state.phase == Phase::Completed
+            && self.separate_smoke_first.is_none()
+        {
+            self.separate_smoke_first = Some([self.samples.len(), self.separate.samples.len()]);
+            // A rejected GUI Start must retain both acquired histories.
+            let step = self.settings.config.step;
+            self.settings.config.step = 0.0;
+            self.start_run();
+            assert_eq!(self.samples.len(), self.separate_smoke_first.unwrap()[0]);
+            assert_eq!(
+                self.separate.samples.len(),
+                self.separate_smoke_first.unwrap()[1]
+            );
+            assert!(!self.pending_run);
+            self.start_error = None;
+            self.settings.config.step = step / 100.0;
+            self.settings.config.start /= 100.0;
+            self.settings.config.stop /= 100.0;
+            self.start_run();
+        }
         let limit_smoke = self.smoke && std::env::args().any(|arg| arg == "--gui-limit-smoke");
         let smoke_outcome = if dc_smoke {
             self.dc_smoke_stage == 10
@@ -5074,6 +4035,7 @@ impl eframe::App for IvApp {
                     .is_some_and(|alert| alert.kind == ProtectionKind::MeasurementLimit)
         } else {
             self.state.phase == Phase::Completed
+                && (!separate_smoke || self.state.run_id >= 2)
                 && self.state.points == self.state.total
                 && (!std::env::args().any(|arg| arg == "--gui-reference-smoke")
                     || self
@@ -5127,6 +4089,15 @@ impl eframe::App for IvApp {
                     println!(
                         "{}",
                         serde_json::json!({"gui_smoke":"passed","points":self.state.points,"output":self.state.output,"elapsed_s":self.started.elapsed().as_secs_f64(),"csv":self.state.path,
+                    "plot_data_bounds":ctx.data(|data|data.get_temp::<[f64;4]>(egui::Id::new("sweep_data_bounds"))),
+                    "mode":self.settings.config.mode,
+                    "reference_display":self.settings.reference_display,
+                    "run_id":self.run_id,"history_points":self.samples.len(),"separate_points":self.separate.samples.iter().filter(|p|p.1.is_finite()).count(),"first_run_histories":self.separate_smoke_first,
+                    "stop_visible":ctx.data(|data|data.get_temp::<bool>(egui::Id::new("run_stop_visible"))),
+                    "measurement_controls_visible":ctx.data(|data|data.get_temp::<bool>(egui::Id::new("measurement_controls_visible"))),
+                    "measurement_controls_bounds":ctx.data(|data|data.get_temp::<[f32;4]>(egui::Id::new("measurement_controls_bounds"))),
+                    "separate_primary_bounds":ctx.data(|data|data.get_temp::<[f64;4]>(egui::Id::new(("plot_bounds", "separate_primary")))),
+                    "separate_reference_bounds":ctx.data(|data|data.get_temp::<[f64;4]>(egui::Id::new(("plot_bounds", "separate_reference")))),
                     "two_card_columns":self.settings.two_card_columns && ctx.content_rect().width() >= 1380.0,"plot_bounds":ctx.data(|data|data.get_temp::<[f32;4]>(egui::Id::new("reference_plot_bounds"))),"reference_meter_assigned":self.settings.reference_meter_id.is_some(),"first_ui_update_s":self.first_frame_s,"mean_ui_cpu_ms":self.ui_cpu_s*1000.0/self.ui_frames.max(1) as f64})
                     );
                 }
@@ -5182,6 +4153,8 @@ fn draw_sweep_series<'a>(
     plot_ui: &mut PlotUi<'a>,
     series: &'a [Vec<PlotPoint>; 3],
     reference: bool,
+    quantity: &str,
+    show_direction: bool,
 ) {
     for (values, (direction, color)) in
         series
@@ -5192,7 +4165,13 @@ fn draw_sweep_series<'a>(
             .split(|point| !point.x.is_finite() || !point.y.is_finite())
             .filter(|segment| !segment.is_empty())
         {
-            let name = direction; // Shared name/id groups both measurements in the legend.
+            let name = if quantity.is_empty() {
+                direction.to_owned()
+            } else if show_direction {
+                format!("{quantity} · {direction}")
+            } else {
+                quantity.to_owned()
+            };
             let style = if reference {
                 LineStyle::dotted_dense()
             } else if direction == "backward" {
@@ -5201,7 +4180,7 @@ fn draw_sweep_series<'a>(
                 LineStyle::Solid
             };
             plot_ui.line(
-                Line::new(name, PlotPoints::Borrowed(segment))
+                Line::new(name.clone(), PlotPoints::Borrowed(segment))
                     .color(color)
                     .width(if direction == "forward" {
                         3.0_f32
@@ -5559,6 +4538,143 @@ mod tests {
         assert!(!dual_uses_meter_axis(true, true, false));
         assert!(dual_uses_meter_axis(true, true, true));
         assert!(dual_uses_meter_axis(false, true, true));
+    }
+
+    #[test]
+    fn measurement_controls_fit_narrow_and_wide_center_panes() {
+        let context = egui::Context::default();
+        let creation = eframe::CreationContext::_new_kittest(context.clone());
+        let mut app = IvApp::new(
+            &creation,
+            true,
+            None,
+            Arc::new(AtomicBool::new(false)),
+            Instant::now(),
+            None,
+            None,
+        )
+        .unwrap();
+        app.settings.filename = "sample_4.2K_long_measurement_name".into();
+        for mode in [Mode::Iv, Mode::Vi] {
+            app.settings.config.mode = mode;
+            for width in [384.0, 400.0, 560.0, 760.0] {
+                // Two passes let Grid resolve its cached column sizes.
+                for _ in 0..2 {
+                    let _ = context.run_ui(egui::RawInput::default(), |ui| {
+                        ui.set_width(width);
+                        ui.set_clip_rect(egui::Rect::from_min_size(
+                            ui.cursor().min,
+                            Vec2::new(width, 650.0),
+                        ));
+                        app.measurement_controls(ui);
+                    });
+                }
+                assert!(
+                    context
+                        .data(|d| d.get_temp::<bool>(egui::Id::new("measurement_controls_visible")))
+                        .unwrap(),
+                    "Measurement overflow at {width} px, mode {mode:?}"
+                );
+                assert!(
+                    context
+                        .data(|d| d.get_temp::<bool>(egui::Id::new("run_stop_visible")))
+                        .unwrap()
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn sweep_plot_refits_on_mode_run_and_dual_chart_changes_but_keeps_current_zoom() {
+        let context = egui::Context::default();
+        let creation_context = eframe::CreationContext::_new_kittest(context.clone());
+        let mut app = IvApp::new(
+            &creation_context,
+            true,
+            None,
+            Arc::new(AtomicBool::new(false)),
+            Instant::now(),
+            None,
+            None,
+        )
+        .unwrap();
+        // Use the production renderer, including its plot identity and memory.
+        let render = |app: &IvApp, id: &'static str, x: f64, y: f64| {
+            let samples = vec![
+                (-x, -y, "forward".into(), [None, None]),
+                (x, y, "forward".into(), [None, None]),
+            ];
+            let series = plot_series(&samples);
+            let mut actual_id = egui::Id::NULL;
+            let _ = context.run_ui(egui::RawInput::default(), |ui| {
+                actual_id = ui.make_persistent_id(egui::Id::new(id));
+                app.render_sweep_plot(
+                    ui,
+                    id,
+                    "Source",
+                    "",
+                    "A",
+                    "Voltage",
+                    "V",
+                    &samples,
+                    &series,
+                    [x, y],
+                    &[],
+                    &Default::default(),
+                    [0.0; 2],
+                    300.0,
+                    false,
+                );
+            });
+            (actual_id, PlotMemory::load(&context, actual_id).unwrap())
+        };
+        let zoom = |id| {
+            let mut memory = PlotMemory::load(&context, id).unwrap();
+            memory.auto_bounds = false.into();
+            memory.set_bounds(egui_plot::PlotBounds::from_min_max(
+                [-1.0, -0.001],
+                [1.0, 0.001],
+            ));
+            memory.store(&context, id);
+        };
+        let (id, _) = render(&app, "iv_plot", 0.0005, 1.026);
+        zoom(id);
+        let (_, retained) = render(&app, "iv_plot", 0.0005, 1.026);
+        assert!(!retained.auto_bounds.x && !retained.auto_bounds.y);
+        assert_eq!(retained.bounds().max(), [1.0, 0.001]);
+
+        app.settings.config.mode = Mode::Vi;
+        let (_, fitted) = render(&app, "iv_plot", 0.0005, 1.026);
+        assert!(fitted.auto_bounds.x && fitted.auto_bounds.y);
+        assert!(fitted.bounds().max()[0] < 0.001);
+        assert!(fitted.bounds().max()[1] >= 1.026);
+
+        zoom(id);
+        app.run_id += 1;
+        let (_, fitted) = render(&app, "iv_plot", 0.0005, 1.026);
+        assert!(fitted.auto_bounds.x && fitted.auto_bounds.y);
+        assert!(fitted.bounds().max()[0] < 0.001);
+
+        app.settings.config.mode = Mode::Iv;
+        let (dual_id, _) = render(&app, "dual_source_plot", 0.001, 1e-6);
+        zoom(dual_id);
+        render(&app, "iv_plot", 0.001, 1e-6);
+        let (_, fitted) = render(&app, "dual_source_plot", 0.001, 1e-6);
+        assert!(fitted.auto_bounds.x && fitted.auto_bounds.y);
+        let (_, fitted) = render(&app, "dual_meter_plot", 0.0008, 1e-6);
+        assert!(fitted.auto_bounds.x && fitted.auto_bounds.y);
+        // Rendering the lower separate plot must not reset the upper plot's
+        // independent y zoom on every frame. Linked x gestures are covered
+        // through PlotUi in verify_reference_gui.py, not by editing memory
+        // behind the linked group's back.
+        let (upper, _) = render(&app, "separate_primary", 1e-5, 0.02);
+        render(&app, "separate_reference", 1e-5, 35e-6);
+        zoom(upper);
+        render(&app, "separate_primary", 1e-5, 0.02);
+        render(&app, "separate_reference", 1e-5, 35e-6);
+        let (_, retained) = render(&app, "separate_primary", 1e-5, 0.02);
+        assert!(!retained.auto_bounds.y);
+        assert_eq!(retained.bounds().max()[1], 0.001);
     }
 
     #[test]

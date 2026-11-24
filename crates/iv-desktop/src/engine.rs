@@ -409,6 +409,20 @@ pub fn serve() -> Result<(), String> {
         let (gui_job_id, command) = match rx.recv_timeout(wait) {
             Ok(command) => command,
             Err(mpsc::RecvTimeoutError::Timeout) => {
+                // The reader can decide a rejection while an owner is still
+                // active and store it just after that owner drained the slots.
+                // Once no owner or safety command remains to report it, the
+                // idle loop must surface it, or the error and GUI job are lost.
+                if !control.running.load(Ordering::Acquire)
+                    && control.pending_safety.load(Ordering::Acquire) == 0
+                    && let Some(rejected_jobs) = take_rejected_requests(&control, &mut state)
+                {
+                    stop_sources_before_monitor_halt(pair.as_mut(), &mut state, &control);
+                    for id in rejected_jobs {
+                        complete_gui_job(&mut state, id);
+                    }
+                    publish(&latest, &state);
+                }
                 if inventory::service_command(pair.as_mut(), &mut state, &control) {
                     publish(&latest, &state);
                 }
@@ -1046,68 +1060,29 @@ pub fn serve() -> Result<(), String> {
             _ => Ok(()),
         };
         if let Err(error) = result {
-            if state.source2_connected && state.output != OutputState::Off {
-                clean_output(pair.as_mut(), &mut state, None, &control);
+            state.error = error.into();
+            stop_sources_before_monitor_halt(pair.as_mut(), &mut state, &control);
+            if let Err(other) = shutdown_gate(pair.as_mut(), &mut state) {
+                state.error = format!("{} · {other}", state.error).into();
             }
-            let gate_error = shutdown_gate(pair.as_mut(), &mut state).err();
             state.phase = Phase::Failed;
-            state.error = match gate_error {
-                Some(other) => format!("{error} · {other}"),
-                None => error,
-            }
-            .into();
             state.message = "Review the error and reconnect if needed.".into();
         }
         acknowledge_safety(&control, safety_intent);
         if owns_output {
             control.running.store(false, Ordering::Release);
         }
-        let rejected_gate_job = control
-            .gate_request_rejected
-            .lock()
-            .ok()
-            .and_then(|mut rejected| rejected.take());
-        let rejected_source_dc_job = control
-            .source_dc_request_rejected
-            .lock()
-            .ok()
-            .and_then(|mut rejected| rejected.take());
-        let rejected_run_job = control
-            .run_request_rejected
-            .lock()
-            .ok()
-            .and_then(|mut rejected| rejected.take());
-        if rejected_gate_job.is_some() {
-            // This is a command-admission error, not a late configuration
-            // change.  The request was discarded while the run owned both
-            // the IV outputs and the gate remained at its verified level.
-            state.phase = Phase::Failed;
-            state.error = "Gate voltage changes are rejected while an IV run is active. Wait for the run to finish, then set the gate voltage.".into();
-            state.message = "Gate voltage was not changed during the IV run.".into();
-        }
-        if rejected_source_dc_job.is_some() {
-            state.phase = Phase::Failed;
-            state.error = "Source DC changes are rejected while an IV run is active. Wait for the run to finish, then enable DC output.".into();
-            state.message = "Source DC output was not changed during the IV run.".into();
-        }
-        if rejected_run_job.is_some() {
-            state.phase = Phase::Failed;
-            state.error = "A measurement is already active or queued. Wait for it to finish before starting another run.".into();
-            state.message = "The second Start request was not queued.".into();
+        let rejected_jobs = take_rejected_requests(&control, &mut state);
+        if rejected_jobs.is_some() {
+            stop_sources_before_monitor_halt(pair.as_mut(), &mut state, &control);
         }
         if let Some(id) = gui_job_id {
             complete_gui_job(&mut state, id);
         }
-        // A tagged gate update rejected while a run held the outputs has no
-        // queued command to complete.  Record its final admission error only
-        // after the run's cleanup and error handling have finished.
-        if let Some(Some(id)) = rejected_gate_job {
-            complete_gui_job(&mut state, id);
-        }
-        if let Some(Some(id)) = rejected_source_dc_job {
-            complete_gui_job(&mut state, id);
-        }
-        if let Some(Some(id)) = rejected_run_job {
+        // A tagged request rejected while another operation held the outputs
+        // has no queued command to complete.  Record its final admission
+        // error only after the owner's cleanup and error handling finished.
+        for id in rejected_jobs.into_iter().flatten() {
             complete_gui_job(&mut state, id);
         }
         publish(&latest, &state);
@@ -1414,6 +1389,46 @@ fn display_snapshot(state: &Snapshot) -> Snapshot {
         }
     }
     snapshot
+}
+
+/// Drain admission rejections recorded by the stdin reader, latch their
+/// errors into `state`, and return the GUI job ids that still need a
+/// completion.  `None` means no request was rejected since the last drain.
+fn take_rejected_requests(control: &Control, state: &mut Snapshot) -> Option<Vec<String>> {
+    let take = |slot: &Mutex<Option<Option<String>>>| {
+        slot.lock().ok().and_then(|mut rejected| rejected.take())
+    };
+    let gate = take(&control.gate_request_rejected);
+    let source_dc = take(&control.source_dc_request_rejected);
+    let run = take(&control.run_request_rejected);
+    if gate.is_none() && source_dc.is_none() && run.is_none() {
+        return None;
+    }
+    if gate.is_some() {
+        // This is a command-admission error, not a late configuration
+        // change.  The request was discarded while the run owned both
+        // the IV outputs and the gate remained at its verified level.
+        state.phase = Phase::Failed;
+        state.error = "Gate voltage changes are rejected while an IV run is active. Wait for the run to finish, then set the gate voltage.".into();
+        state.message = "Gate voltage was not changed during the IV run.".into();
+    }
+    if source_dc.is_some() {
+        state.phase = Phase::Failed;
+        state.error = "Source DC changes are rejected while an IV run is active. Wait for the run to finish, then enable DC output.".into();
+        state.message = "Source DC output was not changed during the IV run.".into();
+    }
+    if run.is_some() {
+        state.phase = Phase::Failed;
+        state.error = "A measurement is already active or queued. Wait for it to finish before starting another run.".into();
+        state.message = "The second Start request was not queued.".into();
+    }
+    Some(
+        [gate, source_dc, run]
+            .into_iter()
+            .flatten()
+            .flatten()
+            .collect(),
+    )
 }
 
 fn publish(shared: &StateFeed, state: &Snapshot) {
@@ -2249,7 +2264,8 @@ fn monitor_reading(
                 "SENS:{}:DC:RANG?",
                 iv_core::measurement_definition(mode).meter_function
             );
-            let range_query = display_queries.map_or(default_range_query.as_str(), |(range, _)| range);
+            let range_query =
+                display_queries.map_or(default_range_query.as_str(), |(range, _)| range);
             let range = positive_reading(&monitor_query(pair, Role::Meter, range_query, control)?);
             // Idle OFF readings may autorange freely. Once any source is ON,
             // retain the baseline and enforce the same loading policy as a sweep.
@@ -2262,7 +2278,9 @@ fn monitor_reading(
                 return Err(off.map_or(error.clone(), |e| format!("{error} · {e}")));
             }
             let resolution = match display_queries {
-                Some((_, query)) => positive_reading(&monitor_query(pair, Role::Meter, query, control)?),
+                Some((_, query)) => {
+                    positive_reading(&monitor_query(pair, Role::Meter, query, control)?)
+                }
                 None => None,
             };
             (range, resolution)
@@ -2415,6 +2433,27 @@ fn shutdown_gate_for_recording_failure(pair: Option<&mut DevicePair>, state: &mu
             ErrorKind::OutputSafety,
             format!("{previous}Gate shutdown after recording failure failed: {error}"),
         );
+        state.phase = Phase::Failed;
+    }
+}
+
+/// A latched error disables idle monitoring. A confirmed ON source must
+/// not remain ON without that monitor and its meter-loading guard.
+/// Keep both the original error and a failed OFF confirmation visible.
+fn stop_sources_before_monitor_halt(
+    pair: Option<&mut DevicePair>,
+    state: &mut Snapshot,
+    control: &Control,
+) {
+    // Unknown stays unverified. In particular, do not repeat an entire
+    // failed OFF/recovery budget merely to publish its existing failure.
+    if (state.source_connected && state.output == OutputState::On)
+        || (state.source2_connected && state.source2_output == OutputState::On)
+    {
+        let (_, result) = stop::sweep(pair, state, None, control);
+        if let Err(error) = result {
+            state.error = format!("{} · {error}", state.error).into();
+        }
         state.phase = Phase::Failed;
     }
 }
@@ -3207,9 +3246,8 @@ fn execute(
                 &mut audit,
                 begin,
             )?;
-            let auto_monitored =
-                meter::monitored(config, device.scpi_range_route(Role::Meter))
-                    && iv_core::selected_meter_range(config).is_none();
+            let auto_monitored = meter::monitored(config, device.scpi_range_route(Role::Meter))
+                && iv_core::selected_meter_range(config).is_none();
             // Auto voltage meters report the CONF default range until their
             // first conversion; that baseline is primed just before OUTP ON.
             if auto_monitored && config.mode != Mode::Vi {
@@ -4236,6 +4274,55 @@ mod tests {
             closed: AtomicBool::new(false),
             heartbeat: Mutex::new(Instant::now()),
         }
+    }
+
+    #[test]
+    fn monitoring_halt_verifies_primary_or_secondary_off_and_preserves_failed_confirmation() {
+        for secondary in [false, true] {
+            let mut state = Snapshot {
+                source_connected: !secondary,
+                source_simulation: !secondary,
+                source2_connected: secondary,
+                source2_simulation: secondary,
+                error: "Original command error".into(),
+                ..Default::default()
+            };
+            if secondary {
+                state.source2_output = OutputState::On;
+            } else {
+                state.output = OutputState::On;
+            }
+            stop_sources_before_monitor_halt(None, &mut state, &live_control());
+            assert_eq!(
+                if secondary {
+                    state.source2_output
+                } else {
+                    state.output
+                },
+                OutputState::Off
+            );
+            assert_eq!(state.phase, Phase::Failed);
+            assert_eq!(state.error.as_str(), "Original command error");
+        }
+        let mut state = Snapshot {
+            source_connected: true,
+            source_simulation: false,
+            output: OutputState::On,
+            error: "Original command error".into(),
+            ..Default::default()
+        };
+        stop_sources_before_monitor_halt(None, &mut state, &live_control());
+        assert_eq!(state.output, OutputState::Unknown);
+        assert!(state.error.contains("Original command error"));
+        assert!(state.error.contains("Source transport is unavailable"));
+        assert_eq!(state.phase, Phase::Failed);
+        let error = state.error.clone();
+        stop_sources_before_monitor_halt(None, &mut state, &live_control());
+        assert_eq!(
+            state.error, error,
+            "do not repeat a failed OFF recovery budget"
+        );
+        assert_eq!(state.output, OutputState::Unknown);
     }
 
     #[test]

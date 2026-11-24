@@ -312,20 +312,89 @@ pub fn instrument_profile(id: &str) -> Result<Option<InstrumentProfile>, String>
 mod tests {
     use super::*;
 
+    /// Rows of the README "Hardware / 対応機器" table as (role cell, model IDs, route cell).
+    /// Model IDs are the backticked tokens of the "Role · model ID" column.
+    fn readme_hardware_rows(readme: &str) -> Vec<(String, Vec<String>, String)> {
+        let section = readme
+            .split("\n## Hardware / 対応機器")
+            .nth(1)
+            .expect("README has a Hardware / 対応機器 section");
+        let section = section.split("\n## ").next().unwrap();
+        section
+            .lines()
+            .filter(|line| line.starts_with('|'))
+            .skip(2) // header and separator
+            .map(|line| {
+                let cells: Vec<&str> = line.trim_matches('|').split('|').map(str::trim).collect();
+                assert_eq!(cells.len(), 3, "unexpected README hardware row: {line}");
+                let ids = cells[1]
+                    .split('`')
+                    .skip(1)
+                    .step_by(2)
+                    .map(str::to_owned)
+                    .collect::<Vec<_>>();
+                assert!(
+                    !ids.is_empty(),
+                    "README hardware row has no model ID: {line}"
+                );
+                (cells[1].to_owned(), ids, cells[2].to_owned())
+            })
+            .collect()
+    }
+
     #[test]
     fn every_registered_model_is_listed_in_the_readme_and_supports_its_dc_modes() {
-        let readme = include_str!("../../../README.md");
+        let rows = readme_hardware_rows(include_str!("../../../README.md"));
+        let mut documented = Vec::new();
+        for (role_cell, ids, route_cell) in &rows {
+            for id in ids {
+                let descriptor = instrument_descriptor(id)
+                    .unwrap_or_else(|| panic!("README lists unregistered model ID {id}"));
+                let role = match descriptor.role {
+                    InstrumentRole::Source => "Source",
+                    InstrumentRole::Meter => "Meter",
+                };
+                assert!(
+                    role_cell.starts_with(role),
+                    "README lists {id} as '{role_cell}', catalog role is {role}"
+                );
+                assert_eq!(
+                    descriptor.simulation,
+                    route_cell.starts_with("Simulation only"),
+                    "README physical-connection column for {id} disagrees with the catalog simulation flag"
+                );
+                documented.push(id.as_str());
+            }
+        }
+        let mut registered = Vec::new();
         for role in [InstrumentRole::Source, InstrumentRole::Meter] {
             for descriptor in instrument_catalog(role) {
                 assert!(
-                    readme.contains(descriptor.id),
-                    "README is missing {}",
+                    descriptor.supports_mode(crate::Mode::Iv),
+                    "{} lacks IV",
                     descriptor.id
                 );
-                assert!(descriptor.supports_mode(crate::Mode::Iv));
-                assert!(descriptor.supports_mode(crate::Mode::Vi));
+                assert!(
+                    descriptor.supports_mode(crate::Mode::Vi),
+                    "{} lacks VI",
+                    descriptor.id
+                );
+                registered.push(descriptor.id);
             }
         }
+        let mut sorted_documented = documented.clone();
+        sorted_documented.sort_unstable();
+        sorted_documented.dedup();
+        assert_eq!(
+            documented.len(),
+            sorted_documented.len(),
+            "README repeats a model ID"
+        );
+        registered.sort_unstable();
+        assert_eq!(
+            sorted_documented, registered,
+            "README hardware table and instrument catalog differ"
+        );
     }
 
     #[test]

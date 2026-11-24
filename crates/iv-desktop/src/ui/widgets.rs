@@ -14,6 +14,11 @@ pub(super) const PURPLE: Color32 = Color32::from_rgb(179, 155, 248);
 pub(super) const TEAL: Color32 = Color32::from_rgb(63, 215, 194);
 pub(super) const MUTED: Color32 = Color32::from_rgb(160, 163, 176);
 pub(super) const RED: Color32 = Color32::from_rgb(255, 123, 130);
+/// TRKR device-inventory header and status colours.
+pub(super) const GRIP: Color32 = Color32::from_rgb(108, 113, 123);
+pub(super) const CONNECTED: Color32 = Color32::from_rgb(93, 196, 146);
+pub(super) const DROP_LINE: Color32 = Color32::from_rgb(79, 143, 238);
+pub(super) const DELETE_WIDTH: f32 = 53.0;
 
 pub(super) fn meter_range_choice(
     ui: &mut egui::Ui,
@@ -57,21 +62,50 @@ pub(super) fn meter_range_choice(
     before != *value
 }
 
-pub(super) const DC_BUTTON_WIDTH: f32 = 92.0;
+pub(super) const DC_BUTTON_WIDTH: f32 = 80.0;
+pub(super) const DEVICE_BUTTON_WIDTH: f32 = 66.0;
 
 pub(super) fn device_width(ui: &egui::Ui) -> f32 {
     (ui.available_width() - DC_BUTTON_WIDTH - ui.spacing().item_spacing.x).max(80.0)
 }
 
+pub(super) const STATUS_DOT_X: f32 = 4.0;
+pub(super) const STATUS_TEXT_X: f32 = 11.0;
+pub(super) const STATUS_FONT_SIZE: f32 = 11.0;
+
+pub(super) fn device_status_text(connected: bool) -> &'static str {
+    if connected {
+        "Connected"
+    } else {
+        "Disconnected"
+    }
+}
+
+/// Width the compact connection state needs on the Device row.
+#[cfg(test)]
+pub(super) fn device_status_width(ctx: &egui::Context, connected: bool) -> f32 {
+    let galley = ctx.fonts_mut(|fonts| {
+        fonts.layout_no_wrap(
+            device_status_text(connected).to_owned(),
+            egui::FontId::proportional(STATUS_FONT_SIZE),
+            TEXT,
+        )
+    });
+    STATUS_TEXT_X + galley.size().x
+}
+
+/// Device row of every card: disclosure and compact connection state; the
+/// model is shown on hover and in the expanded Model field.
 pub(super) fn device_disclosure(
     ui: &mut egui::Ui,
     summary: &str,
+    connected: bool,
     width: f32,
     open: &mut bool,
 ) -> egui::Response {
     let label = "   Device";
     let response = ui.add_sized(
-        [71.0, 24.0],
+        [DEVICE_BUTTON_WIDTH, 24.0],
         egui::Button::new(label).truncate().fill(BUTTON),
     );
     let center = egui::pos2(response.rect.left() + 11., response.rect.center().y);
@@ -91,11 +125,31 @@ pub(super) fn device_disclosure(
     if response.clicked() {
         *open = !*open;
     }
-    ui.add_sized(
-        [(width - 71.0 - ui.spacing().item_spacing.x).max(0.0), 24.0],
-        egui::Label::new(RichText::new(format!("•  {summary}")).color(TEXT)).truncate(),
-    )
-    .on_hover_text(summary);
+    let status = device_status_text(connected);
+    // Compact state: dot and word only.  The model stays in the hover text
+    // and in the expanded Model field, so narrow cards never hide the state.
+    let (rect, label) = ui.allocate_exact_size(
+        Vec2::new(
+            (width - DEVICE_BUTTON_WIDTH - ui.spacing().item_spacing.x).max(0.0),
+            24.0,
+        ),
+        egui::Sense::hover(),
+    );
+    let color = if connected { CONNECTED } else { MUTED };
+    let painter = ui.painter_at(rect);
+    painter.circle_filled(
+        egui::pos2(rect.left() + STATUS_DOT_X, rect.center().y),
+        3.5,
+        color,
+    );
+    painter.text(
+        egui::pos2(rect.left() + STATUS_TEXT_X, rect.center().y),
+        egui::Align2::LEFT_CENTER,
+        status,
+        egui::FontId::proportional(STATUS_FONT_SIZE),
+        color,
+    );
+    label.on_hover_text(format!("{summary}\n{status}"));
     response.on_hover_text(summary)
 }
 
@@ -106,7 +160,7 @@ pub(super) fn meter_range_help(model: &str, mode: iv_core::Mode, range: Option<f
         "voltage"
     };
     let mut help = format!(
-        "{function} measurement range. Fixed holds one range for the whole sweep; Limit is a separate stop threshold."
+        "{function} measurement range. Fixed holds one range for the whole sweep; Limit is a separate stop threshold. Range is full-scale, not the smallest measurable signal. Readout units follow the current value; resolution and accuracy are separate from range."
     );
     if model == "ADCMT_7461A" && mode == iv_core::Mode::Vi {
         help.push_str(
@@ -180,14 +234,26 @@ pub(super) fn section(ui: &mut egui::Ui, title: &str, add: impl FnOnce(&mut egui
     );
 }
 
+/// Delete availability for one card header.  A disabled Delete always keeps
+/// its explanation as hover text.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) enum CardDelete<'a> {
+    Allowed,
+    Blocked(&'a str),
+}
+
+/// Every Source and Meter card frame: TRKR drag grip, `Kind:` inline label
+/// and Delete in the header, then the shared body.  Returns whether Delete
+/// was clicked.
 pub(super) fn device_card(
     ui: &mut egui::Ui,
     id: u64,
-    connected: bool,
     reorder: bool,
+    delete: CardDelete<'_>,
     header: impl FnOnce(&mut egui::Ui),
     body: impl FnOnce(&mut egui::Ui),
-) {
+) -> bool {
+    let mut delete_clicked = false;
     egui::Frame::new()
         .fill(PANEL)
         .corner_radius(10)
@@ -196,45 +262,57 @@ pub(super) fn device_card(
         .show(ui, |ui| {
             ui.set_min_size(Vec2::new(ui.available_width(), 198.0));
             ui.horizontal(|ui| {
-                let grip = ui.add_sized(
-                    [14.0, 20.0],
-                    egui::Label::new(RichText::new("::").color(MUTED)).sense(if reorder {
+                ui.spacing_mut().item_spacing.x = 4.0;
+                let (grip_rect, grip) = ui.allocate_exact_size(
+                    Vec2::new(17.0, 22.0),
+                    if reorder {
                         egui::Sense::drag()
                     } else {
                         egui::Sense::hover()
-                    }),
+                    },
                 );
+                let dot = if grip.hovered() { TEXT } else { GRIP };
+                for dx in [5.0, 10.0] {
+                    for dy in [6.0, 11.0, 16.0] {
+                        ui.painter()
+                            .circle_filled(grip_rect.min + Vec2::new(dx, dy), 1.0, dot);
+                    }
+                }
                 if reorder {
                     grip.dnd_set_drag_payload(id);
                     grip.on_hover_cursor(egui::CursorIcon::Grab)
-                        .on_hover_text("Drag to reorder");
+                        .on_hover_text("Drag to rearrange · order is saved with Config");
                 }
-                let status_width = 76.0;
                 let title_width =
-                    (ui.available_width() - status_width - ui.spacing().item_spacing.x).max(10.0);
+                    (ui.available_width() - DELETE_WIDTH - ui.spacing().item_spacing.x).max(10.0);
                 ui.allocate_ui_with_layout(
-                    Vec2::new(title_width, 20.0),
+                    Vec2::new(title_width, 23.0),
                     egui::Layout::left_to_right(egui::Align::Center),
                     |ui| {
                         ui.set_width(title_width);
                         header(ui);
                     },
                 );
-                ui.add_sized(
-                    [status_width, 20.0],
-                    egui::Label::new(
-                        RichText::new(if connected {
-                            "Connected"
-                        } else {
-                            "Disconnected"
-                        })
-                        .size(10.0)
-                        .color(if connected { TEAL } else { MUTED }),
-                    ),
+                let allowed = delete == CardDelete::Allowed;
+                let response = ui.add_enabled(
+                    allowed,
+                    egui::Button::new("Delete")
+                        .small()
+                        .min_size(Vec2::new(DELETE_WIDTH, 23.0)),
                 );
+                delete_clicked = match delete {
+                    CardDelete::Allowed => response
+                        .on_hover_text("Delete this device from the configuration")
+                        .clicked(),
+                    CardDelete::Blocked(reason) => {
+                        response.on_disabled_hover_text(reason);
+                        false
+                    }
+                };
             });
             body(ui);
         });
+    delete_clicked
 }
 
 pub(super) fn device_name(
@@ -245,7 +323,7 @@ pub(super) fn device_name(
     label: &mut String,
     editable: bool,
 ) -> egui::Response {
-    ui.label(RichText::new(format!("{kind}:")).strong())
+    ui.label(RichText::new(format!("{kind}:")).color(Color32::GRAY))
         .on_hover_text(fallback);
     let hint = fallback.rsplit_once('·').map_or(fallback, |(_, hint)| hint);
     let hint = hint
@@ -371,16 +449,6 @@ pub(super) fn resource_summary(value: &str) -> String {
     }
 }
 
-pub(super) fn state_badge(ui: &mut egui::Ui, text: &str, color: Color32) {
-    egui::Frame::new()
-        .fill(color.gamma_multiply(0.12))
-        .corner_radius(4)
-        .inner_margin(egui::Margin::symmetric(4, 1))
-        .show(ui, |ui| {
-            ui.label(RichText::new(text).size(9.0).color(color).strong());
-        });
-}
-
 pub(super) fn style(ctx: &egui::Context) {
     ctx.set_theme(egui::ThemePreference::Dark);
     let mut visuals = egui::Visuals::dark();
@@ -486,7 +554,7 @@ pub(super) fn quantity(
         let mut display = *value / scale;
         if ui
             .add_sized(
-                [(width - 54.0 - ui.spacing().item_spacing.x).max(65.0), 24.0],
+                [(width - 54.0 - ui.spacing().item_spacing.x).max(56.0), 24.0],
                 egui::DragValue::new(&mut display)
                     .range(if nonnegative {
                         0.0..=f64::MAX
@@ -535,8 +603,8 @@ mod tests {
                         device_card(
                             ui,
                             1,
-                            true,
                             editable,
+                            CardDelete::Allowed,
                             |ui| {
                                 source_name = device_name(
                                     ui,
@@ -553,8 +621,8 @@ mod tests {
                         device_card(
                             ui,
                             2,
-                            true,
                             editable,
+                            CardDelete::Allowed,
                             |ui| {
                                 device_name(
                                     ui,
@@ -600,12 +668,21 @@ mod tests {
                 let width = device_width(ui);
                 let mut open = false;
                 ui.horizontal(|ui| {
-                    rects.push(device_disclosure(ui, "Yokogawa GS210", width, &mut open).rect);
+                    rects.push(
+                        device_disclosure(ui, "Yokogawa GS210", false, width, &mut open).rect,
+                    );
                     button(ui, "DC output", DC_BUTTON_WIDTH, true);
                 });
                 ui.horizontal(|ui| {
                     rects.push(
-                        device_disclosure(ui, "Long meter model identifier", width, &mut open).rect,
+                        device_disclosure(
+                            ui,
+                            "Long meter model identifier",
+                            true,
+                            width,
+                            &mut open,
+                        )
+                        .rect,
                     );
                 });
                 ui.horizontal(|ui| {
@@ -621,6 +698,119 @@ mod tests {
         assert!((rects[0].width() - rects[1].width()).abs() < 0.1);
         let (edge, browse) = ends.unwrap();
         assert!((edge - browse).abs() < 0.1, "edge={edge} browse={browse}");
+    }
+
+    #[test]
+    fn narrow_source_device_rows_keep_the_connection_state_visible_beside_dc_output() {
+        let context = egui::Context::default();
+        style(&context);
+        // Inner widths of the fixed two-column and one-column sidebars.
+        for width in [243.0_f32, 310.0] {
+            let mut checks = Vec::new();
+            let _ = context.run_ui(Default::default(), |ui| {
+                egui::CentralPanel::default().show_inside(ui, |ui| {
+                    let column =
+                        egui::Rect::from_min_size(ui.max_rect().min, Vec2::new(width, 100.0));
+                    ui.scope_builder(egui::UiBuilder::new().max_rect(column), |ui| {
+                        for connected in [false, true] {
+                            ui.horizontal(|ui| {
+                                let row = device_width(ui);
+                                let mut open = false;
+                                let device = device_disclosure(
+                                    ui,
+                                    "Long simulated source model",
+                                    connected,
+                                    row,
+                                    &mut open,
+                                );
+                                let dc = button(ui, "DC output", DC_BUTTON_WIDTH, true);
+                                let status = dc.rect.left()
+                                    - ui.spacing().item_spacing.x
+                                    - device.rect.right()
+                                    - ui.spacing().item_spacing.x;
+                                checks.push((
+                                    connected,
+                                    status,
+                                    device_status_width(ui.ctx(), connected),
+                                    dc.rect.right(),
+                                    column.right(),
+                                ));
+                            });
+                        }
+                    });
+                });
+            });
+            for (connected, available, needed, dc_right, edge) in checks {
+                assert!(
+                    available + 0.5 >= needed,
+                    "{width}: {} needs {needed}, has {available}",
+                    device_status_text(connected)
+                );
+                assert!(dc_right <= edge + 0.5, "{width}: DC output overflows");
+            }
+        }
+    }
+
+    #[test]
+    fn card_header_delete_is_clickable_only_when_allowed_and_stays_inside_the_card() {
+        let context = egui::Context::default();
+        for width in [230.0_f32, 330.0] {
+            for delete in [
+                CardDelete::Allowed,
+                CardDelete::Blocked("Disconnect first."),
+            ] {
+                let frame = |events: Vec<egui::Event>| {
+                    let mut clicked = false;
+                    let mut card = egui::Rect::NOTHING;
+                    let _ = context.run_ui(
+                        egui::RawInput {
+                            events,
+                            ..Default::default()
+                        },
+                        |ui| {
+                            egui::CentralPanel::default().show_inside(ui, |ui| {
+                                let column = egui::Rect::from_min_size(
+                                    ui.max_rect().min,
+                                    Vec2::new(width, 400.0),
+                                );
+                                card = ui
+                                    .scope_builder(egui::UiBuilder::new().max_rect(column), |ui| {
+                                        clicked = device_card(
+                                            ui,
+                                            7,
+                                            true,
+                                            delete,
+                                            |ui| {
+                                                ui.label("Source(V):");
+                                            },
+                                            |_| {},
+                                        );
+                                    })
+                                    .response
+                                    .rect;
+                            });
+                        },
+                    );
+                    (clicked, card)
+                };
+                let (_, card) = frame(vec![]);
+                // TRKR places Delete at the right edge inside the 10 px margin.
+                let pos = egui::pos2(
+                    card.right() - 10.0 - DELETE_WIDTH / 2.0,
+                    card.top() + 10.0 + 11.0,
+                );
+                let press = |pressed| egui::Event::PointerButton {
+                    pos,
+                    button: egui::PointerButton::Primary,
+                    pressed,
+                    modifiers: egui::Modifiers::NONE,
+                };
+                frame(vec![egui::Event::PointerMoved(pos), press(true)]);
+                let (clicked, card) = frame(vec![press(false)]);
+                assert_eq!(clicked, delete == CardDelete::Allowed, "{width} {delete:?}");
+                assert!(card.width() <= width + 0.5, "card grew to {}", card.width());
+            }
+        }
     }
 
     #[test]

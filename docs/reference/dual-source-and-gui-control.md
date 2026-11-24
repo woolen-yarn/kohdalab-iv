@@ -5,19 +5,21 @@ V-I or I-V workflow. Hardware validation of the new mode is pending.
 
 ## Devices and measurement settings
 
-The left panel contains saved Source and Meter entries. Use **+ Add device**
-to select a type and enter an optional label. Set the model and resource on
-the device card. Labels appear on the cards and in the role selectors and
-are saved with the configuration. A newly added device takes over the usual
-Source 1 or Meter card when that role is disconnected. A stored device can
-also be selected from its Device controls. Remove unused entries with **Remove** on
-their inactive cards. In **Settings > Devices**, choose the entries for
-Source 1 and Meter, and, in **Dual V-I** mode, Source 2. Initial assignments
-follow entry order. Active cards keep their normal colors; unused cards are
-dimmed when disconnected. A stored card connects independently and displays
-live readback as soon as it connects. A registered source can take over
-Source 1 once both source outputs are verified OFF. Switching retains both
-connections. All Connect opens the selected roles.
+The left panel contains saved Source and Meter entries. A new configuration
+has exactly one Source and one Meter. Use **+ Add device** to select a type
+and enter an optional label; unlabeled devices are numbered automatically.
+Added devices use the same card as the original ones: drag handle, editable
+label and **Delete** in the header, then **Device** with the connection
+state (the model is shown on hover), the model and resource fields and
+**Connect | Disconnect | Settings**, the live display and, for sources,
+**DC output**. Adding a device never changes the measurement roles. Delete is
+unavailable while a device is connected, assigned to a measurement role, or
+the last device of its kind; the card explains why. In **Settings > Devices**,
+choose the entries for Source 1 and Meter, and, in **Dual V-I** mode, Source 2
+from the existing devices. Source 2, the second Meter and a fixed bias stay
+unassigned until such a device exists. A stored card connects independently
+and displays live readback as soon as it connects. All Connect opens the
+selected roles.
 
 During a sweep, the selected devices keep their live plots and their controls
 are locked. Connected unassigned devices keep their own live plots. Their
@@ -26,9 +28,11 @@ level while the sweep is running. Stop shuts down the sweep sources. All Off
 also shuts down unassigned sources. If an independent source cannot confirm
 OFF after a fault, the engine stops the sweep and attempts recovery. Shared
 GPIB commands are serialized on the controller. Change connections and role
-assignments between sweeps. Open **Device** on the selected Source for sweep
-compliance and the maximum target, or on any Source for manual DC compliance.
-The measurement Meter's **Device** section contains its stop limit, range, and NPLC.
+assignments between sweeps. **Settings** on Source 1 holds sweep
+compliance and the maximum target; every Source shows the same rows and
+holds its own manual DC compliance. The measurement Meter's **Settings**
+holds its stop limit, range, and NPLC; on other Meters, rows that belong to a
+role they do not hold stay visible but disabled with an explanation.
 
 測定中は使用機器の操作がロックされ、ライブプロットは表示されます。接続済みの未割り当て
 機器は測定中もライブ更新を続け、Sourceカードでは固定DC出力のON・OFFとレベル変更が

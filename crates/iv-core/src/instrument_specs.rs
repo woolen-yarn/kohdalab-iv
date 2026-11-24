@@ -1,6 +1,8 @@
 //! Native display policy from reviewed instrument TOML resources.
 use crate::Mode;
-use crate::model_spec::{SCPI_RANGE_RESOLUTION_QUERY, SOURCE_RANGE_TABLE, meter_model, source_model};
+use crate::model_spec::{
+    SCPI_RANGE_RESOLUTION_QUERY, SOURCE_RANGE_TABLE, meter_model, source_model,
+};
 
 /// Resolve a source's programmed range (including legacy range codes).
 /// This is setting resolution, not measurement accuracy or /MON resolution.
@@ -164,7 +166,9 @@ mod tests {
     }
     #[test]
     fn protection_and_simulation_policies_are_preserved() {
-        let protection = source_protection_profile("YOKOGAWA_GS210").unwrap().unwrap();
+        let protection = source_protection_profile("YOKOGAWA_GS210")
+            .unwrap()
+            .unwrap();
         assert_eq!(protection.query, ":STAT:COND?");
         assert_eq!(
             (
@@ -174,8 +178,15 @@ mod tests {
             ),
             (1024, 2048, 8192)
         );
-        assert!(source_protection_profile("YOKOGAWA_7651").unwrap().is_none());
-        assert_eq!(source_range_query("YOKOGAWA_GS210").unwrap(), Some(":SOUR:RANG?"));
+        assert!(
+            source_protection_profile("YOKOGAWA_7651")
+                .unwrap()
+                .is_none()
+        );
+        assert_eq!(
+            source_range_query("YOKOGAWA_GS210").unwrap(),
+            Some(":SOUR:RANG?")
+        );
         assert_eq!(source_range_query("YOKOGAWA_7651").unwrap(), None);
         assert_eq!(
             simulation_display_precision(Mode::Iv).unwrap(),

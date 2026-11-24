@@ -1,5 +1,11 @@
 # KohdaLab IV documentation / ドキュメント
 
+
+- [Download for your OS / OS別ダウンロード](https://github.com/woolen-yarn/kohdalab-iv/releases/latest)
+- [Install and try Simulation / インストールと模擬操作](guides/quick-start.md)
+- [Hardware and connections / 対応機器と接続](reference/hardware.md)
+- [Python and external API / Pythonと外部API](reference/common-control-api.md)
+
 [Product overview / 製品概要](../README.md) · [Downloads / ダウンロード](https://github.com/woolen-yarn/kohdalab-iv/releases) · [Contributing / 開発への参加](../CONTRIBUTING.md)
 
 ## User guides / 操作ガイド
@@ -9,6 +15,7 @@
 - [GS210 + 34411A acceptance record template / GS210 + 34411A 実機受入記録の雛形](validation/gs210-34411a-acceptance.md)
 - [Portable guide / portable版ガイド](guides/portable-guide.md)
 - [Product details / 製品詳細](guides/product-details.md)
+- [Reference display / 参照計器の二段表示](guides/reference-display.md)
 - [Source and meter values / ソース設定値とメーター実測値](guides/source-and-meter-values.md)
 - [Quick start / はじめに](guides/quick-start.md)
 - [Shared instruments (development) / 複数アプリのGPIB共有・開発版](guides/shared-instruments-development.md)
