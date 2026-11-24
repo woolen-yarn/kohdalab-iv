@@ -211,13 +211,16 @@ pub(super) fn connect(
         if pair.is_none() {
             *pair = Some(DevicePair::new(&HelperPaths::discover()?));
         }
-        let pair = pair.as_mut().expect("transport initialized");
+        let pair = pair.as_mut().ok_or("Instrument transport unavailable.")?;
         pair.connect_registered(
             device.id,
             role(device.source),
             &device.resource,
             &device.model,
         )?;
+        // Static invariant: connect_registered just inserted this id and no
+        // I/O occurs before the listing. Returning an error here instead would
+        // orphan a transport-owned connection that the inventory cannot show.
         let info = pair
             .registered_devices()
             .into_iter()
@@ -337,11 +340,11 @@ pub(super) fn disconnect(
     if device.source && device.output != OutputState::Off {
         output_off_one(pair.as_mut(), state, id)?;
     }
-    let device = state
-        .inventory_devices
-        .iter()
-        .find(|entry| entry.id == id)
-        .expect("output off keeps the connection");
+    // Output OFF never removes the entry; if it is gone there is nothing left
+    // to release, matching the early return above.
+    let Some(device) = state.inventory_devices.iter().find(|entry| entry.id == id) else {
+        return Ok(());
+    };
     if !device.simulation {
         pair.as_mut()
             .ok_or("Instrument transport unavailable.")?
@@ -797,6 +800,80 @@ pub(super) fn during_sweep(
     latest: &StateFeed,
     sweep: impl FnOnce(Option<&mut DevicePair>, &mut Snapshot) -> Result<(), String>,
 ) -> Result<(), String> {
+    during_sweep_with(pair, state, control, latest, independent_owner, sweep)
+}
+
+/// Serve unassigned instruments until the sweep finishes or a stop is needed.
+fn independent_owner(
+    parked: &mut Option<DevicePair>,
+    inventory: &mut Snapshot,
+    control: &Control,
+    latest: &StateFeed,
+    sweep_finished: &mpsc::Receiver<()>,
+) {
+    let mut cursor = 0;
+    let mut poll_due = Instant::now();
+    let mut protection_due = Instant::now();
+    while sweep_finished.try_recv() == Err(mpsc::TryRecvError::Empty) {
+        if stop_inventory(control) {
+            if let Err(error) = output_off(parked.as_mut(), inventory) {
+                inventory.inventory_error = error;
+            }
+            publish_inventory(latest, inventory);
+            break;
+        }
+        let mut changed = service_command(parked.as_mut(), inventory, control);
+        if Instant::now() >= protection_due {
+            protection_due = Instant::now() + Duration::from_millis(50);
+            changed |= check_dc(parked.as_mut(), inventory);
+        }
+        if Instant::now() >= poll_due {
+            poll_due = Instant::now() + Duration::from_millis(100);
+            changed |= poll_next(parked.as_mut(), inventory, &mut cursor);
+        }
+        if !inventory.inventory_outputs_managed() {
+            control.inventory_abort.store(true, Ordering::Release);
+            cancel_queued_dc(control);
+            publish_inventory(latest, inventory);
+            break;
+        }
+        if changed {
+            publish_inventory(latest, inventory);
+        } else {
+            std::thread::sleep(Duration::from_millis(10));
+        }
+    }
+}
+
+/// If the independent owner unwinds, stop the sweep exactly as for an
+/// unmanaged output so no source runs without its DC protection.
+struct AbortSweepOnPanic<'a>(&'a Control);
+
+impl Drop for AbortSweepOnPanic<'_> {
+    fn drop(&mut self) {
+        if std::thread::panicking() {
+            self.0.inventory_abort.store(true, Ordering::Release);
+            cancel_queued_dc(self.0);
+        }
+    }
+}
+
+const INDEPENDENT_OWNER_STOPPED: &str = "The independent instrument owner stopped unexpectedly during the sweep; unassigned source outputs were unverified.";
+
+fn during_sweep_with(
+    pair: &mut Option<DevicePair>,
+    state: &mut Snapshot,
+    control: &Control,
+    latest: &StateFeed,
+    owner: impl FnOnce(
+        &mut Option<DevicePair>,
+        &mut Snapshot,
+        &Control,
+        &StateFeed,
+        &mpsc::Receiver<()>,
+    ) + Send,
+    sweep: impl FnOnce(Option<&mut DevicePair>, &mut Snapshot) -> Result<(), String>,
+) -> Result<(), String> {
     let mut parked = pair.as_mut().map(DevicePair::take_parked_for_sweep);
     let mut inventory = Snapshot {
         inventory_devices: state
@@ -814,50 +891,19 @@ pub(super) fn during_sweep(
     control
         .inventory_worker_active
         .store(true, Ordering::Release);
-    let result = std::thread::scope(|scope| {
+    let (result, owner_stopped) = std::thread::scope(|scope| {
         let (sweep_running, sweep_finished) = mpsc::channel::<()>();
         let parked = &mut parked;
         let inventory = &mut inventory;
         let worker = scope.spawn(move || {
-            let mut cursor = 0;
-            let mut poll_due = Instant::now();
-            let mut protection_due = Instant::now();
-            while sweep_finished.try_recv() == Err(mpsc::TryRecvError::Empty) {
-                if stop_inventory(control) {
-                    if let Err(error) = output_off(parked.as_mut(), inventory) {
-                        inventory.inventory_error = error;
-                    }
-                    publish_inventory(latest, inventory);
-                    break;
-                }
-                let mut changed = service_command(parked.as_mut(), inventory, control);
-                if Instant::now() >= protection_due {
-                    protection_due = Instant::now() + Duration::from_millis(50);
-                    changed |= check_dc(parked.as_mut(), inventory);
-                }
-                if Instant::now() >= poll_due {
-                    poll_due = Instant::now() + Duration::from_millis(100);
-                    changed |= poll_next(parked.as_mut(), inventory, &mut cursor);
-                }
-                if !inventory.inventory_outputs_managed() {
-                    control.inventory_abort.store(true, Ordering::Release);
-                    cancel_queued_dc(control);
-                    publish_inventory(latest, inventory);
-                    break;
-                }
-                if changed {
-                    publish_inventory(latest, inventory);
-                } else {
-                    std::thread::sleep(Duration::from_millis(10));
-                }
-            }
+            let _abort = AbortSweepOnPanic(control);
+            owner(parked, inventory, control, latest, &sweep_finished);
         });
         let result = sweep(pair.as_mut().filter(|_| !state.simulation), state);
         drop(sweep_running);
-        worker
-            .join()
-            .expect("independent instrument owner panicked");
-        result
+        // The parked pair is owned outside the worker, so it survives an
+        // unwind and is restored below instead of being dropped.
+        (result, worker.join().is_err())
     });
     control
         .inventory_worker_active
@@ -872,10 +918,127 @@ pub(super) fn during_sweep(
         pending.inventory = None;
     }
     control.inventory_abort.store(false, Ordering::Release);
+    if owner_stopped {
+        // The snapshot may predate the owner's last write, so never trust its
+        // OFF state: request and verify OFF for every unassigned source.
+        let cleanup = output_off(pair.as_mut(), state).err();
+        let mut error = INDEPENDENT_OWNER_STOPPED.to_owned();
+        for detail in [cleanup, result.err().map(|sweep| format!("Sweep: {sweep}"))]
+            .into_iter()
+            .flatten()
+        {
+            error.push(' ');
+            error.push_str(&detail);
+        }
+        return Err(error);
+    }
     if unsafe_output {
         let error = "An independent source output could not be verified during the sweep.";
         let cleanup = output_off(pair.as_mut(), state).err();
         return Err(cleanup.map_or(error.to_owned(), |off| format!("{error} {off}")));
     }
     result
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn unassigned_source(id: u64, simulation: bool) -> InventoryDevice {
+        InventoryDevice {
+            id,
+            source: true,
+            simulation,
+            model: if simulation {
+                "SIMULATED_SOURCE"
+            } else {
+                "YOKOGAWA_GS210"
+            }
+            .into(),
+            resource: format!("GPIB0::{id}::INSTR"),
+            identity: "YOKOGAWA,GS210,1,2".into(),
+            mode: Mode::Iv,
+            assigned: false,
+            auxiliary: false,
+            output: OutputState::Off,
+            dc: None,
+            dc_limits: None,
+            dc_job: None,
+            reading: None,
+            error: String::new(),
+        }
+    }
+
+    #[test]
+    fn panicked_independent_owner_stops_sweep_restores_parked_and_reverifies_off() {
+        let control = Control {
+            stop: AtomicBool::new(false),
+            off: AtomicBool::new(false),
+            gate_request_rejected: Mutex::new(None),
+            source_dc_request_rejected: Mutex::new(None),
+            run_request_rejected: Mutex::new(None),
+            pending_safety: std::sync::atomic::AtomicU8::new(0),
+            inventory_commands: Mutex::default(),
+            inventory_abort: AtomicBool::new(false),
+            inventory_worker_active: AtomicBool::new(false),
+            running: AtomicBool::new(false),
+            closed: AtomicBool::new(false),
+            heartbeat: Mutex::new(Instant::now()),
+        };
+        let latest = StateFeed::default();
+        // No helper is started: the pair has no connection, so the real
+        // source's OFF request cannot be confirmed by the transport.
+        let missing = std::env::temp_dir().join("kohdalab-no-helper");
+        let mut pair = Some(DevicePair::new(&HelperPaths {
+            gpib: missing.clone(),
+            usbtmc: missing,
+            setup: None,
+        }));
+        let mut state = Snapshot {
+            simulation: true,
+            inventory_devices: vec![unassigned_source(1, true), unassigned_source(2, false)],
+            ..Snapshot::default()
+        };
+        let mut sweep_stopped = false;
+        let result = during_sweep_with(
+            &mut pair,
+            &mut state,
+            &control,
+            &latest,
+            |parked, inventory, _, _, _| {
+                assert!(parked.is_some());
+                // A write was dispatched but the owner unwound before it
+                // could record or verify the resulting output state.
+                inventory.inventory_devices[0].output = OutputState::On;
+                panic!("injected independent owner fault");
+            },
+            |_, _| {
+                let deadline = Instant::now() + Duration::from_secs(5);
+                while !control.immediate_stop() && Instant::now() < deadline {
+                    std::thread::sleep(Duration::from_millis(1));
+                }
+                sweep_stopped = control.immediate_stop();
+                Err("Sweep aborted for safety.".into())
+            },
+        );
+        assert!(sweep_stopped, "the sweep must stop once the owner panics");
+        let error = result.unwrap_err();
+        assert!(error.starts_with(INDEPENDENT_OWNER_STOPPED), "{error}");
+        assert!(
+            error.contains("Unassigned source 2 is unavailable."),
+            "{error}"
+        );
+        assert!(
+            error.contains("Sweep: Sweep aborted for safety."),
+            "{error}"
+        );
+        assert!(pair.is_some(), "the parked pair is restored, not dropped");
+        // The simulated source is re-commanded OFF; the real one stays
+        // unverified rather than inheriting the stale OFF snapshot.
+        assert_eq!(state.inventory_devices[0].output, OutputState::Off);
+        assert_eq!(state.inventory_devices[1].output, OutputState::Unknown);
+        assert!(!state.inventory_outputs_managed());
+        assert!(!control.inventory_abort.load(Ordering::Acquire));
+        assert!(!control.inventory_worker_active.load(Ordering::Acquire));
+    }
 }

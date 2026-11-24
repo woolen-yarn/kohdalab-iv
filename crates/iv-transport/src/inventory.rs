@@ -106,6 +106,9 @@ impl DevicePair {
                     id,
                     source: is_source_role(role),
                     model: self.model(role).to_owned(),
+                    // Static invariant: install_role/clear_role are the only
+                    // writers and set the endpoint together with this binding.
+                    // This read-only listing performs no instrument I/O.
                     resource: self
                         .resource(role)
                         .expect("registered role has an endpoint")
@@ -180,21 +183,26 @@ impl DevicePair {
                 verify_off(&connection.endpoint, &connection.model)?;
             }
         }
+        // Both steps check their invariant before moving a connection, so an
+        // error leaves every endpoint either installed or parked, never lost.
         for &role in &changes {
             if let Some(id) = self.registered_roles[role as usize] {
-                self.park_role(role, id);
+                self.park_role(role, id)?;
             }
         }
         for role in changes {
             if let Some(id) = desired[role as usize] {
-                self.assign_registered(id, role);
+                self.assign_registered(id, role)?;
             }
         }
         Ok(())
     }
 
-    fn assign_registered(&mut self, id: u64, role: Role) {
-        let connection = self.registered.remove(&id).expect("connection checked");
+    fn assign_registered(&mut self, id: u64, role: Role) -> Result<(), String> {
+        let connection = self
+            .registered
+            .remove(&id)
+            .ok_or_else(|| format!("Instrument {id} is not connected."))?;
         self.install_role(
             role,
             &connection.model,
@@ -207,6 +215,7 @@ impl DevicePair {
         if !is_source_role(role) {
             *self.meter_discard_mut(role) = connection.meter_discard;
         }
+        Ok(())
     }
 
     fn verify_unbind(&mut self, role: Role) -> Result<(), String> {
@@ -217,15 +226,12 @@ impl DevicePair {
         Ok(())
     }
 
-    fn park_role(&mut self, role: Role, id: u64) {
+    fn park_role(&mut self, role: Role, id: u64) -> Result<(), String> {
         let connection = RegisteredConnection {
-            endpoint: self
-                .endpoint(role)
-                .expect("registered role has an endpoint")
-                .clone(),
+            endpoint: self.endpoint(role)?.clone(),
             kind: self
                 .kind_option(role)
-                .expect("connected endpoint has a kind")
+                .ok_or_else(|| format!("{} connection state is incomplete.", role_name(role)))?
                 .clone(),
             model: self.model(role).to_owned(),
             identity: self.identity(role).to_owned(),
@@ -235,6 +241,7 @@ impl DevicePair {
         };
         self.clear_role(role);
         self.registered.insert(id, connection);
+        Ok(())
     }
 
     /// Query an unassigned instrument through its existing connection and
@@ -300,22 +307,26 @@ impl DevicePair {
     /// Request and verify OFF without reassigning the source. Recovery keeps
     /// the shared helper lease and revalidates identity before sending OFF.
     pub fn force_unassigned_output_off(&mut self, id: u64) -> Result<OutputOffReport, String> {
-        if self
-            .registered
-            .get(&id)
-            .is_none_or(|entry| !is_source_role(entry.role))
-        {
-            return Err(format!("Unassigned source {id} is unavailable."));
-        }
+        self.unassigned_source(id)?;
         let deadline = Instant::now() + Duration::from_secs(28);
         let mut errors = match self.unassigned_off_once(id, deadline) {
             Ok(report) => return Ok(report),
             Err(error) => vec![error],
         };
+        let session = match self.unassigned_source(id) {
+            Ok(entry) => entry.endpoint.session.clone(),
+            Err(error) => {
+                errors.push(error);
+                return Err(format!(
+                    "Could not confirm output OFF. Verify the instrument at its front panel. {}",
+                    errors.join(" ")
+                ));
+            }
+        };
         if self
             .sweep_sessions
             .iter()
-            .any(|(_, session)| Arc::ptr_eq(session, &self.registered[&id].endpoint.session))
+            .any(|(_, owned)| Arc::ptr_eq(owned, &session))
         {
             return Err(format!(
                 "Could not confirm output OFF while the sweep owns the shared helper. {}",
@@ -326,11 +337,10 @@ impl DevicePair {
             if Instant::now() >= deadline {
                 break;
             }
-            let entry = &self.registered[&id];
-            let session = entry.endpoint.session.clone();
-            let kind = entry.kind.clone();
             match self
-                .replace_helper(&session, &kind, deadline)
+                .unassigned_source(id)
+                .map(|entry| (entry.endpoint.session.clone(), entry.kind.clone()))
+                .and_then(|(session, kind)| self.replace_helper(&session, &kind, deadline))
                 .and_then(|()| self.unassigned_off_once(id, deadline))
             {
                 Ok(report) => return Ok(report),
@@ -343,6 +353,15 @@ impl DevicePair {
         ))
     }
 
+    /// Recovery never removes inventory entries, so a missing source here is
+    /// reported as an unconfirmed OFF instead of panicking the OFF owner.
+    fn unassigned_source(&self, id: u64) -> Result<&RegisteredConnection, String> {
+        self.registered
+            .get(&id)
+            .filter(|entry| is_source_role(entry.role))
+            .ok_or_else(|| format!("Unassigned source {id} is unavailable."))
+    }
+
     fn unassigned_off_once(
         &mut self,
         id: u64,
@@ -351,7 +370,8 @@ impl DevicePair {
         let entry = self
             .registered
             .get_mut(&id)
-            .expect("registered source checked");
+            .filter(|entry| is_source_role(entry.role))
+            .ok_or_else(|| format!("Unassigned source {id} is unavailable."))?;
         entry.verify_recovered_identity_before(
             id,
             deadline.min(Instant::now() + Duration::from_secs(5)),
