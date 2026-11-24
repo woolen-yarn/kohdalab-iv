@@ -1,5 +1,10 @@
 # Changelog / 変更履歴
 
+> **Release lineages / リリース系譜:** This file records two separate release lineages. The current stable line is `1.0.x` (workspace `Cargo.toml` version `1.0.7`) and is listed first. The earlier `1.4.x` / `1.3.x` lineage, including its own older `0.x`–`1.2.0` entries, was published under separate release tags (for example `portable-v1.4.2`) and follows below; version numbers are not comparable across the two lineages, so `1.4.8` is not newer than `1.0.7`.
+> このファイルには2つの別系統のリリース履歴があります。現行の安定版は `1.0.x` 系（ワークスペース `Cargo.toml` のバージョン `1.0.7`）で、先頭に掲載します。以前の `1.4.x` / `1.3.x` 系（同系統の旧 `0.x`〜`1.2.0` を含む）は別のリリースタグ（例: `portable-v1.4.2`）で公開されたもので、その後に続きます。両系統のバージョン番号は比較できず、`1.4.8` は `1.0.7` より新しい版ではありません。
+
+# Current stable lineage: 1.0.x / 現行の安定版系譜: 1.0.x
+
 ## 1.0.7
 
 - Align the external-control bar and distinguish control ownership from instrument state. Continue to require verified output OFF on release. Include the common Python SDK 1.0.4.
@@ -38,6 +43,13 @@
 
 
 - ADCMT 7461A GPIB: add fixed DC voltage ranges 0.1 V and 1 V, verified as Auto OFF plus range readback before output ON, and read back the active voltage range after every conversion. Auto stops with output OFF when a range transition changes the input loading or unchanged loading cannot be verified. DC current and VISA USB remain Auto-only without range readback. / ADCMT 7461A GPIB で直流電圧の固定レンジ 0.1 V・1 V を追加。出力 ON 前に Auto OFF とレンジ読み返しを確認し、変換ごとに実レンジを読み返します。Auto のレンジ切替で入力負荷が変化する場合、または同一の負荷を確認できない場合は出力 OFF で停止します。直流電流と VISA USB は従来どおりレンジ読み返しなしの Auto のみです。
+
+---
+
+# Earlier lineage: 1.4.x / 1.3.x and before / 以前の系譜: 1.4.x / 1.3.x 以前
+
+> **Lineage note / 系譜の注記:** The entries below belong to the earlier release lineage published under separate tags such as `portable-v1.4.2`. They are kept unchanged as the historical record; the current stable line is the `1.0.x` lineage above. The `1.0.1` and `1.0.0` entries further below belong to this earlier lineage and are distinct from the current `1.0.x` releases.
+> 以下は `portable-v1.4.2` などの別タグで公開された以前の系譜の記録で、履歴として変更せずに保持します。現行の安定版は上記の `1.0.x` 系です。この下にある `1.0.1`・`1.0.0` の項目は以前の系譜に属し、現行の `1.0.x` とは別のリリースです。
 
 ## 1.4.8 — 2026-11-12
 
