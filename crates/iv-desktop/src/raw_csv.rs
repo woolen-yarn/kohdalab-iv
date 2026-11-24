@@ -49,10 +49,12 @@ pub fn file_sha256(path: &Path) -> Result<String, String> {
 /// in manifests and compared against recorded checksums.
 pub(crate) fn lower_hex(bytes: &[u8]) -> String {
     use std::fmt::Write as _;
-    bytes.iter().fold(String::with_capacity(bytes.len() * 2), |mut text, byte| {
-        let _ = write!(text, "{byte:02x}");
-        text
-    })
+    bytes
+        .iter()
+        .fold(String::with_capacity(bytes.len() * 2), |mut text, byte| {
+            let _ = write!(text, "{byte:02x}");
+            text
+        })
 }
 pub struct RawWriter {
     csv: csv::Writer<File>,
