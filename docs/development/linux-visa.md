@@ -33,31 +33,28 @@ precedence on Linux CI. These are device-free.
 
 ## 2. Official Linux VISA story for supported instruments
 
-The official references below were checked separately (Sol, 2026-11-24) and are
-recorded in the triage research notes. The links still need to be copied into
-this note from those notes before review. This file does not re-quote them, so
-it adds no claim beyond what those sources say.
+The vendor documentation below describes interface support. A supported vendor
+interface is a candidate for testing with IV.
 
 - **Keysight IO Libraries Suite for Linux.** The revision matrix lists supported
   distributions and kernels for each release. A Linux backend must name an exact
   IOLS revision and distribution from that matrix. "Linux" alone is not enough.
-- **NI GPIB-USB-HS+.** The research notes record NI's policy that this adapter
-  is unsupported on Linux. A Linux GPIB path must therefore not depend on NI
+- **NI GPIB-USB-HS+.** NI's policy states that this adapter is unsupported
+  on Linux Desktop. A Linux GPIB path must therefore not depend on NI
   VISA with an NI USB-GPIB adapter. The native `kohdalab-gpib-helper` NI branch
   (vendor `0x3923`) is in the same position until it is separately reviewed.
-- **Yokogawa GS210.** Its USB interface must be distinguished from a generic
-  USB-TMC class device. The official documentation decides whether the GS210 is
-  reachable through a VISA `USB…::INSTR` resource on Linux. That cannot be
-  inferred from the native libusb USBTMC helper working on macOS.
+- **Yokogawa GS210.** The manual distinguishes USB storage from USB-TMC
+  command control. The USB-TMC mode is the candidate for a VISA `USB…::INSTR`
+  test on Linux with a supported runtime.
 - **Keysight 34411A.** A USB-TMC/LAN/GPIB meter covered by Keysight VISA. The
   Windows fake ABI already models it (`MOCK34411`).
 
 | Reference | Link |
 | --- | --- |
-| Keysight IO Libraries Suite for Linux, revision matrix | _TODO: copy from research notes_ |
-| NI GPIB-USB-HS+ Linux support policy | _TODO: copy from research notes_ |
-| Yokogawa GS210 USB / USB-TMC documentation | _TODO: copy from research notes_ |
-| Keysight 34411A connectivity / IOLS support | _TODO: copy from research notes_ |
+| Keysight IO Libraries Suite for Linux, revision matrix | [Keysight support matrix](https://helpfiles.keysight.com/IO_Libraries_Suite/English/IOLS_Linux/IOLS/Content/Introductory_Topics/Reference_Topics/Revision_Matrix.htm) |
+| NI GPIB-USB-HS+ Linux support policy | [NI USB-GPIB support](https://knowledge.ni.com/KnowledgeArticleDetails?id=kA0VU00000052610AA&l=en-US) |
+| Yokogawa GS210 USB / USB-TMC documentation | [Yokogawa GS210 manual](https://cdn.tmi.yokogawa.com/1/6218/files/IMGS210-01EN.pdf) |
+| Keysight 34411A connectivity / IOLS support | [Keysight 34410A/11A user guide](https://www.keysight.com/us/en/assets/9018-05586/user-manuals/9018-05586.pdf) |
 
 ## 3. What single-owner lease and output shutdown imply for Linux
 
@@ -107,10 +104,9 @@ protocol assertions run on both platforms:
   `viSetAttribute`, `viWrite`, `viRead`, `viClear`, and `viGpibControlREN`.
   Export them with `extern "C" __attribute__((visibility("default")))` and the
   default System V calling convention. Linux has no `__stdcall`.
-- **Types:** keep the Windows mock's typedefs (`ViStatus = int32_t`,
-  `ViSession`/`ViUInt32`/`ViAttr = uint32_t`, `ViAttrState = uintptr_t`). Add a
-  `static_assert(sizeof(ViAttrState) == 8)` for x86-64 so an LP64 mismatch fails
-  the build instead of corrupting attribute values.
+- **Types:** derive the Linux type widths and calling convention from the
+  chosen vendor's Linux VISA headers. Compare the helper and mock declarations
+  against that reference, including the width of `ViAttrState` for x86-64.
 - **Fixtures:** the same resources (`USB0::0x0957::0x0A07::MOCK34411::0::INSTR`,
   `GPIB0::7::INSTR`), the same `viOpen` checks (exclusive mode `1`, timeout
   `2000`), the same attribute whitelist, and the same `VI_ERROR_RSRC_NFOUND`
@@ -136,6 +132,6 @@ package. Steps C and D wait for maintainer review of the official references in
 ## 概要（日本語）
 
 - 現状のゲート：Linux 版は `simulation-only` 機能でビルドされ、`refuse_hardware()` が全ての実機経路を拒否します。さらに `visa_helper()` は Windows 以外の本番ビルドで `None` を返し、`native/visa_helper.cpp` は Windows 以外では起動しません。
-- 公式情報：Keysight IO Libraries Suite for Linux の対応表、NI GPIB-USB-HS+ が Linux 非対応である方針、GS210 の USB と汎用 USB-TMC の区別、Keysight 34411A の対応を別途確認済みです（リンクは調査メモから転記予定）。
+- 公式情報：Keysight IO Libraries Suite for Linux の対応表、NI GPIB-USB-HS+ が Linux 非対応である方針、GS210 の USB ストレージと USB-TMC の違い、Keysight 34411A の対応インターフェースは、上の公式資料を参照してください。
 - 保証の維持：アダプタロックの意味、GPIB バックエンドは一つだけという規則、出力停止の優先順位は変えません。Linux のカーネル `usbtmc` ドライバーは自動で切り離さず、明示的なエラーで止めます。
 - 最初の一歩：`visa_helper` の Linux 版と、Windows 版モックと同じ fixture を持つ偽 VISA 共有ライブラリを CI でビルドしてテストするだけです。実機、ドライバー導入、配布物の変更は伴いません。物理的な検証を主張するものではありません。
