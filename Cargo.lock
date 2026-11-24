@@ -1590,7 +1590,7 @@ dependencies = [
 
 [[package]]
 name = "instrument-protocol"
-version = "1.0.7"
+version = "1.0.8"
 dependencies = [
  "serde",
  "serde_json",
@@ -1614,7 +1614,7 @@ checksum = "8f42a60cbdf9a97f5d2305f08a87dc4e09308d1276d28c869c684d7777685682"
 
 [[package]]
 name = "iv-core"
-version = "1.0.7"
+version = "1.0.8"
 dependencies = [
  "csv",
  "rust_decimal",
@@ -1625,7 +1625,7 @@ dependencies = [
 
 [[package]]
 name = "iv-transport"
-version = "1.0.7"
+version = "1.0.8"
 dependencies = [
  "fs2",
  "instrument-protocol",
@@ -1728,7 +1728,7 @@ dependencies = [
 
 [[package]]
 name = "kohdalab-instrument-hub"
-version = "1.0.7"
+version = "1.0.8"
 dependencies = [
  "fs2",
  "instrument-protocol",
@@ -1741,7 +1741,7 @@ dependencies = [
 
 [[package]]
 name = "kohdalab-iv"
-version = "1.0.7"
+version = "1.0.8"
 dependencies = [
  "csv",
  "eframe",

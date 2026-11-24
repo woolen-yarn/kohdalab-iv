@@ -1,4 +1,20 @@
-# KohdaLab IV 1.0.7
+# KohdaLab IV 1.0.8
+
+## Changes / 変更点
+
+- Stop an active sweep and reverify independent source outputs if the instrument worker stops unexpectedly. Output remains `Unknown` when OFF cannot be confirmed. / 独立機器の処理が異常終了したときは掃引を停止し、出力OFFを再確認します。確認できない場合は `Unknown` と表示します。
+- Preserve queued individual DC OFF requests and handle malformed replies without panicking. The shared instrument hub closes a session when it cannot safely track requests. / 個別DC OFF要求を保持し、不正な計器応答はエラーとして扱います。機器ハブは要求を安全に追跡できない接続を閉じます。
+- Reorganize GUI modules and update dependencies, including eframe and egui_plot together. Existing settings and output formats are compatible. / GUIの内部構成を整理し、eframeとegui_plotなどを更新しました。既存の設定と出力形式は互換です。
+
+## Downloads and validation / 配布・検証
+
+Windows x64 Setup and portable ZIP, macOS Apple Silicon DMG and portable ZIP, and Ubuntu 24.04 x64 simulation packages are built from the same source. The Windows packages are unsigned. Linux packages are for simulation. See `SHA256SUMS.txt` and the build origin files on the release page. No new physical measurements were performed.
+
+Windows x64（Setup・ZIP）、Apple Silicon Mac（DMG・ZIP）、Ubuntu 24.04 x64（DEB・tar.gz）を同一ソースからビルドします。Windows版は未署名、Linux版はシミュレーション専用です。配布ページの `SHA256SUMS.txt` とビルド情報を参照してください。今回の実機測定は未実施です。
+
+## Previous release / 前の版
+
+### KohdaLab IV 1.0.7
 
 ## Changes / 変更点
 
