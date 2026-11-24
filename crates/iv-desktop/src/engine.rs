@@ -3572,7 +3572,9 @@ fn execute(
                         if fixed {
                             None
                         } else {
-                            evidence.take().map(|reading| (Some(reading_index), reading))
+                            evidence
+                                .take()
+                                .map(|reading| (Some(reading_index), reading))
                         },
                     );
                     if (!source_check.as_ref().is_ok_and(|stop| stop.is_none())

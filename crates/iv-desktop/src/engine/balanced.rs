@@ -576,8 +576,7 @@ impl Run<'_> {
                     });
                 let limited = match parsed.as_ref() {
                     Ok(&v) if v.abs() >= config.compliance => {
-                        self.state.protection_alert =
-                            Some(ProtectionAlert::measurement(config, v));
+                        self.state.protection_alert = Some(ProtectionAlert::measurement(config, v));
                         true
                     }
                     _ => false,
