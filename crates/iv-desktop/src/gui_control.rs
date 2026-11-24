@@ -599,10 +599,9 @@ fn request_fingerprint(kind: &str, body: &Value) -> String {
             object.remove(field);
         }
     }
-    format!(
-        "{:x}",
-        Sha256::digest(serde_json::to_vec(&json!({"kind":kind,"body":body})).unwrap_or_default())
-    )
+    crate::raw_csv::lower_hex(&Sha256::digest(
+        serde_json::to_vec(&json!({"kind":kind,"body":body})).unwrap_or_default(),
+    ))
 }
 pub fn busy(state: &Snapshot) -> bool {
     matches!(

@@ -43,7 +43,16 @@ pub fn file_sha256(path: &Path) -> Result<String, String> {
         }
         digest.update(&buffer[..count]);
     }
-    Ok(format!("{:x}", digest.finalize()))
+    Ok(lower_hex(&digest.finalize()))
+}
+/// Lowercase hexadecimal text of a digest, two characters per byte, as stored
+/// in manifests and compared against recorded checksums.
+pub(crate) fn lower_hex(bytes: &[u8]) -> String {
+    use std::fmt::Write as _;
+    bytes.iter().fold(String::with_capacity(bytes.len() * 2), |mut text, byte| {
+        let _ = write!(text, "{byte:02x}");
+        text
+    })
 }
 pub struct RawWriter {
     csv: csv::Writer<File>,
