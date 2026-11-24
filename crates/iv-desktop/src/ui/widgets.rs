@@ -388,7 +388,7 @@ pub(super) fn device_field_label(ui: &mut egui::Ui, text: &str) {
 // Keep paths and resource identities readable at rest; preserve full manual editing.
 pub(super) fn compact_field(
     ui: &mut egui::Ui,
-    salt: impl std::hash::Hash,
+    salt: impl egui::AsIdSalt,
     value: &mut String,
     width: f32,
     summary: String,
@@ -533,7 +533,7 @@ pub(super) fn number(
 
 pub(super) fn quantity(
     ui: &mut egui::Ui,
-    id: impl std::hash::Hash,
+    id: impl egui::AsIdSalt,
     value: &mut f64,
     unit_index: &mut usize,
     base: &str,
@@ -598,7 +598,7 @@ mod tests {
                     ..Default::default()
                 },
                 |ui| {
-                    egui::CentralPanel::default().show_inside(ui, |ui| {
+                    egui::CentralPanel::default().show(ui, |ui| {
                         ui.set_width(230.0);
                         device_card(
                             ui,
@@ -663,7 +663,7 @@ mod tests {
         let mut rects = Vec::new();
         let mut ends = None;
         let _ = context.run_ui(Default::default(), |ui| {
-            egui::CentralPanel::default().show_inside(ui, |ui| {
+            egui::CentralPanel::default().show(ui, |ui| {
                 ui.set_max_width(244.0);
                 let width = device_width(ui);
                 let mut open = false;
@@ -708,7 +708,7 @@ mod tests {
         for width in [243.0_f32, 310.0] {
             let mut checks = Vec::new();
             let _ = context.run_ui(Default::default(), |ui| {
-                egui::CentralPanel::default().show_inside(ui, |ui| {
+                egui::CentralPanel::default().show(ui, |ui| {
                     let column =
                         egui::Rect::from_min_size(ui.max_rect().min, Vec2::new(width, 100.0));
                     ui.scope_builder(egui::UiBuilder::new().max_rect(column), |ui| {
@@ -768,7 +768,7 @@ mod tests {
                             ..Default::default()
                         },
                         |ui| {
-                            egui::CentralPanel::default().show_inside(ui, |ui| {
+                            egui::CentralPanel::default().show(ui, |ui| {
                                 let column = egui::Rect::from_min_size(
                                     ui.max_rect().min,
                                     Vec2::new(width, 400.0),
@@ -822,7 +822,7 @@ mod tests {
             let mut source_monitor = egui::Rect::NOTHING;
             let mut meter_monitor = egui::Rect::NOTHING;
             let _ = context.run_ui(Default::default(), |ui| {
-                egui::CentralPanel::default().show_inside(ui, |ui| {
+                egui::CentralPanel::default().show(ui, |ui| {
                     ui.set_width(width);
                     section(ui, "Source 1", |ui| {
                         dc_editor(ui, 1, |ui| {
@@ -856,7 +856,7 @@ mod tests {
         let context = egui::Context::default();
         let mut value = -0.25;
         let _ = context.run_ui(Default::default(), |ui| {
-            egui::CentralPanel::default().show_inside(ui, |ui| {
+            egui::CentralPanel::default().show(ui, |ui| {
                 number(
                     ui,
                     "Wait time",
@@ -870,7 +870,7 @@ mod tests {
         assert_eq!(value, 0.0);
         value = iv_core::MAX_SECONDS + 1.0;
         let _ = context.run_ui(Default::default(), |ui| {
-            egui::CentralPanel::default().show_inside(ui, |ui| {
+            egui::CentralPanel::default().show(ui, |ui| {
                 number(
                     ui,
                     "Wait time",
@@ -891,7 +891,7 @@ mod tests {
         let mut compliance = -0.001;
         let mut units = [1, 1];
         let _ = context.run_ui(Default::default(), |ui| {
-            egui::CentralPanel::default().show_inside(ui, |ui| {
+            egui::CentralPanel::default().show(ui, |ui| {
                 quantity(ui, "target", &mut target, &mut units[0], "V", 200.0, false);
                 quantity(
                     ui,

@@ -552,7 +552,7 @@ impl IvApp {
         let mut stop = false;
         let owner = external_control_owner(&control, retiring);
         let client_label = display_client_label(control["label"].as_str());
-        egui::Panel::top("python_control").show_inside(root, |ui| {
+        egui::Panel::top("python_control").show(root, |ui| {
             ui.horizontal_wrapped(|ui| {
                 ui.colored_label(BLUE, "External control");
                 ui.label(owner);

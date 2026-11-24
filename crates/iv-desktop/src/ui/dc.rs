@@ -929,7 +929,7 @@ mod tests {
                 ..Default::default()
             },
             |ui| {
-                egui::CentralPanel::default().show_inside(ui, |ui| {
+                egui::CentralPanel::default().show(ui, |ui| {
                     ui.set_width(224.0);
                     let before = ui.cursor().min.y;
                     assert_eq!(range_selector(ui, &ranges, Some(1.0), "V"), None);

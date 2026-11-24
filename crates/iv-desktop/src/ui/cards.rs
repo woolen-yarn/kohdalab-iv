@@ -201,7 +201,7 @@ fn show_live_view(ui: &mut egui::Ui, view: LiveView, summary: Option<String>) ->
         .include_x(0.0)
         .include_y(0.0)
         .y_axis_formatter(move |mark, _| scale.tick(mark.value, mark.step_size))
-        .label_formatter(|_, _| String::new())
+        .label_formatter(|_| None)
         .show(ui, |plot_ui| {
             plot_ui.line(
                 Line::new("trend", view.points)
@@ -1541,7 +1541,7 @@ mod tests {
             current: 1e-9,
         });
         let _ = context.run_ui(Default::default(), |ui| {
-            egui::CentralPanel::default().show_inside(ui, |ui| {
+            egui::CentralPanel::default().show(ui, |ui| {
                 let view = app.assigned_live_view(ui, false);
                 assert_eq!(view.value, "1.0 nA");
                 assert_eq!(
@@ -1569,7 +1569,7 @@ mod tests {
             range: Some(1.0),
         });
         let _ = context.run_ui(Default::default(), |ui| {
-            egui::CentralPanel::default().show_inside(ui, |ui| {
+            egui::CentralPanel::default().show(ui, |ui| {
                 assert_eq!(app.assigned_live_view(ui, true).status, "WAITING");
             });
         });
@@ -1588,7 +1588,7 @@ mod tests {
             current: 1e-6,
         });
         let _ = context.run_ui(Default::default(), |ui| {
-            egui::CentralPanel::default().show_inside(ui, |ui| {
+            egui::CentralPanel::default().show(ui, |ui| {
                 assert_eq!(app.assigned_live_view(ui, true).status, "STALE");
             });
         });
@@ -1619,7 +1619,7 @@ mod tests {
         let mut text = Vec::new();
         for _ in 0..3 {
             let output = context.run_ui(Default::default(), |ui| {
-                egui::CentralPanel::default().show_inside(ui, |ui| {
+                egui::CentralPanel::default().show(ui, |ui| {
                     ui.set_width(330.0);
                     app.meter_measurement_controls(ui);
                 });
@@ -1637,7 +1637,7 @@ mod tests {
     fn render(context: &egui::Context, app: &mut IvApp, width: f32, two_columns: bool) {
         for _ in 0..3 {
             let _ = context.run_ui(egui::RawInput::default(), |ui| {
-                egui::CentralPanel::default().show_inside(ui, |ui| {
+                egui::CentralPanel::default().show(ui, |ui| {
                     let column =
                         egui::Rect::from_min_size(ui.max_rect().min, egui::vec2(width, 4000.0));
                     ui.scope_builder(

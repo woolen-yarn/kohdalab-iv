@@ -26,8 +26,8 @@ serde_json.workspace = true
 csv.workspace = true
 sha2.workspace = true
 uuid.workspace = true
-eframe = { version = "0.34.3", default-features = false, features = ["glow", "default_fonts", "x11", "wayland", "accesskit"] }
-egui_plot = "0.35"
+eframe = { version = "0.35.0", default-features = false, features = ["glow", "default_fonts", "x11", "wayland", "accesskit"] }
+egui_plot = "0.36.0"
 image = { version = "0.25", default-features = false, features = ["png"] }
 time = { version = "0.3", features = ["formatting"] }
 toml = "1.1"

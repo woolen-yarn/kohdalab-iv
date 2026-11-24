@@ -457,7 +457,7 @@ mod tests {
                     ..Default::default()
                 },
                 |ui| {
-                    egui::CentralPanel::default().show_inside(ui, |ui| {
+                    egui::CentralPanel::default().show(ui, |ui| {
                         ui.set_max_width(224.0);
                         origin = ui.cursor().min;
                         if typing {
@@ -554,7 +554,7 @@ mod tests {
             let mut unit = initial_unit;
             let mut changed = None;
             let _ = context.run_ui(Default::default(), |ui| {
-                egui::CentralPanel::default().show_inside(ui, |ui| {
+                egui::CentralPanel::default().show(ui, |ui| {
                     changed = output_digits(
                         ui,
                         1,
