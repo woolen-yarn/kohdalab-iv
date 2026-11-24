@@ -277,15 +277,14 @@ impl Run<'_> {
                         Err("Live meter overload".into())
                     }
                 });
-            let limited = parsed
-                .as_ref()
-                .is_ok_and(|value| value.abs() >= self.planned.config1.compliance);
-            if limited {
-                self.state.protection_alert = Some(ProtectionAlert::measurement(
-                    &self.planned.config1,
-                    *parsed.as_ref().unwrap(),
-                ));
-            }
+            let limited = match parsed.as_ref() {
+                Ok(&value) if value.abs() >= self.planned.config1.compliance => {
+                    self.state.protection_alert =
+                        Some(ProtectionAlert::measurement(&self.planned.config1, value));
+                    true
+                }
+                _ => false,
+            };
             let safe = if limited || parsed.is_err() {
                 self.off().map(|()| false)
             } else {
@@ -414,17 +413,13 @@ impl Run<'_> {
         config: &RunConfig,
         planned: &iv_core::Plan,
     ) -> Result<(), String> {
-        if self.pair.is_none() {
+        let Some(device) = self.pair.as_ref() else {
             return Ok(());
-        }
-        let expected = self
-            .pair
-            .as_ref()
-            .map(|device| match role {
-                Role::Source => device.source_identity.clone(),
-                _ => device.source2_identity.clone(),
-            })
-            .unwrap();
+        };
+        let expected = match role {
+            Role::Source => device.source_identity.clone(),
+            _ => device.source2_identity.clone(),
+        };
         if self.query(role, "*IDN?", 0)?.trim() != expected.trim() {
             return Err("Source identity changed before balanced sweep".into());
         }
@@ -579,13 +574,14 @@ impl Run<'_> {
                             Err("Meter overload".into())
                         }
                     });
-                let limited = parsed.as_ref().is_ok_and(|v| v.abs() >= config.compliance);
-                if limited {
-                    self.state.protection_alert = Some(ProtectionAlert::measurement(
-                        config,
-                        *parsed.as_ref().unwrap(),
-                    ));
-                }
+                let limited = match parsed.as_ref() {
+                    Ok(&v) if v.abs() >= config.compliance => {
+                        self.state.protection_alert =
+                            Some(ProtectionAlert::measurement(config, v));
+                        true
+                    }
+                    _ => false,
+                };
                 let check = if limited || parsed.is_err() {
                     self.off().map(|()| true)
                 } else {

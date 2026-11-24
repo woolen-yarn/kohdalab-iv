@@ -412,6 +412,30 @@ mod tests {
         assert_eq!(numeric_reading("F1R2S+1.2E-3").unwrap(), "+1.2E-3");
     }
     #[test]
+    fn malformed_short_and_non_ascii_replies_are_errors_not_panics() {
+        for reply in [
+            "", "\r\n", "+", "-", "S", "F1R", "µ", "STS1=µ", "OC+", "STS1=-1",
+        ] {
+            assert!(legacy_status(reply).is_err(), "{reply:?}");
+            assert!(legacy_output(reply).is_err(), "{reply:?}");
+        }
+        for reply in [
+            "", "\n", "+", "-.", "OVLD", ".E1", "NDCV", "NDCVµ", "1.0Eµ", "F1R2S",
+        ] {
+            assert!(numeric_reading(reply).is_err(), "{reply:?}");
+        }
+        assert_eq!(numeric_reading("NDCVµ+1.5E-3").unwrap(), "+1.5E-3");
+        for panel in ["", "R", "µR", "Rµ6", "F5S+0E0"] {
+            assert!(panel_value(panel, b'R').is_err(), "{panel:?}");
+        }
+        assert_eq!(panel_value("µR7", b'R').unwrap(), "7");
+        for identity in ["", "\n", "µ", "MDL7651REV", "YOKOGAWA,GS2µ10"] {
+            assert!(verify_model(Role::Source, "YOKOGAWA_7651", identity).is_err());
+            assert!(verify_model(Role::Source, "YOKOGAWA_GS210", identity).is_err());
+            assert!(verify_model(Role::Meter, "ADCMT_7461A", identity).is_err());
+        }
+    }
+    #[test]
     fn adc_transport_dialects_do_not_mix() {
         assert_eq!(
             adc_configuration("CONF:VOLT:DC", true).unwrap().unwrap(),
