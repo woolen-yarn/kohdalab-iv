@@ -3,7 +3,7 @@ use super::*;
 use reference_analysis::{ChannelFit, Sample};
 use settings::{ReferenceDisplay, ReferencePurpose};
 
-#[derive(Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub(super) enum GateMetric {
     Sweep,
     Resistance,

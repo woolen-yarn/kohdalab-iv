@@ -33,8 +33,8 @@ use crate::client::Client;
 use crate::protocol::{Command, ProtectionAlert, ProtectionKind, Snapshot};
 use eframe::egui::{self, Color32, RichText, Stroke, Vec2};
 use egui_plot::{
-    AxisHints, Legend, Line, LineStyle, MarkerShape, Plot, PlotMemory, PlotPoint, PlotPoints,
-    PlotUi, Points, VPlacement,
+    AxisHints, HoverPosition, Legend, Line, LineStyle, MarkerShape, Plot, PlotMemory, PlotPoint,
+    PlotPoints, PlotUi, Points, VPlacement,
 };
 use iv_core::{
     InstrumentRole, Mode, Pattern, RunConfig, instrument_catalog, instrument_descriptor,
@@ -799,7 +799,7 @@ impl eframe::App for IvApp {
         self.detail_panel(root);
         egui::CentralPanel::default()
             .frame(egui::Frame::new().fill(BG).inner_margin(8))
-            .show_inside(root, |ui| self.main_view(ui));
+            .show(root, |ui| self.main_view(ui));
         // Reproducible Settings screenshots use the existing simulator smoke path.
         if self.smoke
             && self.state.phase == Phase::Completed

@@ -135,7 +135,10 @@ fn run() -> Result<(), String> {
         eframe::icon_data::from_png_bytes(include_bytes!("../../../assets/kohdalab-iv-window.png"))
             .map_err(|error| format!("Load application icon: {error}"))?;
     let options = eframe::NativeOptions {
-        vsync: false,
+        glow_options: eframe::egui_glow::GlowConfiguration {
+            vsync: false,
+            ..Default::default()
+        },
         viewport: eframe::egui::ViewportBuilder::default()
             .with_icon(icon)
             .with_inner_size(if args.iter().any(|a| a == "--gui-narrow-smoke") {

@@ -17,7 +17,7 @@ impl IvApp {
             .exact_size(width)
             .resizable(false)
             .frame(egui::Frame::new().fill(BG).inner_margin(8))
-            .show_inside(root, |ui| {
+            .show(root, |ui| {
                 let rect = ui.available_rect_before_wrap();
                 let toggle = egui::Rect::from_min_max(
                     egui::pos2(rect.right() - 24.0, rect.top()),
@@ -256,7 +256,7 @@ impl IvApp {
             .exact_size(width)
             .resizable(false)
             .frame(egui::Frame::new().fill(BG).inner_margin(8))
-            .show_inside(root, |ui| {
+            .show(root, |ui| {
                 let height = ui.available_height();
                 ui.horizontal_top(|ui| {
                     if ui
@@ -686,7 +686,15 @@ impl IvApp {
             .custom_x_axes(x_axes)
             .y_axis_label(format!("{y_name} ({}{y_unit})", y_scale.prefix))
             .y_axis_formatter(move |mark, _| y_scale.tick(mark.value, mark.step_size))
-            .label_formatter(move |name, point| {
+            .label_formatter(move |hover| {
+                let (name, point) = match hover {
+                    HoverPosition::NearDataPoint {
+                        plot_name,
+                        position,
+                        ..
+                    } => (*plot_name, position),
+                    HoverPosition::Elsewhere { position } => ("", position),
+                };
                 // Legend names group by direction. Identify the actual point
                 // from each dataset so tooltip quantities keep their meaning.
                 let source = samples
@@ -724,7 +732,7 @@ impl IvApp {
                     "\n{y_name}: {}",
                     display_reading(point.y, resolution, y_unit)
                 ));
-                text
+                Some(text)
             })
             .legend(Legend::default().background_alpha(0.45))
             .allow_boxed_zoom(true)
